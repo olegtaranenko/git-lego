@@ -1,1 +1,1 @@
-To start working with CONSISTENTWORK type git checkout develop
+You are ready to work for CONSISTENTWORK developer environment
