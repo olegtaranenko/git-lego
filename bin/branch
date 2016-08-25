@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+echo "me is" $(basename $0) "started from" $(dirname $0)

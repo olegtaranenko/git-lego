@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+echo "I a'm" $(basename $0) "started from" $(dirname $0)
+ORIGIN=$1
+DIR_PATH=$2
+#echo $DIR_PATH
+
+echo "Will clone repository $ORIGIN to $DIR_PATH"
+git clone "$@"
+
+if [ -n ${DIR_PATH} ]; then
+  # no explicit destination repository given
+  # take from last created directory
+  for i in `ls -lat1 | grep -v ^.$`; do DIR_PATH=${i}; break; done
+fi
+#echo $DIR_PATH
+cd "$DIR_PATH"
+
+if [ -f .gitmodules ]; then
+  git submodule update --init
+fi

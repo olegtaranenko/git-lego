@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+sharedPath=$(dirname $0)/lib
+echo $sharedPath
+source $sharedPath/shared_functions.sh
+echo "me is" $(basename $0) "started from" $(dirname $0)
+
+parentPath=`is_submodule --parent-path`
+ret=$?
+echo "retcode = "$ret
+if [[ 0 -eq $ret ]];  then
+  echo 'goto parent ...'
+  cd $parentPath
+fi
+git status "$@"
+if [ -f .gitmodules ]; then
+  git submodule status --recursive
+fi

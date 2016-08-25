@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+echo "I'm" $(basename $0) "started from" $(dirname $0)
+BRANCH=$1
+if [ $# == 0 -o "$BRANCH" == "--help" ]; then
+  echo "usage ..."
+  exit 1
+fi
+export BRANCH
+git submodule foreach 'check-submodule-branch-exists $name $path $toplevel $sha1'
+#git submodule foreach 'echo $path `git rev-parse HEAD` `git rev-parse HEAD`'
+RET=$?
+if [ 0 -ne ${RET} ]; then
+  exit 1
+fi
+exit 0
+
+REV=$(git rev-parse --no-revs "origin/$BRANCH")
+#&> /dev/null)
+RET=$?
+echo ${RET} ${REV}
+if [ 0 -ne ${RET} ]; then
+  echo "Branch $BRANCH not exists in the origin"
+  exit 1
+fi
+
+
+#git submodule foreach 'git rev-parse ${BRANCH}'
+#RET=$?
+#git submodule foreach "git rev-parse --no-revs \"origin/${BRANCH}\"; if [ 0 -ne $? ]; then; echo \"Subproject contains no branch ${BRANCH}\"; exit 1; else; git checkout ${BRANCH}; fi;"
+git submodule foreach "git checkout ${BRANCH};"
+
+RET=$?
+echo "returned from git submodule" ${RET}
+if [ 0 -eq ${RET} ]; then
+  git checkout ${BRANCH}
+fi
+
+

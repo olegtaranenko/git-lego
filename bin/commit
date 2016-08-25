@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+echo "I a'm" $(basename $0) "started from" $(dirname $0)
+
+#git filter-branch --env-filter '
+#     if [ $GIT_COMMIT = e9987b28acd03380e0ded7a46813a3401c393523 ]
+#     then
+#         export GIT_AUTHOR_DATE="Thu, 01 Jan 1970 00:00:00 +0000"
+#         export GIT_COMMITTER_DATE="Thu, 01 Jan 1970 00:00:00 +0000"
+#     fi' -- --all
