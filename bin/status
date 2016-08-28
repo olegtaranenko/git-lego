@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 . $(dirname $0)/lib/shared_functions.sh
-in_consistentwork
-
-#git status "$@"
-#if [ -f .gitmodules ]; then
-#  git submodule status --recursive
-#fi
+consistentwork_bootstrap
+cd $cwRoot
+git status "$@" --short
+if [ -f .gitmodules ]; then
+  git submodule foreach --recursive "git status --short"
+fi

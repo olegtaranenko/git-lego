@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 . $(dirname $0)/lib/shared_functions.sh
-in_consistentwork
+consistentwork_bootstrap
 #gitDir=$(git rev-parse --git-dir)
 cw_echo "${gitDir} ${cwRoot}"
 #parseDir=${gitDir%%/.git/*}

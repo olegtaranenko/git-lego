@@ -1,5 +1,34 @@
 #!/usr/bin/env bash
-echo "I a'm" $(basename $0) "started from" $(dirname $0)
+declare -a globals
+declare -a args="$@"
+
+. $(dirname $0)/lib/shared_functions.sh
+
+consistentwork_bootstrap
+
+cwRoot="${globals[0]}"
+cwTmpSubmodules="${globals[1]}"
+gitDir="${globals[2]}"
+
+#echo  "${cwRoot} ${gitDir}"
+
+while read -r -a line; do
+  path=${line[0]}
+  cd "$cwRoot/$path"
+  git add . -A
+  git commit "${args}"
+done < <(cat ${cwTmpSubmodules})
+
+cd $cwRoot
+git add . -A
+git commit "${args}"
+popd
+
+
+
+
+#git submodule  foreach --recursive  |  tail  -r | sed "s/[^']*//" | xargs -I% cd % ; _submodule_git_commit ${name} ${path} ${toplevel} ${sha1}
+#git submodule foreach --recursive --quiet 'bash -c "_submodule_git_commit ${name} ${path} ${toplevel} ${sha1}"' 2>/dev/null
 
 #git filter-branch --env-filter '
 #     if [ $GIT_COMMIT = e9987b28acd03380e0ded7a46813a3401c393523 ]

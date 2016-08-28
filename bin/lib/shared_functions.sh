@@ -4,9 +4,28 @@ function parse_opt() {
  echo "parse_opt"
 }
 
+#function _submodule_git_commit() {
+#  name=$1
+#  path=$2
+#  toplevel=$3
+#  sha1=$4
+#  echo "$name $toplevel/$path $sha1"
+#
+#  cat /tmp/_submodule_git_commit.params | args
+#  cd $toplevel/$path
+##  git add . -A
+##  git commit -am "******** first commit via submodules"
+##  echo ${args[*]}
+##  git commit ${args[*]}
+#  return 0
+#}
+#
+#export -f _submodule_git_commit
 
-function in_consistentwork () {
-  declare -x gitDir
+function consistentwork_bootstrap () {
+  local gitDir
+  local umbrellaRepoDir
+  local -r cwTmpSubmodules="/tmp/_cw_submodules"
   git rev-parse --git-dir &> /dev/null
   ret=$?
   if [[ 0 -ne $ret ]]; then
@@ -14,28 +33,34 @@ function in_consistentwork () {
     exit 1
   fi
 
-  unset $gitDir
-
-  gitDir=`git rev-parse --git-dir`
+  gitDir=$(git rev-parse --git-dir)
   normalizedGitDir=${gitDir##*/}
-  cwRoot=$(pwd)
   if [[ ${normalizedGitDir} == ".git" ]]; then
-    cwRoot=$(git rev-parse --show-toplevel)
+    umbrellaRepoDir=$(git rev-parse --show-toplevel)
   else
     pushd "${gitDir%%/.git/*}"  > /dev/null
-    cwRoot=$(git rev-parse --show-toplevel)
+    umbrellaRepoDir=$(git rev-parse --show-toplevel)
     popd  > /dev/null
   fi
 
-  local url=$(get_repo_url "$cwRoot")
+  local url=$(get_repo_url "$umbrellaRepoDir")
   local cwUrl=${url%%gitadmin@git.consistentwork.com:*}
   if [[ -nz ${cwUrl} ]]; then
     cw_echo ${cwUrl}
     die
   fi
 
+  #globals is an array defined in the caller of this method
+  globals[0]=${umbrellaRepoDir}
+  globals[1]=${cwTmpSubmodules}
+  globals[2]=${gitDir}
+
+  rm ${cwTmpSubmodules} &>/dev/null
+  pushd ${umbrellaRepoDir}
+  git submodule  foreach --recursive  |  tail  -r | sed "s/[^']*//" | tr -d "'" >>  ${cwTmpSubmodules}
+
   splash ${url}
-  return $ret
+  return 0
 }
 
 function die() {

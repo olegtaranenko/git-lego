@@ -1,2 +1,1 @@
 #!/usr/bin/env bash
-echo "I a'm" $(basename $0) "started from" $(dirname $0)
