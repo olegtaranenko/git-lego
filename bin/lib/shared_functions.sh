@@ -1,32 +1,66 @@
 #!/usr/bin/env bash
 
-# returns (as RHS) toplevel path for parent repo, empty if repo is submodule
-# return code: 0 if repo is submodule, otherwise 1
-function is_submodule() {
-
-    local git_dir parent_git module_name path strip
-    # Find the root of this git repo, then check if its parent dir is also a repo
-    git_dir="$(git rev-parse --show-toplevel)"
-    parent_git="$(cd "$git_dir/.." && git rev-parse --show-toplevel 2> /dev/null)"
-
-    if [[ -n $parent_git ]]; then
-        strip=$((${#parent_git} + 1))
-        echo $strip
-        module_name=${git_dir:$strip}
-        # List all the submodule paths for the parent repo
-        while read path
-        do
-            if [[ "$path" != "$module_name" ]]; then continue; fi
-            if [[ -d "$parent_git/$path" ]]; then
-                echo $parent_git
-                return 0;
-            fi
-        done < <(cd $parent_git && git submodule --quiet foreach 'echo $path' 2> /dev/null)
-    fi
-    return 1
+function parse_opt() {
+ echo "parse_opt"
 }
 
 
-function parse_opt() {
- echo "parse_opt"
+function in_consistentwork () {
+  declare -x gitDir
+  git rev-parse --git-dir &> /dev/null
+  ret=$?
+  if [[ 0 -ne $ret ]]; then
+    die
+    exit 1
+  fi
+
+  unset $gitDir
+
+  gitDir=`git rev-parse --git-dir`
+  normalizedGitDir=${gitDir##*/}
+  cwRoot=$(pwd)
+  if [[ ${normalizedGitDir} == ".git" ]]; then
+    cwRoot=$(git rev-parse --show-toplevel)
+  else
+    pushd "${gitDir%%/.git/*}"  > /dev/null
+    cwRoot=$(git rev-parse --show-toplevel)
+    popd  > /dev/null
+  fi
+
+  local url=$(get_repo_url "$cwRoot")
+  local cwUrl=${url%%gitadmin@git.consistentwork.com:*}
+  if [[ -nz ${cwUrl} ]]; then
+    cw_echo ${cwUrl}
+    die
+  fi
+
+  splash ${url}
+  return $ret
+}
+
+function die() {
+  cw_echo "You are not in one of ConsistentWork repositories. Look in "$(dirname $0)"/Readme.MD for more information"
+  exit 1
+}
+
+function cw_echo() {
+  echo $(basename $0)": "$1
+}
+
+function splash() {
+  local url=$1
+  url=${url##*:}
+  local msg="umbrella repo: \"${url}\""
+  currentUrl=$(get_repo_url ".")
+  if [[ ${currentUrl} != ${url} ]]; then
+    msg+="; current: \"${currentUrl##*:}\""
+  fi
+  cw_echo "${msg}"
+}
+
+function get_repo_url() {
+  [[ $1 == "." ]] || pushd $1  > /dev/null
+  local url=$(git remote get-url origin)
+  [[ $1 == "." ]] || popd  > /dev/null
+  echo ${url}
 }

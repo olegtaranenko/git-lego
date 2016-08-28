@@ -1,2 +1,11 @@
 #!/usr/bin/env bash
-echo "I a'm" $(basename $0) "started from" $(dirname $0)
+. $(dirname $0)/lib/shared_functions.sh
+in_consistentwork
+#gitDir=$(git rev-parse --git-dir)
+cw_echo "${gitDir} ${cwRoot}"
+#parseDir=${gitDir%%/.git/*}
+#cw_echo ${parseDir}
+
+function parse_opt() {
+ cw_echo "parse_opt"
+}
