@@ -1,38 +1,106 @@
 #!/usr/bin/env bash
-echo "I'm" $(basename $0) "started from" $(dirname $0)
-BRANCH=$1
-if [ $# == 0 -o "$BRANCH" == "--help" ]; then
-  echo "usage ..."
+declare -a globals
+args=()
+
+. $(dirname $0)/lib/shared_functions.sh
+
+consistentwork_bootstrap
+
+function show_help() {
+  echo "TODO: write help"
+}
+
+function is_branch_exists() {
+  [[ -z $1 ]] && (die "Wrong arguments for is_branch_exists method")
+  local branchName=$1
+  git rev-parse --no-revs origin/"$branchName" &>/dev/null
+  [[ $? == 0 ]] && echo 1
+  return 1
+}
+
+cwRoot="${globals[0]}"
+cwTmpSubmodules="${globals[1]}"
+gitDir="${globals[2]}"
+
+#echo  "${cwRoot} ${gitDir}"
+pushd ${cwRoot} &>/dev/null
+verbose=0
+doAdd=0 # by default do not add
+branchName=
+#set -x
+
+while [[ -n $1 ]]; do
+  noAppendArg=0
+  case $1 in
+    -h|-\?|--help)
+      show_help
+      exit
+      ;;
+    -v|--verbose)
+      verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
+      ;;
+    --fallback)
+      if [ -n "$2" ]; then
+        noAppendArg=1
+        fallback=$2
+        shift
+      else
+        cw_echo 'ERROR: "--fallback" requires a non-empty option argument.' >&2
+        exit 1
+      fi
+      ;;
+    --fallback=?*)
+      noAppendArg=1
+      fallback=${1#*=} # Delete everything up to "=" and assign the remainder.
+      ;;
+    --fallback=)         # Handle the case of an empty --fallback=
+      cw_echo 'ERROR: "--fallback" requires a non-empty option argument.' >&2
+      exit 1
+      ;;
+
+    -b|-B|--orphan)
+      cw_echo 'ERROR: "'$1'" options is not supported for now. Create new branches using CW branch --help command' >&2
+      exit 1
+      ;;
+    *)
+      if [[ -z ${branchName} ]]; then
+        branchName=$1
+      fi
+      ;;
+  esac
+  [[ 1 != ${noAppendArg} ]] && args+=$1
+  shift
+done
+
+[[ 0 != ${#args} ]] && cw_echo "${args[*]}"
+
+if [[ -n ${branchName} ]]; then
+  [[ -n ${fallback} ]] && cw_echo "fallback branch "${fallback}
+  [[ -z ${fallback} ]] && cw_echo "NO fallback branch "
+else
+  cw_echo 'ERROR: No branch name defined.' >&2
   exit 1
 fi
-export BRANCH
-git submodule foreach 'check-submodule-branch-exists $name $path $toplevel $sha1'
-#git submodule foreach 'echo $path `git rev-parse HEAD` `git rev-parse HEAD`'
-RET=$?
-if [ 0 -ne ${RET} ]; then
+cd ${cwRoot}
+cw_echo $(pwd)
+hasBranch=$(is_branch_exists "$branchName")
+
+if [[ 1 != $hasBranch ]]; then
+  cw_echo 'ERROR: branch '$branchName' does not exists in umbrella repo.
+    Create it using CW branch command: branch --help' >&2
   exit 1
 fi
-exit 0
-
-REV=$(git rev-parse --no-revs "origin/$BRANCH")
-#&> /dev/null)
-RET=$?
-echo ${RET} ${REV}
-if [ 0 -ne ${RET} ]; then
-  echo "Branch $BRANCH not exists in the origin"
-  exit 1
-fi
+git checkout "${args}"
 
 
-#git submodule foreach 'git rev-parse ${BRANCH}'
-#RET=$?
-#git submodule foreach "git rev-parse --no-revs \"origin/${BRANCH}\"; if [ 0 -ne $? ]; then; echo \"Subproject contains no branch ${BRANCH}\"; exit 1; else; git checkout ${BRANCH}; fi;"
-git submodule foreach "git checkout ${BRANCH};"
+: <<EOF
+while read -r -a line; do
+  path=${line[0]}
+  cd "${cwRoot}/${path}"
+  cw_echo $(pwd)
+  hasBranch=$(is_branch_exists "$branchName")
+  #  git checkout "${args}"
+  done
+EOF
 
-RET=$?
-echo "returned from git submodule" ${RET}
-if [ 0 -eq ${RET} ]; then
-  git checkout ${BRANCH}
-fi
-
-
+popd &>/dev/null
