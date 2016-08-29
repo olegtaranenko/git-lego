@@ -1,20 +1,29 @@
 #!/usr/bin/env bash
-echo "I a'm" $(basename $0) "started from" $(dirname $0)
-ORIGIN=$1
-DIR_PATH=$2
-#echo $DIR_PATH
+declare -a globals
+declare -a args="$@"
 
-echo "Will clone repository $ORIGIN to $DIR_PATH"
+. $(dirname $0)/lib/shared_functions.sh
+
+# Maybe we trying to cloning inside of the existing git repo?
+# As for now it is not permitted
+git rev-parse --git-dir &> /dev/null
+if [[ 0 -ne $? ]]; then
+  die "It's not permitted to clone inside of an existing git repo. Look in "$(dirname $0)"/Readme.MD for more information"
+  exit 1
+fi
+
+repoUrl=$1
+repoPath=$2
+
+echo "Will clone repository $repoUrl to $repoPath"
 git clone "$@"
 
-if [[ -n ${DIR_PATH} ]]; then
+if [[ -n ${repoPath} ]]; then
   # no explicit destination repository given
   # take from last created directory
-  for i in `ls -lat1 | grep -v ^.$`; do DIR_PATH=${i}; break; done
+  for i in `ls -lat1 | grep -v ^.$`; do repoPath=${i}; break; done
 fi
-#echo $DIR_PATH
-cd "$DIR_PATH"
 
-if [[ -f .gitmodules ]]; then
-  git submodule update --recursive --init
-fi
+cd "$repoPath"
+
+git submodule update --recursive --init

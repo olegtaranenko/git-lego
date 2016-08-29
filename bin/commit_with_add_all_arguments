@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+#TODO not finished. Will take into account --all argument for addin
+
+declare -a globals
+declare -a args
+
+. $(dirname $0)/lib/shared_functions.sh
+
+consistentwork_bootstrap
+
+cwRoot="${globals[0]}"
+cwTmpSubmodules="${globals[1]}"
+gitDir="${globals[2]}"
+
+#echo  "${cwRoot} ${gitDir}"
+
+doAdd=0 # by default do not add
+verbose=0
+declare -a files
+declare addFilesMode
+declare -a addArgs=([0]="."} [0]="-A"})
+while :; do
+    case $1 in
+        -h|-\?|--help)
+            show_help
+            exit
+            ;;
+        -A|--all|--no-ignore-removal)
+            doAdd=1
+            ;;
+        --no-all|--ignore-removal)
+            doAdd=0
+            ;;
+        -v|--verbose)
+            verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
+            ;;
+        --)              # End of all options.
+            args+=$1
+            addFilesMode=1
+            ;;
+        *)
+            if [[ 1 -eq ${addFilesMode} ]]; then
+                addArgs+=$1
+            else
+                args+=$1
+            fi
+            break
+    esac
+    shift
+done
+
+while read -r -a line; do
+  path=${line[0]}
+  cd "$cwRoot/$path"
+  [[ 1 == ${doAdd} ]] && git add "$addArgs"
+  git commit "${args}"
+done < <(cat ${cwTmpSubmodules})
+
+cd $cwRoot
+[[ 1 == ${doAdd} ]] && git add "$addArgs"
+git commit "${args}"
+popd
+
+
+function show_help() {
+  echo "TODO: write help"
+}
+
+#git submodule  foreach --recursive  |  tail  -r | sed "s/[^']*//" | xargs -I% cd % ; _submodule_git_commit ${name} ${path} ${toplevel} ${sha1}
+#git submodule foreach --recursive --quiet 'bash -c "_submodule_git_commit ${name} ${path} ${toplevel} ${sha1}"' 2>/dev/null
+
+#git filter-branch --env-filter '
+#     if [ $GIT_COMMIT = e9987b28acd03380e0ded7a46813a3401c393523 ]
+#     then
+#         export GIT_AUTHOR_DATE="Thu, 01 Jan 1970 00:00:00 +0000"
+#         export GIT_COMMITTER_DATE="Thu, 01 Jan 1970 00:00:00 +0000"
+#     fi' -- --all

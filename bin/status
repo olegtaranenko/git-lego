@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
+declare -a globals
+declare -a args="$@"
+
 . $(dirname $0)/lib/shared_functions.sh
+
 consistentwork_bootstrap
-cd $cwRoot
-git status "$@" --short
-if [ -f .gitmodules ]; then
-  git submodule foreach --recursive "git status --short"
-fi
+
+cwRoot="${globals[0]}"
+cwTmpSubmodules="${globals[1]}"
+gitDir="${globals[2]}"
+
+git status "$args"
+git submodule foreach --recursive git status "$args"
+git submodule status --recursive

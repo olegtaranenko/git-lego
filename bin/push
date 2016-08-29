@@ -1,2 +1,23 @@
 #!/usr/bin/env bash
-echo "I a'm" $(basename $0) "started from" $(dirname $0)
+declare -a globals
+declare -a args="$@"
+
+. $(dirname $0)/lib/shared_functions.sh
+
+consistentwork_bootstrap
+
+cwRoot="${globals[0]}"
+cwTmpSubmodules="${globals[1]}"
+gitDir="${globals[2]}"
+
+#echo  "${cwRoot} ${gitDir}"
+
+while read -r -a line; do
+  path=${line[0]}
+  cd "$cwRoot/$path"
+  git push "${args}"
+done < <(cat ${cwTmpSubmodules})
+
+cd $cwRoot
+git push "${args}"
+popd
