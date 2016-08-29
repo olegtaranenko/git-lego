@@ -1,1 +1,26 @@
 #!/usr/bin/env bash
+declare -a globals
+args="$@"
+
+. $(dirname $0)/lib/shared_functions.sh
+
+consistentwork_bootstrap
+
+cwRoot="${globals[0]}"
+cwTmpSubmodules="${globals[1]}"
+gitDir="${globals[2]}"
+
+#echo  "${cwRoot} ${gitDir}"
+#echo "${args}"
+pushd ${cwRoot} &>/dev/null
+while read -r -a line; do
+  path=${line[0]}
+  cd "$cwRoot/$path"
+  cw_echo $(pwd)
+  git fetch $@
+done < <(cat ${cwTmpSubmodules})
+
+cd $cwRoot
+cw_echo $(pwd)
+git fetch $@
+popd &>/dev/null

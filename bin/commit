@@ -11,28 +11,18 @@ cwTmpSubmodules="${globals[1]}"
 gitDir="${globals[2]}"
 
 #echo  "${cwRoot} ${gitDir}"
+pushd ${cwRoot} &>/dev/null
 
 while read -r -a line; do
   path=${line[0]}
   cd "$cwRoot/$path"
+  cw_echo $(pwd)
   git add . -A
   git commit "${args}"
 done < <(cat ${cwTmpSubmodules})
 
 cd $cwRoot
+cw_echo $(pwd)
 git add . -A
 git commit "${args}"
-popd
-
-
-
-
-#git submodule  foreach --recursive  |  tail  -r | sed "s/[^']*//" | xargs -I% cd % ; _submodule_git_commit ${name} ${path} ${toplevel} ${sha1}
-#git submodule foreach --recursive --quiet 'bash -c "_submodule_git_commit ${name} ${path} ${toplevel} ${sha1}"' 2>/dev/null
-
-#git filter-branch --env-filter '
-#     if [ $GIT_COMMIT = e9987b28acd03380e0ded7a46813a3401c393523 ]
-#     then
-#         export GIT_AUTHOR_DATE="Thu, 01 Jan 1970 00:00:00 +0000"
-#         export GIT_COMMITTER_DATE="Thu, 01 Jan 1970 00:00:00 +0000"
-#     fi' -- --all
+popd &>/dev/null

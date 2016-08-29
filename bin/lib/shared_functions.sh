@@ -56,10 +56,11 @@ function consistentwork_bootstrap () {
   globals[2]=${gitDir}
 
   rm ${cwTmpSubmodules} &>/dev/null
-  pushd ${umbrellaRepoDir}
+  splash ${url}
+  pushd ${umbrellaRepoDir} &>/dev/null
   git submodule  foreach --recursive  |  tail  -r | sed "s/[^']*//" | tr -d "'" >>  ${cwTmpSubmodules}
 
-  splash ${url}
+  popd ${umbrellaRepoDir} &>/dev/null
   return 0
 }
 

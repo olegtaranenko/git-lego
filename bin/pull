@@ -1,11 +1,25 @@
 #!/usr/bin/env bash
-. $(dirname $0)/lib/shared_functions.sh
-consistentwork_bootstrap
-#gitDir=$(git rev-parse --git-dir)
-cw_echo "${gitDir} ${cwRoot}"
-#parseDir=${gitDir%%/.git/*}
-#cw_echo ${parseDir}
+declare -a globals
+args="$@"
 
-function parse_opt() {
- cw_echo "parse_opt"
-}
+. $(dirname $0)/lib/shared_functions.sh
+
+consistentwork_bootstrap
+
+cwRoot="${globals[0]}"
+cwTmpSubmodules="${globals[1]}"
+gitDir="${globals[2]}"
+
+#echo  "${cwRoot} ${gitDir}"
+#echo "${args}"
+pushd ${cwRoot} &>/dev/null
+while read -r -a line; do
+  path=${line[0]}
+  cd "$cwRoot/$path"
+  cw_echo $(pwd)
+  git pull $@
+done < <(cat ${cwTmpSubmodules})
+cd $cwRoot
+cw_echo $(pwd)
+git pull $@
+popd &>/dev/null

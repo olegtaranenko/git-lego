@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 declare -a globals
-declare -a args="$@"
+args="$@"
 
 . $(dirname $0)/lib/shared_functions.sh
 
@@ -10,14 +10,17 @@ cwRoot="${globals[0]}"
 cwTmpSubmodules="${globals[1]}"
 gitDir="${globals[2]}"
 
-#echo  "${cwRoot} ${gitDir}"
-
+echo  "${cwRoot} ${gitDir}"
+echo "${args}"
+pushd ${cwRoot} &>/dev/null
 while read -r -a line; do
   path=${line[0]}
   cd "$cwRoot/$path"
-  git push "${args}"
+  cw_echo $(pwd)
+  git push $@
 done < <(cat ${cwTmpSubmodules})
 
 cd $cwRoot
-git push "${args}"
-popd
+cw_echo $(pwd)
+git push $@
+popd &>/dev/null
