@@ -4,18 +4,10 @@ args=()
 
 . $(dirname $0)/lib/shared_functions.sh
 
-consistentwork_bootstrap
+consistentwork_bootstrap 
 
 function show_help() {
   echo "TODO: write help"
-}
-
-function is_branch_exists() {
-  [[ -z $1 ]] && (die "Wrong arguments for is_branch_exists method")
-  local branchName=$1
-  git rev-parse --no-revs origin/"$branchName" &>/dev/null
-  [[ $? == 0 ]] && echo 1
-  return 1
 }
 
 cwRoot="${globals[0]}"
@@ -26,7 +18,8 @@ gitDir="${globals[2]}"
 pushd ${cwRoot} &>/dev/null
 verbose=0
 doAdd=0 # by default do not add
-branchName=
+typeset branchName
+typeset commit=1
 #set -x
 
 while [[ -n $1 ]]; do
@@ -38,6 +31,7 @@ while [[ -n $1 ]]; do
       ;;
     -v|--verbose)
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
+      noAppendArg=1
       ;;
     --fallback)
       if [ -n "$2" ]; then
@@ -57,7 +51,12 @@ while [[ -n $1 ]]; do
       cw_echo 'ERROR: "--fallback" requires a non-empty option argument.' >&2
       exit 1
       ;;
-
+    --commit)
+      commit=1
+      ;;
+    --no-commit)
+      commit=0
+      ;;
     -b|-B|--orphan)
       cw_echo 'ERROR: "'$1'" options is not supported for now. Create new branches using CW branch --help command' >&2
       exit 1
@@ -65,6 +64,7 @@ while [[ -n $1 ]]; do
     *)
       if [[ -z ${branchName} ]]; then
         branchName=$1
+        noAppendArg=1
       fi
       ;;
   esac
@@ -72,25 +72,66 @@ while [[ -n $1 ]]; do
   shift
 done
 
-[[ 0 != ${#args} ]] && cw_echo "${args[*]}"
+#set -x
+
+[[ ${#args} ]] && echo "${args[*]}"
+typeset checkoutEnvironment
 
 if [[ -n ${branchName} ]]; then
-  [[ -n ${fallback} ]] && cw_echo "fallback branch "${fallback}
-  [[ -z ${fallback} ]] && cw_echo "NO fallback branch "
+  checkoutEnvironment="switch to \""${branchName}"\""
+  [[ -n ${fallback} ]] && checkoutEnvironment+=", fallback branch \""${fallback}"\""
+  [[ -z ${fallback} ]] && checkoutEnvironment+=", no fallback branch "
 else
   cw_echo 'ERROR: No branch name defined.' >&2
   exit 1
 fi
 cd ${cwRoot}
-cw_echo $(pwd)
-hasBranch=$(is_branch_exists "$branchName")
+[[ 1 == ${verbose} ]] && cw_echo "$(pwd), $checkoutEnvironment"
+hasBranch=()
+typeset subBranch
+hasBranch[0]=$(is_branch_exists "$branchName")
+#set +x
 
-if [[ 1 != $hasBranch ]]; then
+if [[ 1 != ${hasBranch[0]} ]]; then
   cw_echo 'ERROR: branch '$branchName' does not exists in umbrella repo.
     Create it using CW branch command: branch --help' >&2
   exit 1
 fi
-git checkout "${args}"
+#checking loop
+#echo ${fallback}
+while read -r -a line; do
+  path=${line[0]}
+  cd "${cwRoot}/${path}"
+  checkoutMsg=$(pwd)
+  subBranch=$(is_branch_exists "$branchName")
+  if [[ ${subBranch} == 1 ]]; then
+    subBranch=${branchName}
+  fi
+  if [[ 0 == ${subBranch} && -n ${fallback} ]]; then
+    subBranch=$(is_branch_exists "$fallback")
+    if [[ ${subBranch} == 1 ]]; then
+      subBranch=${fallback}
+    fi
+  fi
+  hasBranch+=${subBranch}
+  if [[ ${subBranch} != 0 ]]; then
+    checkoutMsg+=" switch to branch $subBranch"
+  else
+    checkoutMsg+=" branch is not changed"
+  fi
+  cw_echo "$checkoutMsg"
+  if [[ ${subBranch} != 0 ]]; then
+    git checkout "${subBranch}"
+  fi
+  git clean -f -d
+  if [[ 1 == ${commit} ]]; then
+    git commit -am "switch to branch ${branchName}"
+  fi
+done < <(cat ${cwTmpSubmodules})
+  echo "${hasBranch[*]}"
+cd ${cwRoot}
+git checkout "${args} ${branchName}"
+git commit -am "switch to branch ${branchName}"
 
 
 : <<EOF
@@ -100,7 +141,7 @@ while read -r -a line; do
   cw_echo $(pwd)
   hasBranch=$(is_branch_exists "$branchName")
   #  git checkout "${args}"
-  done
+done < <(cat ${cwTmpSubmodules})
 EOF
 
 popd &>/dev/null

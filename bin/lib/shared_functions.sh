@@ -91,3 +91,17 @@ function get_repo_url() {
   [[ $1 == "." ]] || popd  > /dev/null
   echo ${url}
 }
+
+function is_branch_exists() {
+  [[ -z $1 ]] && (die "Wrong arguments for is_branch_exists method")
+  local branchName=$1
+  git rev-parse --no-revs origin/"$branchName" &>/dev/null
+  local ret=$?
+  if [[ ${ret} == 0 ]]; then
+    ret=1
+  else
+    ret=0
+  fi
+  echo ${ret}
+  return ${ret}
+}
