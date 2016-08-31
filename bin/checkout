@@ -10,6 +10,81 @@ function show_help() {
   echo "TODO: write help"
 }
 
+function checkout_level () {
+  local currentPath="$1"
+  local dir
+  local -a modulesBefore
+  local -a modulesAfter
+  local -a removedModules
+  local -a addedModules
+#  oldIfs=IFS
+
+  cd "${currentPath}"
+  echo "---> checkout_level ${currentPath}"
+
+  while IFS="#" read -a repo; do
+    modulesBefore[${#modulesBefore[@]}]="${repo[2]}"
+  done < <(git submodule status | sed -E 's/(.)([[:xdigit:]]{40})[[:space:]]+([[:graph:]]*).*/\1#\2#\3/' 2>/dev/null)
+  git checkout ${branchName}
+  echo $?
+
+  while IFS="#" read -a repo; do
+    modulesAfter[${#modulesAfter[@]}]="${repo[2]}"
+  done < <(git submodule status | sed -E 's/(.)([[:xdigit:]]{40})[[:space:]]+([[:graph:]]*).*/\1#\2#\3/' 2>/dev/null)
+#  IFS=${oldIfs}
+
+  for b in ${modulesBefore[@]}; do
+    found=0
+    for a in ${modulesAfter[@]}; do
+      if [[ $a == $b ]]; then
+        found=1
+        break
+      fi
+    done
+    if (( ! $found )); then
+      removedModules[${#removedModules[@]}]="${b}"
+    fi
+  done
+
+  for a in ${modulesAfter[@]}; do
+    found=0
+    for b in ${modulesBefore[@]}; do
+      if [[ $a == $b ]]; then
+        found=1
+        break
+      fi
+    done
+    if (( ! $found )); then
+      addedModules[${#addedModules[@]}]="$a"
+    fi
+  done
+
+  printf "%s\n" "${addedModules[@]}"
+  printf "%s\n" "${removedModules[@]}"
+
+  doGitUpdate=0
+  for modulePath in "${addedModules[@]}"; do
+    git submodule update $modulePath
+  done
+
+  (( "${#removedModules[@]}" )) && git clean -d -f -f
+
+  # do recurse call for every sub-repos
+  for modulePath in "${modulesAfter[@]}"; do
+    deleted=0
+    for d in "${removedModules[@]}"; do
+      if [[ ${d} == ${modulePath} ]]; then
+        deleted=1
+        break
+      fi
+    done
+    if (( ! $deleted )); then
+      echo "${cwRoot}/${modulePath}"
+      checkout_level "${cwRoot}/${modulePath}"
+    fi
+  done
+}
+
 cwRoot="${globals[0]}"
 cwTmpSubmodules="${globals[1]}"
 gitDir="${globals[2]}"
@@ -74,6 +149,11 @@ done
 
 #set -x
 
+checkout_level "${cwRoot}"
+
+exit 0
+
+
 [[ ${#args} ]] && echo "${args[*]}"
 typeset checkoutEnvironment
 
@@ -85,6 +165,7 @@ else
   cw_echo 'ERROR: No branch name defined.' >&2
   exit 1
 fi
+
 cd ${cwRoot}
 [[ 1 == ${verbose} ]] && cw_echo "$(pwd), $checkoutEnvironment"
 hasBranch=()
@@ -92,11 +173,12 @@ typeset subBranch
 hasBranch[0]=$(is_branch_exists "$branchName")
 #set +x
 
-if [[ 1 != ${hasBranch[0]} ]]; then
+if ((! ${hasBranch[0]} )); then
   cw_echo 'ERROR: branch '$branchName' does not exists in umbrella repo.
     Create it using CW branch command: branch --help' >&2
   exit 1
 fi
+
 #checking loop
 #echo ${fallback}
 while read -r -a line; do
@@ -133,6 +215,8 @@ cd ${cwRoot}
 git checkout "${args} ${branchName}"
 git commit -am "switch to branch ${branchName}"
 
+
+John Bambenek, Agnieszka Klus Grep pocket reference.pdf
 
 : <<EOF
 while read -r -a line; do
