@@ -1,3 +1,4 @@
 [submodule "awks"]
 	path = test/awks
 	url = gitadmin@git.consistentwork.com:ci/bin
+	branch = master
