@@ -1,26 +1,30 @@
 #!/usr/bin/env bash
-declare -a globals
+globals=()
 args=()
 
 . $(dirname $0)/lib/shared_functions.sh
 
 consistentwork_bootstrap 
 
+cwRoot="${globals[0]}"
+cwTmpSubmodules="${globals[1]}"
+gitDir="${globals[2]}"
+
 function show_help() {
   echo "TODO: write help"
 }
 
 function checkout_level () {
-  local currentPath="$1"
-  local dir
+  local repoPath="$1"
+  local repoBranch="$2"
   local -a modulesBefore
   local -a modulesAfter
   local -a removedModules
   local -a addedModules
 #  oldIfs=IFS
 
-  cd "${currentPath}"
-  echo "---> checkout_level ${currentPath}"
+  cd "${repoPath}"
+  echo "---> checkout_level ${repoPath}"
 
   while IFS="#" read -a repo; do
     modulesBefore[${#modulesBefore[@]}]="${repo[2]}"
@@ -67,6 +71,7 @@ function checkout_level () {
     git submodule update $modulePath
   done
 
+  #By change branch can happen that submodules can't be removed (usually can) if, for example, if submodule has its own submodule.
   (( "${#removedModules[@]}" )) && git clean -d -f -f
 
   # do recurse call for every sub-repos
@@ -84,10 +89,6 @@ function checkout_level () {
     fi
   done
 }
-
-cwRoot="${globals[0]}"
-cwTmpSubmodules="${globals[1]}"
-gitDir="${globals[2]}"
 
 #echo  "${cwRoot} ${gitDir}"
 pushd ${cwRoot} &>/dev/null
@@ -149,7 +150,7 @@ done
 
 #set -x
 
-checkout_level "${cwRoot}"
+checkout_level "${cwRoot}" "${branchName}"
 
 exit 0
 
@@ -215,8 +216,6 @@ cd ${cwRoot}
 git checkout "${args} ${branchName}"
 git commit -am "switch to branch ${branchName}"
 
-
-John Bambenek, Agnieszka Klus Grep pocket reference.pdf
 
 : <<EOF
 while read -r -a line; do

@@ -4,21 +4,22 @@ declare -a args="$@"
 
 . $(dirname $0)/lib/shared_functions.sh
 
-# Maybe we trying to cloning inside of the existing git repo?
-# As for now it is not permitted
-git rev-parse --git-dir &> /dev/null
-if [[ 0 -ne $? ]]; then
-  die "It's not permitted to clone inside of an existing git repo. Look in "$(dirname $0)"/Readme.MD for more information"
-  exit 1
-fi
-
 repoUrl=$1
 repoPath=$2
 
-echo "Will clone repository $repoUrl to $repoPath"
+# Maybe we trying to cloning inside of the existing branding repo?
+# As for now it is not permitted
+exists=$(git rev-parse --git-dir &> /dev/null)
+if (( ! $? )); then
+  # TODO instead of 'cloning' add repo as submodule
+#  die "It's not permitted to clone inside of an existing git repo. Look in "$(dirname $0)"/Readme.MD for more information"
+  exit 0
+fi
+
+cw_echo "Will clone repository $repoUrl to $repoPath"
 git clone "$@"
 
-if [[ -n ${repoPath} ]]; then
+if [ -z "${repoPath}" ]; then
   # no explicit destination repository given
   # take from last created directory
   for i in `ls -lat1 | grep -v ^.$`; do repoPath=${i}; break; done

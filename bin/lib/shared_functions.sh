@@ -65,8 +65,9 @@ function consistentwork_bootstrap () {
 }
 
 function die() {
-  local msg = $1 || "You are not in one of ConsistentWork repositories. Look in "$(dirname $0)"/Readme.MD for more information"
-  cw_echo ${msg}
+  local msg="$1"
+  [ -z "${msg}" ] && "You are not in one of ConsistentWork repositories. Look in "$(dirname $0)"/Readme.MD for more information"
+  cw_echo "${msg}"
   exit 1
 }
 
