@@ -71,8 +71,28 @@ function die() {
   exit 1
 }
 
+typeset cwVerboseContinue=0
 function cw_echo() {
   echo "${0##*/}: $1"
+  if [[ -n "$2" ]]; then
+    shift
+    while [ -n "$1" ]; do
+      cw_verbose "$1\n"
+      shift
+    done
+    cw_verbose_stop
+  fi
+}
+
+function cw_verbose () {
+  (( $verbose )) && printf "verbose: $1" >&2
+}
+
+function cw_verbose_stop () {
+  if (( $verbose )) && (( $cwVerboseContinue )); then
+    cwVerboseContinue=0
+    printf "\n" >&2
+  fi
 }
 
 function splash() {
@@ -95,15 +115,29 @@ function get_repo_url() {
 }
 
 function is_branch_exists() {
-  [[ -z $1 ]] && (die "Wrong arguments for is_branch_exists method")
+  [[ -z $1 ]] && (die "'branch' argument for is_branch_exists() should be given")
   local branchName=$1
-  git rev-parse --no-revs origin/"$branchName" &>/dev/null
-  local ret=$?
-  if [[ ${ret} == 0 ]]; then
-    ret=1
-  else
-    ret=0
+  local where=$2
+  local checkedSites=("", "origin")
+  if [[ -n $where ]]; then
+    # TODO
+    die "'where' parameter for is_branch_exists() not implemented yet"
   fi
+
+  for prefix in "${checkedSites[@]}"; do
+    (( ${#prefix} )) && prefix+="/"
+    git rev-parse --no-revs "${prefix}${branchName}" &>/dev/null
+    local ret=$?
+    if (( $ret )); then
+      ret=1
+    else
+      ret=0
+    fi
+    if (( $ret )); then
+     break
+    fi
+  done
+
   echo ${ret}
   return ${ret}
 }
