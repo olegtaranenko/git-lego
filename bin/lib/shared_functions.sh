@@ -72,10 +72,11 @@ function die() {
 }
 
 function cw_echo() {
-  echo $(basename $0)": "$1
+  echo "${0##*/}: $1"
 }
 
 function splash() {
+  (( $skipSplash )) && return
   local url=$1
   url=${url##*:}
   local msg="umbrella repo: \"${url}\""

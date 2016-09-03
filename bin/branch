@@ -49,8 +49,9 @@ EOF
 
 typeset doView=0
 typeset doSync=1
+typeset doAutoCommit=1
 typeset doPush=0
-(( ! $# )) && doView=1; doSync=0; doPush=0
+(( ! $# )) && doView=1; doSync=0; doPush=0; doAutoCommit=0
 
 # globals is being used in consistent_bootstrap as container return important metrics of branded repo
 
@@ -115,6 +116,13 @@ while [[ -n $1 ]]; do
       doSync=0
       ;;
 
+    --auto-commit)
+      doAutoCommit=1
+      ;;
+    --no-auto-commit)
+      doAutoCommit=0
+      ;;
+
     --view)
       doView=1
       ;;
@@ -134,25 +142,128 @@ while [[ -n $1 ]]; do
   shift
 done
 
+
 . $(dirname $0)/lib/shared_functions.sh
 
+skipSplash=1
 consistentwork_bootstrap
+
+(( $doAutoCommit && ! $doSync )) && die "--auto-commit should be set only with --sync option"
 
 cwRoot="${globals[0]}"
 cwTmpSubmodules="${globals[1]}"
 gitDir="${globals[2]}"
+needMessageToPush=0
+
+
+function check_branch_sync() {
+  local levelPath="$1"
+  local repoBranch
+  local ret=0   # return code, 0 - the repo is syncronized
+  local childRet # child return code
+  cd "${levelPath}"
+
+  while read -a repo; do
+    childRet=0
+    subRepoName="${repo[0]}"
+    checkBranch=$(git config --file .gitmodules --get submodule."${subRepoName}".branch)
+    checkPath="${repo[1]}"
+    subRepoPath="${levelPath}"/"${checkPath}"
+
+    #    echo "${subRepoName}" "${checkBranch}" "${checkPath}"
+
+    pushd "${subRepoPath}" &> /dev/null
+    #    pwd
+
+    repoBranch=$(git rev-parse --abbrev-ref HEAD)
+    local detached=0
+    [[ "${repoBranch}" == "HEAD" ]] && detached=1
+
+    #    echo "${repoBranch}"
+    if [[ ${repoBranch} != ${checkBranch} ]]; then
+
+      ret=1
+      (( ! $doSync )) && cw_echo "Module ${subRepoName} is not synchronized"
+      #      echo "$repoBranch != $checkBranch"
+
+      #
+      if [[ -n "${repoBranch}" && ${detached} == 0  ]]; then
+        cd "${levelPath}"
+        if (( $doSync )); then
+          cw_echo "About to change reference in .gitmodules for submodule $subRepoName to branch $repoBranch"
+          git config --file .gitmodules submodule."${subRepoName}".branch "${repoBranch}"
+          ret=$?
+        fi
+      elif [[ -n "${checkBranch}" && ${detached} == 1 ]]; then
+        cd "${subRepoPath}"
+        if (( $doSync )); then
+          cw_echo "About to checkout submodule $subRepoName to branch $checkBranch"
+          git checkout ${checkBranch}
+          ret=$?
+        fi
+      else
+        cw_echo "Warning: submodule ${subRepoName} can't be syncronized"
+        ret=2
+      fi
+    else
+      (( $doView )) && cw_echo "Module '$subRepoName' at '$checkBranch' branch"
+    fi
+
+    if [[ -e .gitmodules ]]; then
+      check_branch_sync "${subRepoPath}"
+      childRet=$?
+    fi
+    (( $childRet )) && ret = 1
+
+
+    popd  &> /dev/null
+
+    if (( $doSync )); then
+      git diff --exit-code --quiet -- .gitmodules
+      needToCommit=$?
+      #echo "needToCommit=${needToCommit}"
+      if (( $needToCommit )); then
+        if (( $doAutoCommit )); then
+          git add .gitmodules
+          git commit -m "$subRepoName submodule configuration is changed"
+        else
+          needMessageToPush=1
+        fi
+      fi
+    fi
+  done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+
+  return "${ret}"
+}
 
 if (( "$doView" )); then
-  printf "do view"
-  (( $doSync )) && printf ", do sync"
-  (( ! $doSync )) && printf ", NO sync"
-  (( $doPush )) && printf ", do push"
-  (( ! $doPush )) && printf ", NO push"
-  printf "\n"
+  #printf "do view"
+  #(( $doSync )) && printf ", do sync"; (( $doAutoCommit )) && printf "(autocommit)"; (( ! $doAutoCommit )) && printf "(NO autocommit)"; (( ! $doSync )) && printf ", NO sync"
+  #(( $doPush )) && printf ", do push";  (( ! $doPush )) && printf ", NO push"
+#  printf "\n"
 
-  if (( $doSync )); then
 
+  declare ret=0
+
+  cd "${cwRoot}"
+  mainBranch=$(git rev-parse --abbrev-ref HEAD)
+  if [[ ${mainBranch} == "HEAD" ]]; then
+    instruction="$(cat<<EOF
+Umbrella repo is in the detached mode.
+        You need to configure it using '${0##*/} <branch-name>'
+        Use '${0##*/} --help' for more information
+EOF
+)"
+    cw_echo "${instruction}"
+  else
+    cw_echo "Umbrella repo at '$mainBranch' branch"
   fi
-  exit 0
-fi
 
+  check_branch_sync "${cwRoot}"
+  ret=$?
+
+  [[ 0 == $ret && -z ${instruction} ]] && cw_echo "All submodules are mutually syncronized."
+  [[ $ret == 1 ]] && cw_echo "Submodules are not synchronized. Run '${0##*/} --sync' to fix"
+
+  exit $ret
+fi
