@@ -11,7 +11,65 @@ cwTmpSubmodules="${globals[1]}"
 gitDir="${globals[2]}"
 
 function show_help() {
-  echo "TODO: write help"
+cat << EOF
+
+NAME:
+    ${0##*/}
+
+SYNOPSIS:
+    ${0##*/} [--show] [--[no-]sync] [--[no-]push [<remote>]]
+    ${0##*/} --[no-]current [--[no-]recursive] ...] [--[no-]push] new-branch
+    ${0##*/} [--[no-]umbrella] [--[no-]push] new-branch -- <repo> ...
+    ${0##*/}  --delete|-d|-D branch [--[no-]push [<remote>]]
+
+
+DESCRIPTION:
+    Creates new branch or check current branches state of modules hierarchy.
+    All affected repositories SHOULD be in clean state.
+    New branch will be forked from current branches. Use 'checkout --fallback=... <fork-branch'
+    command to change base branches for fine tuning.
+
+    There are two different modes for creating branches for repositories.
+
+    1) direct repositories names listing after '--'; name it "absolute"
+    2) depending, from module ${0##*/} is started: name it "relative" mode.
+
+      In absolute mode doesn\'t matter current module, and affecting on only umbrella (managed by
+    --[no-]umbrella option) and modules, listed after '--'
+
+      In relative mode calling ${0##*/} affects on modules depends on options --[no-]recursive and
+    --[no-]umbrella. If current module is umbrella
+    new branch will be created to current and umbrella repositories only
+
+    Repositories not matching to umbrella branch and having committalbe changes, will be managed
+    to umbrella branch name explicit created.
+
+OPTIONS:
+      --help|-h|-\?
+          get help
+
+      --show
+          check state of the branding modules hierarchy.
+
+      --[no]-sync]
+          valid with --view option only. Attempts to fix the branding modules hierarchy
+          if possible. By default --sync is not performed
+
+      --fallback[=| ]<branch>
+          fallback branch name used instead of <fork-branch>, if last does not exists in sub-module
+
+      --[no-]push[=<remote>]
+          push (or prevent) to <remote> ('origin' by default) repository.
+
+      --
+          marks state after which only affected repositories will be enumerated. Actual with --[no-]current
+          options only.
+
+          ...
+
+          to be continued
+
+EOF
 }
 
 function checkout_level () {
@@ -96,9 +154,11 @@ verbose=0
 doAdd=0 # by default do not add
 typeset branchName
 typeset commit=1
+fallbacks=()
 #set -x
 
 while [[ -n $1 ]]; do
+  (( $stopOptions )) && [[ -z ${1%%-*}  ]] && die "after '--' additional options ($1) are not allowed "
   noAppendArg=0
   case $1 in
     -h|-\?|--help)
@@ -109,24 +169,25 @@ while [[ -n $1 ]]; do
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
       noAppendArg=1
       ;;
+
     --fallback)
       if [ -n "$2" ]; then
         noAppendArg=1
-        fallback=$2
+        ${fallbacks[${#fallbacks[@]}]}=$2
         shift
       else
-        cw_echo 'ERROR: "--fallback" requires a non-empty option argument.' >&2
-        exit 1
+        die "--fallback requires a non-empty option argument."
       fi
       ;;
     --fallback=?*)
       noAppendArg=1
-      fallback=${1#*=} # Delete everything up to "=" and assign the remainder.
+      ${fallbacks[${#fallbacks[@]}]}=${1#*=} # Delete everything up to "=" and assign the remainder.
       ;;
     --fallback=)         # Handle the case of an empty --fallback=
-      cw_echo 'ERROR: "--fallback" requires a non-empty option argument.' >&2
-      exit 1
+      die "--fallback requires a non-empty option argument."
       ;;
+
+
     --commit)
       commit=1
       ;;

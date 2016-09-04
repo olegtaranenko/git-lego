@@ -2,7 +2,22 @@
 
 #set -x
 ################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
-globals=()
+  #
+  ## Exit code of the script
+  ## 0 - success
+  ## 1 - un-success (bad options/... etc)
+  ## 2 - unexpected error (wrong code)
+  #
+declare ret=0
+
+  # After call to 'consistentwork_bootstrap' this array contains following predefined values.
+  #
+  ## "${globals[0]}" [cwRoot]           - path to umbrella repository
+  ## "${globals[1]}" [cwTmpSubmodules]  - temporary file name, which listed all current repositories with additional information
+  ## "${globals[2]}" [gitDir]           - current repository (or sub repository, from the
+  #
+declare globals=()
+
 . $(dirname $0)/lib/shared_functions.sh
 
 
@@ -14,31 +29,38 @@ NAME:
     ${0##*/}
 
 SYNOPSIS:
-    ${0##*/} [--view] [--[no-]sync] [--[no-]push [<remote>]]
-    ${0##*/} [[--fallback <branch1> ...] [--[no-]umbrella]
-                    [--[no-]push] new-branch [<fork-branch>] -- <repo>[:<fork-branch> ...
+    ${0##*/} [--show] [--[no-]sync] [--[no-]push [<remote>]]
+    ${0##*/} --[no-]current [--[no-]recursive] ...] [--[no-]push] new-branch
+    ${0##*/} [--[no-]umbrella] [--[no-]push] new-branch -- <repo> ...
     ${0##*/}  --delete|-d|-D branch [--[no-]push [<remote>]]
 
 
 DESCRIPTION:
     Creates new branch or check current branches state of modules hierarchy.
-    By default new branch will be created to current and umbrella repositories only
-    if affected modules have no committable changes. Repositories not matching to umbrella
-    branch and having committalbe changes, will be managed to umbrella branch name explicit
-    created. Options --repo=<repo1> (can be multiplied) to create branches with same
-    name for <repo1>, <repo2>, ... if they are in clean state. Option --all will create
-    new branch for all repositories. --fallback <branch> option defines base branch to
-    be forked off. If repository does not contain fallback <branch> current branch will
-    be used. Allows multiply --fallback options, first has more priority.
-    Option --repo=<repo>:<repo-branch> override --fallback property and put forking
-    branch to specified <repo-branch>
-    <fork-branch> changes forked off branch for clean modules.
+    All affected repositories SHOULD be in clean state.
+    New branch will be forked from current branches. Use 'checkout --fallback=... <fork-branch'
+    command to change base branches for fine tuning.
+
+    There are two different modes for creating branches for repositories.
+
+    1) direct repositories names listing after '--'; name it "absolute"
+    2) depending, from module ${0##*/} is started: name it "relative" mode.
+
+      In absolute mode doesn\'t matter current module, and affecting on only umbrella (managed by
+    --[no-]umbrella option) and modules, listed after '--'
+
+      In relative mode calling ${0##*/} affects on modules depends on options --[no-]recursive and
+    --[no-]umbrella. If current module is umbrella
+    new branch will be created to current and umbrella repositories only
+
+    Repositories not matching to umbrella branch and having committalbe changes, will be managed
+    to umbrella branch name explicit created.
 
 OPTIONS:
       --help|-h|-\?
           get help
 
-      --view
+      --show
           check state of the branding modules hierarchy.
 
       --[no]-sync]
@@ -52,7 +74,12 @@ OPTIONS:
           push (or prevent) to <remote> ('origin' by default) repository.
 
       --
-          marks state after which only affected repositories will be enumerated. If --[no-]umbrella option is given
+          marks state after which only affected repositories will be enumerated. Actual with --[no-]current
+          options only.
+
+          ...
+
+          to be continued
 
 EOF
 }
@@ -61,62 +88,46 @@ typeset doView=0
 typeset doSync=1
 typeset doAutoCommit=1
 typeset doPush=0
+typeset doCurrent=0
 typeset stopOptions=0
 typeset doUpdate=0
 typeset doUmbrella=1
+typeset doRecursive=0
 typeset branchName
-typeset forkName
 
 (( ! $# )) && doView=1; doSync=0; doPush=0; doAutoCommit=0
 
 # globals is being used in consistent_bootstrap as container return important metrics of branded repo
 
-fallbacks=()
 repos=()
 excludes=()
 
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
-  afterOptions=${1%%--*}
-  (( $stopOptions )) && [[ -z $afterOptions ]] && die "after '--' additional options are not allowed "
+  (( $stopOptions )) && [[ -z ${1%%-*}  ]] && die "after '--' additional options ($1) are not allowed "
   case $1 in
     -h|-\?|--help)
       show_help
       exit 0
       ;;
+    -v|--verbose)
+      verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
+      ;;
 
-    --fallback)
-      if [ -n "$2" ]; then
-        ${fallbacks[${#fallbacks[@]}]}=$2
-        shift
-      else
-        cw_echo 'ERROR: "--fallback" requires a non-empty option argument.' >&2
-        exit 1
-      fi
-      ;;
-    --fallback=?*)
-      ${fallbacks[${#fallbacks[@]}]}=${1#*=} # Delete everything up to "=" and assign the remainder.
-      ;;
-    --fallback=)         # Handle the case of an empty --fallback=
-      cw_echo 'ERROR: "--fallback" requires a non-empty option argument.' >&2
-      exit 1
-      ;;
 
     --exclude)
       if [ -n "$2" ]; then
         ${excludes[${#excludes[@]}]}=$2
         shift
       else
-        cw_echo 'ERROR: "--exclude" requires a non-empty option argument.' >&2
-        exit 1
+        die "--exclude requires a non-empty option argument."
       fi
       ;;
     --exclude=?*)
       ${excludes[${#excludes[@]}]}=${1#*=} # Delete everything up to "=" and assign the remainder.
       ;;
     --exclude=)         # Handle the case of an empty --exclude=
-      cw_echo 'ERROR: "--exclude" requires a non-empty option argument.' >&2
-      exit 1
+      die "--exclude requires a non-empty option argument."
       ;;
 
     --push)
@@ -126,11 +137,25 @@ while [[ -n $1 ]]; do
       doPush=0
       ;;
 
+    --current)
+      doCurrent=1
+      ;;
+    --no-current)
+      doCurrent=0
+      ;;
+
     --umbrella)
       doUmbrella=1
       ;;
     --no-umbrella)
       doUmbrella=0
+      ;;
+
+    --recursive)
+      doRecursive=1
+      ;;
+    --no-recursive)
+      doRecursive=0
       ;;
 
     --sync)
@@ -148,27 +173,35 @@ while [[ -n $1 ]]; do
       doAutoCommit=0
       ;;
 
-    -v|--verbose)
-        verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
-        ;;
-    --view)
+    --view|--show)
       doView=1
       ;;
 
     -d|-D|--delete)
-      doDelete=1
+      ## keep case
+      if [[ $1 == "--delete" ]]; then
+        doDelete="-d"
+      else
+        doDelete=$1
+      fi
       ;;
-
     --)
       stopOptions=1
       ;;
     *)
+      if [[ -z ${1%%-*} ]]; then
+        # TODO take into account getopts parsing call
+        die "Unknown option $1"
+      fi
+
       if (( ! $stopOptions )); then
         if [[ -z ${branchName} ]]; then
           branchName="$1"
           doUpdate=1
-        elif [[ -z ${forkName} ]]; then
-          forkName="$1"
+        elif [[ -n ${1%%-*} ]]; then
+            die "Fork name options '$1' is not supported for now.
+        Please first do 'checkout $1' as base for creating new branch '$branchName'"
+
         fi
       else
         repos[1+${#repos[@]}]="$1"
@@ -191,9 +224,21 @@ cwTmpSubmodules="${globals[1]}"
 gitDir="${globals[2]}"
 needMessageToPush=0
 
-
+## Checks branching state for current repository
+## Let name the branch is synched if entry submodule.<subrepo>.branch in .gitmodules is matched
+## to the branch of the sub-repository, (what can be checked via 'cd subrepo; git branch',
+## It they are mismatched, 3 options are possible.
+## 1. Sub-repo can be detached. In this case we are looking for value in the outer repo and doing git checkout branch
+## 2. Sub-repo is pinned to another branch then it is given in .gitmodules. To sync this we just changing v
+##    value in .gitmodules file of outer repo
+## 3. Sub-repo is detached, no value in .gitmodules. We are uneble to re-syncronize, notifying user about and exitiing.
+## Parameters:
+##      1. path [required] - path getting started checking. It can be called recursively to drill down to the leaves repos.
+## Returns
+##
 function check_branch_sync() {
   local levelPath="$1"
+  [[ -z ${levelPath} ]] && panic "check_branch_sync()... parameter 'path' is required"
   local repoBranch
   local ret=0   # return code, 0 - the repo is syncronized
   local childRet # child return code
@@ -278,13 +323,6 @@ cd "${cwRoot}"
   ## Current state of umbrella branch
   ##
 mainBranch=$(git rev-parse --abbrev-ref HEAD)
-  ##
-  ## Exit code of the script
-  ## 0 - success
-  ## 1 - warning
-  ## 2 - error
-  ##
-declare ret=0
 
 if (( "$doView" )); then
 ############################################### CHECK STATE (SHOW) (VIEW) ################################################
@@ -296,7 +334,7 @@ if (( "$doView" )); then
   if [[ ${mainBranch} == "HEAD" ]]; then
     instruction="$(cat<<EOF
 Umbrella repo is in the detached mode.
-        You need to configure it using '${0##*/} <branch-name>'
+        You need to configure it using 'checkout ${branchName:-<branch-name>}'
         Use '${0##*/} --help' for more information
 EOF
 )"
@@ -321,32 +359,25 @@ elif (( $doUpdate )); then
   typeset mainAlreadyExists=$(is_branch_exists "${branchName}")
   if (( $mainAlreadyExists )) && (( $doUmbrella )); then
     die "Branch '$branchName' already exists in the umbrella repo.
-        You are adviced to do   'checkoout $branchName'
-        and then continue to create branch in sub-repositories with '${0##*/} ... --no-umbrella ...' option"
+        You are advised to do 'checkout $branchName' and then continue to create branch in sub-repositories
+        with '${0##*/} ... --no-umbrella ...' option"
   fi
 
-  typeset
+  verboseMsgs=()
 
   if (( $doUmbrella )); then
-    cw_echo "About to create new branch '$branchName' for umbrella repo" \
-      "Current umbrella branch: $currentUmbrellaState" \
-      "Fork branch name: '$forkName'" \
-      "Affected repos: '${repos[*]}'" \
-      "Fallback branches: '${fallbacks[*]}'"
+    verboseMsgs[0]="About to create new branch '$branchName' for umbrella repo"
   else
-    cw_echo "About to create branch '$branchName' in sub-repositories"
+    verboseMsgs[0]="About to create branch '$branchName' in sub-repositories only"
   fi
+  verboseMsgs[1]="Current umbrella branch: $currentUmbrellaState"
+  verboseMsgs[2]="Affected sub repositories: ${repos[*]}"
+#  verboseMsgs[3]="Fallback branches: ${fallbacks[*]}"
 
-  if [[ -n $forkName && $mainBranch != $forkName ]]; then
-    if (( $doUmbrella )); then
-      # TODO check whether $forkName exist or not, if not - check whether fallback branch exists
-      cd "${cwRoot}"
-      typeset forkExists = $(is_branch_exists "${forkName}")
-      if (( $forkExists )); then
-        cw_echo "Change branch for umbrella from '$mainBranch' to '$forkName'"
-        git checkout "${forkName}"
-      fi
-    fi
+  cw_echo "${verboseMsgs[@]}"
+
+  if (( $doUmbrella )); then
+    reposPath[0]="${cwRoot}"
   fi
 fi
 

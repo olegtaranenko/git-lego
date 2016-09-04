@@ -71,6 +71,13 @@ function die() {
   exit 1
 }
 
+function panic() {
+  local msg="$1"
+  [ -z "${msg}" ] && "Unexpected error. Please check the code or call to support"
+  cw_echo "${msg}"
+  exit 2
+}
+
 typeset cwVerboseContinue=0
 function cw_echo() {
   echo "${0##*/}: $1"
@@ -115,7 +122,7 @@ function get_repo_url() {
 }
 
 function is_branch_exists() {
-  [[ -z $1 ]] && (die "'branch' argument for is_branch_exists() should be given")
+  [[ -z $1 ]] && (panic "'branch' argument for is_branch_exists() should be given")
   local branchName=$1
   local where=$2
   local checkedSites=("", "origin")
@@ -128,7 +135,7 @@ function is_branch_exists() {
     (( ${#prefix} )) && prefix+="/"
     git rev-parse --no-revs "${prefix}${branchName}" &>/dev/null
     local ret=$?
-    if (( $ret )); then
+    if (( ! $ret )); then
       ret=1
     else
       ret=0
