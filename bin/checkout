@@ -1,65 +1,96 @@
 #!/usr/bin/env bash
+################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
 globals=()
 args=()
 
 . $(dirname $0)/lib/shared_functions.sh
 
-consistentwork_bootstrap 
+################################ STANDARD BOOTSTRAP CALL ################################
+consistentwork_bootstrap
 
 cwRoot="${globals[0]}"
 cwTmpSubmodules="${globals[1]}"
 gitDir="${globals[2]}"
 
+
+################################ BRANCH-SPECIFIC HELP ################################
 function show_help() {
 cat << EOF
 
 NAME:
-    ${0##*/}
+    ${0##*/} tool to manage checkouts different version onto umbrella-managed git repositories
 
 SYNOPSIS:
-    ${0##*/} [--show] [--[no-]sync] [--[no-]push [<remote>]]
-    ${0##*/} --[no-]current [--[no-]recursive] ...] [--[no-]push] new-branch
-    ${0##*/} [--[no-]umbrella] [--[no-]push] new-branch -- <repo> ...
-    ${0##*/}  --delete|-d|-D branch [--[no-]push [<remote>]]
-
+    ${0##*/} --[no-]current [--[no-]recursive] ...]
+                [[--fallback <branch1> ...] ([--[no-]push] | [--[no-]commit] | <revision|reference-resolution>) [<path-resolution>] -- <module1> ...
 
 DESCRIPTION:
-    Creates new branch or check current branches state of modules hierarchy.
-    All affected repositories SHOULD be in clean state.
-    New branch will be forked from current branches. Use 'checkout --fallback=... <fork-branch'
-    command to change base branches for fine tuning.
+    Checkout in umbrella mode handles slightly differ from its 'git checkout' counterpart.
+    First it don\'t works with file or files after -- trigger. In umbrella it will works with
+    modules\' list. In absolute convention it defines modules affecting on checkout.
 
-    There are two different modes for creating branches for repositories.
+    Umbrella checkout processing falling into three different modes.
+    1) solo mode is just revision-resolution direct or inderect reference to specific commit,
+        rather than symbolic ref aka branch.
+    2) if no solo mode - relative mode, if path-resolution follows to be a path relative to current directory.
+    3) if path-resolution directs to the umbrella module, it will be an absolute mode, or setting it to '/'
+        or if path-resolution parameter just omitted.
 
-    1) direct repositories names listing after '--'; name it "absolute"
-    2) depending, from module ${0##*/} is started: name it "relative" mode.
+    For solo mode all parameters except umbrella-specific will be used as parameters for usual 'git commit ... '
+    command. For two other modes usual git checkout parameters are not permitted.
 
-      In absolute mode doesn\'t matter current module, and affecting on only umbrella (managed by
-    --[no-]umbrella option) and modules, listed after '--'
+    CAUTION!
+    Umbrella checkout does NOT supports --branch|--orphan functionality. It is moved to
+    'branch <branch-name>' to avoid over-complicated scenarios can happening in multi-repo architecture.
 
-      In relative mode calling ${0##*/} affects on modules depends on options --[no-]recursive and
-    --[no-]umbrella. If current module is umbrella
-    new branch will be created to current and umbrella repositories only
 
-    Repositories not matching to umbrella branch and having committalbe changes, will be managed
-    to umbrella branch name explicit created.
+EXAMPLES:
+    '${0##*/} master /' -> absolute mode, --no-recursive, --current, --no-commit, --no-push
+        ACTION: if umbrella module branch is different from master, it will be checked out to master,
+        all sub-modules will be updated to master as well
+
+    '${0##*/} master' -> same as above
+
+    '${0##*/} develop .' -> relative mode, --no-recursive, --current, --commit, --push
+        This action may cause (or may not) enclosed module to be dirty, if previous commit differs to develop.
+        ACTION: if umbrella module branch differs from develop, it will be checked out to develop,
+        all sub-modules have to be updated to develop as well. If there is any module having no develop branch,
+        getting warning about this, no commit (if no --force given), state of that module is not chnanged.
+
+    '${0##*/} --fallback=develop qa' -> absolute mode, --recursive, --current, --commit, --push
+        ACTION: if umbrella module branch differs from develop, it will be checked out to develop,
+        all sub-modules have to be updated to develop as well. Any of module has no develop branch,
+        but has develop, will be checked out to develop.
+
+    '${0##*/} --fallback=develop --fallback=master qa' -> same as above, but if no qa and develop exists,
+        change to master
+
+    '${0##*/} master .' -> relative mode, --no-recursive, --current, --no-commit, --no-push
+        Change for current module to master branch. Get warning, if enclosing repo not referencing to master.
+        All options except umbrella-specific will be passed to underlying 'git checkout ...' command.
+
+    '${0##*/} release . --commit --push' -> solo mode, --no-recursive, --current, --push
+        all predecessor modules will be updated to new state, if required. After they will be committed and
+        pushed to origin.
+
+    '${0##*/} release ./wiki' -> relative mode, change branch for first sibling wiki module to 'release', --commit
+
+    '${0##*/} release -- wiki docs' -> absolute, looking from umbrella root, doesn\'t matter deep of module.
+
 
 OPTIONS:
       --help|-h|-\?
-          get help
+          get this help
 
-      --show
-          check state of the branding modules hierarchy.
+      --[no-]push[=<remote>]
+          push (or prevent) to <remote> ('origin' by default) repository.
 
-      --[no]-sync]
+      --[no]-commit]
           valid with --view option only. Attempts to fix the branding modules hierarchy
           if possible. By default --sync is not performed
 
       --fallback[=| ]<branch>
           fallback branch name used instead of <fork-branch>, if last does not exists in sub-module
-
-      --[no-]push[=<remote>]
-          push (or prevent) to <remote> ('origin' by default) repository.
 
       --
           marks state after which only affected repositories will be enumerated. Actual with --[no-]current
@@ -72,6 +103,71 @@ OPTIONS:
 EOF
 }
 
+#echo  "${cwRoot} ${gitDir}"
+pushd ${cwRoot} &>/dev/null
+typeset verbose=0
+typeset doAdd=0 # by default do not add
+typeset branchName
+typeset commit=1
+typeset fallbacks=()
+#set -x
+
+################################ PARAMETERS PARSING ################################
+while [[ -n $1 ]]; do
+  (( $stopOptions )) && [[ -z ${1%%-*}  ]] && die "after '--' additional options ($1) are not allowed "
+  noAppendArg=0
+  case $1 in
+    -h|-\?|--help)
+      show_help
+      exit
+      ;;
+    -v|--verbose)
+      verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
+      noAppendArg=1
+      ;;
+
+    --fallback)
+      if [ -n "$2" ]; then
+        noAppendArg=1
+        ${fallbacks[${#fallbacks[@]}]}=$2
+        shift
+      else
+        die "--fallback requires a non-empty option argument."
+      fi
+      ;;
+    --fallback=?*)
+      noAppendArg=1
+      ${fallbacks[${#fallbacks[@]}]}=${1#*=} # Delete everything up to "=" and assign the remainder.
+      ;;
+    --fallback=)         # Handle the case of an empty --fallback=
+      die "--fallback requires a non-empty option argument."
+      ;;
+
+
+    --commit)
+      commit=1
+      ;;
+    --no-commit)
+      commit=0
+      ;;
+
+    -b|-B|--orphan)
+      die "$1 options is not supported for now. Create new branches using CW 'branch ...' command" >&2
+      ;;
+    *)
+      if [[ -z ${branchName} ]]; then
+        branchName=$1
+        noAppendArg=1
+      fi
+      ;;
+  esac
+  ((${noAppendArg})) && args+=$1
+  shift
+done
+
+#set -x
+
+################################ SCRIP SPECIFIC METHODS ################################
 function checkout_level () {
   local repoPath="$1"
   local repoBranch="$2"
@@ -148,68 +244,7 @@ function checkout_level () {
   done
 }
 
-#echo  "${cwRoot} ${gitDir}"
-pushd ${cwRoot} &>/dev/null
-verbose=0
-doAdd=0 # by default do not add
-typeset branchName
-typeset commit=1
-fallbacks=()
-#set -x
-
-while [[ -n $1 ]]; do
-  (( $stopOptions )) && [[ -z ${1%%-*}  ]] && die "after '--' additional options ($1) are not allowed "
-  noAppendArg=0
-  case $1 in
-    -h|-\?|--help)
-      show_help
-      exit
-      ;;
-    -v|--verbose)
-      verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
-      noAppendArg=1
-      ;;
-
-    --fallback)
-      if [ -n "$2" ]; then
-        noAppendArg=1
-        ${fallbacks[${#fallbacks[@]}]}=$2
-        shift
-      else
-        die "--fallback requires a non-empty option argument."
-      fi
-      ;;
-    --fallback=?*)
-      noAppendArg=1
-      ${fallbacks[${#fallbacks[@]}]}=${1#*=} # Delete everything up to "=" and assign the remainder.
-      ;;
-    --fallback=)         # Handle the case of an empty --fallback=
-      die "--fallback requires a non-empty option argument."
-      ;;
-
-
-    --commit)
-      commit=1
-      ;;
-    --no-commit)
-      commit=0
-      ;;
-    -b|-B|--orphan)
-      cw_echo 'ERROR: "'$1'" options is not supported for now. Create new branches using CW branch --help command' >&2
-      exit 1
-      ;;
-    *)
-      if [[ -z ${branchName} ]]; then
-        branchName=$1
-        noAppendArg=1
-      fi
-      ;;
-  esac
-  [[ 1 != ${noAppendArg} ]] && args+=$1
-  shift
-done
-
-#set -x
+################################ MAIN SCRIPT LOGIC ################################
 
 checkout_level "${cwRoot}" "${branchName}"
 
