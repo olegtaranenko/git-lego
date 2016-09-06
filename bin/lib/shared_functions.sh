@@ -50,17 +50,22 @@ function consistentwork_bootstrap () {
     die
   fi
 
+  rm ${cwTmpSubmodules} &>/dev/null
+  splash ${url}
+  pushd ${umbrellaRepoDir} &>/dev/null
+  umbrellaOriginUrl=$(git remote get-url origin)
+  umbrellaRepoName=${umbrellaOriginUrl##*:}
+  umbrellaRepoName=${umbrellaRepoName##*/}
+  git submodule  foreach --recursive  |  tail  -r | sed "s/[^']*//" | tr -d "'" >>  ${cwTmpSubmodules}
+
+  popd ${umbrellaRepoDir} &>/dev/null
+
   #globals is an array defined in the caller of this method
   globals[0]=${umbrellaRepoDir}
   globals[1]=${cwTmpSubmodules}
   globals[2]=${gitDir}
+  globals[3]=${umbrellaRepoName}
 
-  rm ${cwTmpSubmodules} &>/dev/null
-  splash ${url}
-  pushd ${umbrellaRepoDir} &>/dev/null
-  git submodule  foreach --recursive  |  tail  -r | sed "s/[^']*//" | tr -d "'" >>  ${cwTmpSubmodules}
-
-  popd ${umbrellaRepoDir} &>/dev/null
   return 0
 }
 
@@ -79,6 +84,10 @@ function panic() {
 }
 
 typeset cwVerboseContinue=0
+function cw_cr() {
+  printf "\n"
+
+}
 function cw_echo() {
   echo "${0##*/}: $1"
   if [[ -n "$2" ]]; then
