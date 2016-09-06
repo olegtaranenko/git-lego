@@ -98,11 +98,13 @@ function show_current_module_status {
   local repoName=$1
   local info
   if [ -z $3 ]; then
-    info="${globals[3]}, $2"
+    info="${globals[3]} /"
   else
-    info="'$2', $3"
+    info="$3"
   fi
-  local verboseMsg=([1]="full path: $1")
+  local verboseMsg=([1]="path: $1")
+  verboseMsg+=("url: "$(get_repo_url))
+
 
   if (( $verbose )); then
     cw_cr
@@ -131,7 +133,7 @@ function show_current_module_status {
             [[ ${cmd:0:1} == "D" || ${cmd:1:1} == "D" ]] && deleted=1
             [[ ${cmd:0:1} == "R" || ${cmd:1:1} == "R" ]] && renamed=1
             [[ ${cmd:0:1} == "C" || ${cmd:1:1} == "C" ]] && copied=1
-            [[ ${cmd:0:1} == "U" || ${cmd:1:1} == "M" ]] && unmerged=1
+            [[ ${cmd:0:1} == "U" || ${cmd:1:1} == "U" ]] && unmerged=1
           ;;
         esac
 
@@ -212,7 +214,7 @@ function status_level() {
       subRepoPath="${levelPath}"/"${checkPath}"
 
       pushd "${subRepoPath}" &> /dev/null
-      status_level "${subRepoPath}" "${subRepoName}" "$3/$checkPath"
+      status_level "${subRepoPath}" "${subRepoName}" "$3/$subRepoName"
       childRet=$?
       (( $childRet > $ret )) && ret = ${childRet}
       popd  &> /dev/null
@@ -227,7 +229,7 @@ function status_level() {
 typeset commitable
 typeset detached
 cd "${cwRoot}"
-status_level "${cwRoot}" "${cwRoot}"
+status_level "${cwRoot}" "/"
 if (( $commitable )); then
   msg="You have to commit current changes ('commit --help' for more information)"
   if (( $detached )); then
