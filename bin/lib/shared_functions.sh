@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
 
-function parse_opt() {
- echo "parse_opt"
-}
-
 function consistentwork_bootstrap () {
   local gitDir
   local umbrellaRepoDir
@@ -106,10 +102,18 @@ function splash() {
 }
 
 function get_repo_url() {
-  [[ $1 != "." ]] && pushd $1  > /dev/null
+  [[ -n $1 && $1 != "." ]] && pushd $1  > /dev/null
   local url=$(git remote get-url origin)
-  [[ $1 != "." ]] && popd  > /dev/null
+  [[ -n $1 && $1 != "." ]] && popd  > /dev/null
   echo ${url}
+}
+
+function get_repo_name_from_path() {
+  [[ -n $1 && $1 != "." ]] && pushd $1  > /dev/null
+  local gitDir=$(get_repo_git_dir)
+  [[ -n $1 && $1 != "." ]] && popd  > /dev/null
+  local name="${gitDir##*/modules/}"
+  [[ $name == ".git" ]] && echo "/" || echo "$name"
 }
 
 function get_repo_git_dir() {

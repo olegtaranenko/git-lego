@@ -37,7 +37,7 @@ NAME:
     ${0##*/} status in git umbrella-managed modules
 
 SYNOPSIS:
-    '${0##*/} [<any-git-status-options>] [--[no-]umbrella] [-v|--verbose] [<path-resolution>] -- [[<module-name>] ...]'
+    '${0##*/} [<any-git-status-options>] [-v|--verbose] [<path-resolution>] -- [[<module-name>] ...]'
 
 DESCRIPTION:
 
@@ -60,7 +60,7 @@ EOF
 #echo  "${cwRoot} ${gitDir}"
 pushd ${cwRoot} &>/dev/null
 typeset verbose=0
-
+typeset branchName
 #set -x
 
 ################################ PARAMETERS PARSING ################################
@@ -79,14 +79,13 @@ while [[ -n $1 ]]; do
 
     *)
       if [[ -z ${1%%-*} ]]; then
-        args+=$1
+        args+=($1)
       elif [[ -z ${branchName} ]]; then
         branchName=$1
         noAppendArg=1
       fi
       ;;
   esac
-  (( ! ${noAppendArg} )) && args+=$1
   shift
 done
 

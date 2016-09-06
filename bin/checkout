@@ -21,8 +21,7 @@ NAME:
     ${0##*/} tool to manage checkouts different version onto umbrella-managed git repositories
 
 SYNOPSIS:
-    ${0##*/} --[no-]current [--[no-]recursive] ...]
-                [[--fallback <branch1> ...] ([--[no-]push] | [--[no-]commit] | <revision|reference-resolution>) [<path-resolution>] -- <module1> ...
+    ${0##*/} --[no-]current [--[no-]recursive] ...] [[--fallback <branch1> ...] ([--[no-]push] | [--[no-]commit] | <revision|reference-resolution>) [<path-resolution>] -- <module1> ...
 
 DESCRIPTION:
     Checkout in umbrella mode handles slightly differ from its 'git checkout' counterpart.

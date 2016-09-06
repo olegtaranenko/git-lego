@@ -1,18 +1,192 @@
 #!/usr/bin/env bash
-declare -a globals
-declare -a args="$@"
+################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
+  #
+  ## Exit code of the script
+  ## 0 - success
+  ## 1 - un-success (bad options/... etc)
+  ## 2 - unexpected error (wrong code)
+  #
+declare ret=0
+
+  # After call to 'consistentwork_bootstrap' this array contains following predefined values.
+  #
+  ## "${globals[0]}" [cwRoot]           - path to umbrella repository
+  ## "${globals[1]}" [cwTmpSubmodules]  - temporary file name, which listed all current repositories with additional information
+  ## "${globals[2]}" [gitDir]           - current repository (or sub repository, from the
+  #
+globals=()
+
+args=()
 
 . $(dirname $0)/lib/shared_functions.sh
 
+################################ STANDARD BOOTSTRAP CALL ################################
 consistentwork_bootstrap
 
 cwRoot="${globals[0]}"
 cwTmpSubmodules="${globals[1]}"
 gitDir="${globals[2]}"
 
+
+################################ BRANCH-SPECIFIC HELP ################################
+function show_help() {
+cat << EOF
+
+NAME:
+    ${0##*/} status in git umbrella-managed modules
+
+SYNOPSIS:
+    '${0##*/} [<any-git-commit-options>] [-v|--verbose] [<path-resolution>] -- [[<module-name>] ...]'
+
+DESCRIPTION:
+
+
+EXAMPLES:
+    '${0##*/} -v .' -> show verbose status for current module only
+
+
+OPTIONS:
+      --help|-h|-\?
+          get this help
+
+      --
+          marks state after which repositories will be shown in status.
+
+
+EOF
+}
+
 #echo  "${cwRoot} ${gitDir}"
+typeset afterDash=()
+typeset verbose=0
+typeset stopOptions=0
+typeset pathResolution commitMessage commitTemplate doRecursive=0 reuse
+#set -x
+
+################################ PARAMETERS PARSING ################################
+while [[ -n $1 ]]; do
+  noAppendArg=0
+  case $1 in
+    -h|-\?|--help)
+      show_help
+      exit
+      ;;
+    -v|--verbose)
+      verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
+      ;;
+
+    --)
+      stopOptions=1
+      ;;
+
+    -R)
+      doRecursive=1
+      ;;
+    --recursive)
+      doRecursive=1
+      ;;
+    --no-recursive)
+      doRecursive=0
+      ;;
+
+    -[amFtscC]*)
+      args+=($1)
+      #getopts emulation -am...
+      lastOption=${1:(-1)}
+      if [[ $lastOption == "m" ]]; then
+        args+=("\"$2"\")
+        commitMessage=$2
+        shift
+      elif [[ $lastOption == "t" ]]; then
+        args+=("\"$2"\")
+        commitTemplate=$2
+        shift
+      else
+#      if [[ $lastOption == "c" || $lastOption == "C"  || $lastOption == "F" ]]; then
+        args+=("\"$2"\")
+#        reuse=$2
+        shift
+      fi
+      ;;
+
+    --message)
+      args+=($1)
+      args+=("\"$2\"")
+      commitMessage=$2
+      shift
+      ;;
+    --message=*)
+      commitMessage=${1#*=}
+      [ -z ${commitMessage} ] && die "message is not given $1"
+      args+=("\"$1\"")
+      ;;
+
+    --template)
+      args+=($1)
+      commitTemplate=$2
+      shift
+      ;;
+    --template=*)
+      commitTemplate=${1#*=}
+      [ -z ${commitTemplate} ] && die "template is not given $1"
+      args+=($1)
+      ;;
+    *)
+      if (( $stopOptions )); then
+        if [[ -z ${1%%-*} ]]; then
+          die "after '--' additional options ($1) are not allowed "
+        else
+          afterDash+=($1)
+        fi
+      elif [[ -z ${1%%-*} ]]; then
+        args+=($1)
+      elif [[ -z ${pathResolution} ]]; then
+        pathResolution=$1
+      else
+        die "error in parameters [$1]"
+      fi
+      ;;
+  esac
+  shift
+done
+
+echo "args: ${args[*]}, message: \"$commitMessage\", template: \"$commitTemplate\", path: $pathResolution, afterDash: ${afterDash[*]}, -R: $doRecursive"
+#set -x
+
+
+################################ SCRIP SPECIFIC METHODS ################################
+function resolve_module_from_path () {
+  local path=$1
+
+  pushd . &> /dev/null
+  # omitted path means absolute mode
+  if [[ -z $path || "/" == $path ]]; then
+    cd "${cwRoot}"
+  elif [[ "." != $path ]]; then
+    cd "$path" &> /dev/null
+    (( $? )) && die "directory '$path' does not exists"
+  fi
+  # first check maybe going out of umbrella repo
+  git rev-parse --show-toplevel &> /dev/null
+  if (( $? )); then
+    path="${cwRoot}"
+  else
+    path=$(git rev-parse --show-toplevel)
+  fi
+#  echo $(get_repo_name_from_path)
+  echo "${path}"
+  popd &> /dev/null
+}
+
+################################ MAIN SCRIPT LOGIC ################################
+#set -x
+typeset repoName=$(resolve_module_from_path "$pathResolution")
+echo $repoName
+#set +x
 pushd ${cwRoot} &>/dev/null
 
+popd &>/dev/null
+exit 0
 while read -r -a line; do
   path=${line[0]}
   cd "$cwRoot/$path"
@@ -25,4 +199,3 @@ cd $cwRoot
 cw_echo $(pwd)
 git add . -A
 git commit "${args}"
-popd &>/dev/null
