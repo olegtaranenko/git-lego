@@ -166,7 +166,7 @@ done
 
 #set -x
 
-################################ SCRIP SPECIFIC METHODS ################################
+################################ SCRIPT SPECIFIC METHODS ################################
 function checkout_level () {
   local repoPath="$1"
   local repoBranch="$2"

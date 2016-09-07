@@ -224,7 +224,7 @@ cwTmpSubmodules="${globals[1]}"
 gitDir="${globals[2]}"
 needMessageToPush=0
 
-################################ SCRIP SPECIFIC METHODS ################################
+################################ SCRIPT SPECIFIC METHODS ################################
 ## Checks branching state for current repository
 ## Let name the branch is synched if entry submodule.<subrepo>.branch in .gitmodules is matched
 ## to the branch of the sub-repository, (what can be checked via 'cd subrepo; git branch',

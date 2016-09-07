@@ -154,7 +154,7 @@ echo "args: ${args[*]}, message: \"$commitMessage\", template: \"$commitTemplate
 #set -x
 
 
-################################ SCRIP SPECIFIC METHODS ################################
+################################ SCRIPT SPECIFIC METHODS ################################
 function resolve_module_from_path () {
   local path=$1
 
