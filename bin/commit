@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 ################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
+
   #
   ## Exit code of the script
   ## 0 - success
@@ -52,7 +53,7 @@ EOF
 typeset verbose=0
 typeset afterDash=()
 typeset stopOptions=0
-typeset initialPath commitMessage commitTemplate doRecursive=0 reuse
+typeset initialPath commitMessage commitTemplate doRecursive=0 reuse doAppendUntracked=0
 #set -x
 
 ################################ PARAMETERS PARSING ################################
@@ -93,14 +94,19 @@ while [[ -n $1 ]]; do
         args+=("\"$2"\")
         commitTemplate=$2
         shift
-      else
-#      if [[ $lastOption == "c" || $lastOption == "C"  || $lastOption == "F" ]]; then
+      elif [[ $lastOption == "c" || $lastOption == "C"  || $lastOption == "F" ]]; then
         args+=("\"$2"\")
 #        reuse=$2
         shift
+#      else
+        # TODO ?? change behaviour for -a|--add option
+        # in umbrella it will add untracked files as well
       fi
       ;;
 
+    --append-untracked)
+      doAppendUntracked=1
+      ;;
     --message)
       args+=($1)
       args+=("\"$2\"")
@@ -109,7 +115,7 @@ while [[ -n $1 ]]; do
       ;;
     --message=*)
       commitMessage=${1#*=}
-      [ -z ${commitMessage} ] && die "message is not given $1"
+      [[ -z ${commitMessage} ]] && die "message is not given $1"
       args+=("\"$1\"")
       ;;
 
@@ -141,16 +147,18 @@ while [[ -n $1 ]]; do
   esac
   shift
 done
-
-echo "args: ${args[*]}, message: \"$commitMessage\", template: \"$commitTemplate\", path: $initialPath, afterDash: ${afterDash[*]}, -R: $doRecursive"
+#set +x
+#echo "args: ${args[*]}, message: \"$commitMessage\", template: \"$commitTemplate\", path: $initialPath, afterDash: ${afterDash[*]}, -R: $doRecursive"
 #set -x
+#cat "${cwTmpSubmodules}"
 
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 function about_to_commit_level {
-  local filePath=$1
-  local info="about to commit module ${3}"
-  local verboseMsg=([1]="path: $filePath")
+
+  local path=$4
+  local info="about to commit module '${1}'"
+  local verboseMsg=([1]="path: $path")
   verboseMsg+=("url: "$(get_repo_url))
 
   if (( $verbose )); then
@@ -159,21 +167,54 @@ function about_to_commit_level {
 
   local fineIssues infoIssues
   verboseMsg[0]=${info}
-#  set +x
+#set +x
   cw_echo "${verboseMsg[@]}"
 
-#  if (( $verbose > 1 )) && [ -n ${args} ]; then
-#    git status ${args}
-#  fi
 }
 
-function commit_level() {
+function prepare_commit_level() {
   local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "status_level()... parameter 'path' is required"
   local repoBranch
   local ret=0   # return code, 0 - the repo is syncronized
   local childRet # child return code
-  about_to_commit_level "$@"
+  local include=0
+
+#set +x
+  module_porcelain_status
+#set -x
+
+  if (( ${MODULE_STATUS[$MS_COMMITABLE]} )); then
+    while read -a module; do
+      local moduleName=${module[$MFS_MODULE_NAME]}
+      local fullPath=${module[MFS_FULL_PATH]}
+      if [ "$levelPath" == "$fullPath" ]; then
+        include=1
+        if (( ${#afterDash[@]} )); then
+          local found=0
+          for dash in ${afterDash[@]}; do
+            # exact comparison, not matching
+            if [ "${moduleName}" = "${dash}" ]; then
+              found=1
+              break
+            fi
+          done
+          if (( ! ${found} )); then
+            include=0
+          fi
+        fi
+
+        (( $include )) && break
+      fi
+
+    done < <(cat ${globals[$G_MODULES_FN]})
+  fi
+
+  if (( $include )); then
+    affected=1
+    [[ -z ${commitMessage} ]] && onEmptyMessage+="${moduleName}, "
+    echo ${module[@]} >> ${globals[$G_AFFECTED_MODULES]}
+  fi
 
   if [ -f .gitmodules ]; then
     while read -a module; do
@@ -191,7 +232,7 @@ function commit_level() {
       fi
       modulePath+="$subModule"
 
-      commit_level "${subRepoPath}" "${subModule}" "${modulePath}"
+      prepare_commit_level "${subRepoPath}" "${subModule}" "${modulePath}"
       childRet=$?
       (( $childRet > $ret )) && ret = ${childRet}
       popd  &> /dev/null
@@ -201,28 +242,35 @@ function commit_level() {
 
 ################################ MAIN SCRIPT LOGIC ################################
 #set -x
-echo "ARGS: $args"
 typeset modulePath=$(resolve_module_path "${initialPath}")
 typeset resolvedPath=$(module_2_full_path "${modulePath}")
+typeset affected=0
+typeset onEmptyMessage
+[[ -z ${commitMessage} ]] && onEmptyMessage="commit for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
 
 pushd ${resolvedPath} &>/dev/null
 baseModulePath=$(pmd)
-commit_level "${resolvedPath}" "${globals[$G_ROOT_NAME]}" "${baseModulePath}"
+prepare_commit_level "${resolvedPath}" "${globals[$G_ROOT_NAME]}" "${baseModulePath}"
 
+if (( $affected )); then
+  if [[ -z ${commitMessage} && -n ${onEmptyMessage} ]]; then
+   args+=('--message' )
+   args+=(" \"${onEmptyMessage:0:(${#onEmptyMessage}-2)})\"")
+  fi
+
+cat ${globals[$G_AFFECTED_MODULES]}
+
+
+  while read -a module; do
+    cd ${module[$MFS_FULL_PATH]}
+    pwd
+    about_to_commit_level ${module[@]}
+    echo "git commit ${args[@]} ${#args[@]}"
+    (( $doAppendUntracked )) && git add . -A
+    git commit "${args[@]}"
+  done < <(cat ${globals[$G_AFFECTED_MODULES]} | tail -r)
+fi
 popd &>/dev/null
 umbrella_finalize
 
 exit 0
-
-while read -r -a line; do
-  path=${line[0]}
-  cd "$cwRoot/$path"
-  cw_echo $(pwd)
-  git add . -A
-  git commit "${args}"
-done < <(cat ${cwTmpSubmodules})
-
-cd $cwRoot
-cw_echo $(pwd)
-git add . -A
-git commit "${args}"

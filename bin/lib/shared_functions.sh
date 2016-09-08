@@ -113,6 +113,7 @@ function umbrella_bootstrap () {
   #globals is an array defined in the caller of this method
   globals[$G_ROOT_DIR]=${umbrellaRepoDir}
   globals[$G_MODULES_FN]=${tmpModules}
+  globals[$G_AFFECTED_MODULES]=${tmpDir}/affected
   globals[$G_MODULE_GIT_DIR]=${gitDir}
   globals[$G_ROOT_NAME]=${umbrellaRepoName}
 
