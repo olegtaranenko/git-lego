@@ -76,7 +76,7 @@ function umbrella_bootstrap () {
   globals[$G_SCRIPT_TMP_DIRECTORY]=${tmpDir}
 
   tmpModules=${tmpDir}/modules
-  echo ${tmpModules} >&2
+#  echo ${tmpModules} >&2
   git rev-parse --git-dir &> /dev/null
   ret=$?
   if [[ 0 -ne $ret ]]; then

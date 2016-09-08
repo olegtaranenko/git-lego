@@ -51,8 +51,9 @@ EOF
 
 typeset verbose=0
 typeset initialPath
+typeset afterDash=()
+typeset stopOptions=0
 #set -x
-#set -f
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
   (( $stopOptions )) && [[ -z ${1%%-*}  ]] && die "after '--' additional options ($1) are not allowed "
@@ -66,10 +67,18 @@ while [[ -n $1 ]]; do
       ;;
 
     *)
-      if [[ -z ${1%%-*} ]]; then
+      if (( $stopOptions )); then
+        if [[ -z ${1%%-*} ]]; then
+          die "after '--' additional options ($1) are not allowed "
+        else
+          afterDash+=($1)
+        fi
+      elif [[ -z ${1%%-*} ]]; then
         args+=($1)
       elif [[ -z ${initialPath} ]]; then
         initialPath="$1"
+      else
+        die "error in parameters [$1]"
       fi
       ;;
   esac

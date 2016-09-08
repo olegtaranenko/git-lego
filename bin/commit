@@ -49,10 +49,10 @@ EOF
 }
 
 #echo  "${cwRoot} ${gitDir}"
-typeset afterDash=()
 typeset verbose=0
+typeset afterDash=()
 typeset stopOptions=0
-typeset pathResolution commitMessage commitTemplate doRecursive=0 reuse
+typeset initialPath commitMessage commitTemplate doRecursive=0 reuse
 #set -x
 
 ################################ PARAMETERS PARSING ################################
@@ -132,8 +132,8 @@ while [[ -n $1 ]]; do
         fi
       elif [[ -z ${1%%-*} ]]; then
         args+=($1)
-      elif [[ -z ${pathResolution} ]]; then
-        pathResolution=$1
+      elif [[ -z ${initialPath} ]]; then
+        initialPath=$1
       else
         die "error in parameters [$1]"
       fi
@@ -142,43 +142,78 @@ while [[ -n $1 ]]; do
   shift
 done
 
-echo "args: ${args[*]}, message: \"$commitMessage\", template: \"$commitTemplate\", path: $pathResolution, afterDash: ${afterDash[*]}, -R: $doRecursive"
+echo "args: ${args[*]}, message: \"$commitMessage\", template: \"$commitTemplate\", path: $initialPath, afterDash: ${afterDash[*]}, -R: $doRecursive"
 #set -x
 
 
 ################################ SCRIPT SPECIFIC METHODS ################################
-function resolve_module_from_path () {
-  local path=$1
+function about_to_commit_level {
+  local filePath=$1
+  local info="about to commit module ${3}"
+  local verboseMsg=([1]="path: $filePath")
+  verboseMsg+=("url: "$(get_repo_url))
 
-  pushd . &> /dev/null
-  # omitted path means absolute mode
-  if [[ -z $path || "/" == $path ]]; then
-    cd "${cwRoot}"
-  elif [[ "." != $path ]]; then
-    cd "$path" &> /dev/null
-    (( $? )) && die "directory '$path' does not exists"
+  if (( $verbose )); then
+    cw_cr
   fi
-  # first check maybe going out of umbrella repo
-  git rev-parse --show-toplevel &> /dev/null
-  if (( $? )); then
-    path="${cwRoot}"
-  else
-    path=$(git rev-parse --show-toplevel)
+
+  local fineIssues infoIssues
+  verboseMsg[0]=${info}
+#  set +x
+  cw_echo "${verboseMsg[@]}"
+
+#  if (( $verbose > 1 )) && [ -n ${args} ]; then
+#    git status ${args}
+#  fi
+}
+
+function commit_level() {
+  local levelPath="$1"
+  [[ -z ${levelPath} ]] && panic "status_level()... parameter 'path' is required"
+  local repoBranch
+  local ret=0   # return code, 0 - the repo is syncronized
+  local childRet # child return code
+  about_to_commit_level "$@"
+
+  if [ -f .gitmodules ]; then
+    while read -a module; do
+      childRet=0
+      subModule="${module[0]}"
+      checkBranch=$(git config --file .gitmodules --get submodule."${subModule}".branch)
+      localPath="${module[1]}"
+      subRepoPath="${levelPath}"/"${localPath}"
+
+      pushd "${subRepoPath}" &> /dev/null
+#      break
+      local modulePath="$3" #/$subModule"
+      if [[ ${modulePath:(-1)} != "/" ]]; then
+        modulePath+="/"
+      fi
+      modulePath+="$subModule"
+
+      commit_level "${subRepoPath}" "${subModule}" "${modulePath}"
+      childRet=$?
+      (( $childRet > $ret )) && ret = ${childRet}
+      popd  &> /dev/null
+    done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
-#  echo $(get_repo_name_from_path)
-  echo "${path}"
-  popd &> /dev/null
 }
 
 ################################ MAIN SCRIPT LOGIC ################################
 #set -x
-typeset repoName=$(resolve_module_from_path "$pathResolution")
-echo $repoName
-#set +x
-pushd ${cwRoot} &>/dev/null
+echo "ARGS: $args"
+typeset modulePath=$(resolve_module_path "${initialPath}")
+typeset resolvedPath=$(module_2_full_path "${modulePath}")
+
+pushd ${resolvedPath} &>/dev/null
+baseModulePath=$(pmd)
+commit_level "${resolvedPath}" "${globals[$G_ROOT_NAME]}" "${baseModulePath}"
 
 popd &>/dev/null
+umbrella_finalize
+
 exit 0
+
 while read -r -a line; do
   path=${line[0]}
   cd "$cwRoot/$path"
