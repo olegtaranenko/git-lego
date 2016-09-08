@@ -52,7 +52,7 @@ EOF
 typeset verbose=0
 typeset initialPath
 #set -x
-
+#set -f
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
   (( $stopOptions )) && [[ -z ${1%%-*}  ]] && die "after '--' additional options ($1) are not allowed "
@@ -69,7 +69,7 @@ while [[ -n $1 ]]; do
       if [[ -z ${1%%-*} ]]; then
         args+=($1)
       elif [[ -z ${initialPath} ]]; then
-        initialPath=$1
+        initialPath="$1"
       fi
       ;;
   esac
@@ -77,7 +77,7 @@ while [[ -n $1 ]]; do
 done
 
 #echo "args: ${args}"
-#set -x
+set +x
 
 
 ################################ SCRIPT SPECIFIC METHODS ################################
@@ -99,7 +99,7 @@ done
 #
 function show_current_module_status {
   local filePath=$1
-  local info="${3:-/}"
+  local info="${3}"
   local verboseMsg=([1]="path: $filePath")
   verboseMsg+=("url: "$(get_repo_url))
 
@@ -191,7 +191,14 @@ function status_level() {
       subRepoPath="${levelPath}"/"${localPath}"
 
       pushd "${subRepoPath}" &> /dev/null
-      status_level "${subRepoPath}" "${subModule}" "$3/$subModule"
+#      break
+      local modulePath="$3" #/$subModule"
+      if [[ ${modulePath:(-1)} != "/" ]]; then
+        modulePath+="/"
+      fi
+      modulePath+="$subModule"
+
+      status_level "${subRepoPath}" "${subModule}" "${modulePath}"
       childRet=$?
       (( $childRet > $ret )) && ret = ${childRet}
       popd  &> /dev/null
@@ -200,98 +207,6 @@ function status_level() {
 }
 
 
-function get_module_path_up() {
-  local path=${1%/*}
-
-  local ret=1
-  (( ${#path} )) && ret=0
-
-  (( ! $ret )) && echo "${path}"
-  return ${ret}
-}
-
-
-function get_module_path_down() {
-  local path="$1/$2"
-  local ret=1
-
-  for mp in ${g_module_paths[@]}; do
-    if [[ ${mp} == ${path} ]]; then
-      ret=0
-      break
-    fi
-  done
-
-  (( ! $ret )) && echo "${path}"
-  return ${ret}
-}
-
-
-function resolve_module_path() {
-  cantResolve="Can't resolve module path '$1'"
-  local reminder="$1" originPath
-
-  if [[ -n ${reminder} ]]; then
-    if [[ -z ${reminder%%/*} ]]; then
-      originPath=""
-      reminder=${reminder:1}
-    fi
-
-    if [[ -z ${reminder%%./*} || $reminder == "." ]]; then
-      reminder=${reminder:2}
-      originPath=$(pmd)
-    fi
-
-    if [[ -z ${reminder%%../*} || $reminder == ".." ]]; then
-      reminder=${reminder:3}
-      originPath=$(pmd)
-      originPath=$(get_module_path_up ${originPath})
-    fi
-
-    if (( ${#reminder} )); then
-      IFS="/" read -a parts <<< $reminder
-      for part in $parts; do
-        echo $part
-        case $part in
-          \.\.\.)
-            die "${cantResolve}"
-          ;;
-          \.\.)
-            originPath=$(get_module_path_up ${originPath})
-            (( $? )) && die "${cantResolve}"
-          ;;
-          \.)
-            ## nothing
-          ;;
-          *)
-            originPath=$(get_module_path_down ${originPath} ${part})
-            (( $? )) && die "${cantResolve}"
-          ;;
-        esac
-      done
-    fi
-  fi
-
-  [[ -z "$originPath" ]] && originPath="/"
-
-
-  local index=0
-  local ret=1
-  local path="$originPath"
-#  if [[ -n $reminder ]]; then
-#    path+=/${reminder}
-#  fi
-  for mp in ${g_module_paths[@]}; do
-    if [[ ${mp} = $path ]]; then
-      ret=0
-      break
-    fi
-    index=$(( index + 1 ))
-  done
-  echo ${path}
-#  (( ! $ret )) && echo ${g_full_paths[${index}]}
-  return $ret
-}
 
 
 ################################ MAIN SCRIPT LOGIC ################################
@@ -299,20 +214,20 @@ function resolve_module_path() {
 
 typeset commitable
 typeset detached
-set -x
-#echo $initialPath
+#echo "$initialPath"
 
-typeset resolvedPath=$(resolve_module_path $initialPath)
-echo $resolvedPath
-exit 1
+#set -x
+typeset modulePath=$(resolve_module_path "${initialPath}")
+typeset resolvedPath=$(module_2_full_path "${modulePath}")
 
 pushd ${resolvedPath} &>/dev/null
-status_level "${resolvedPath}" "${globals[$G_ROOT_NAME]}"
+baseModulePath=$(pmd)
+status_level "${resolvedPath}" "${globals[$G_ROOT_NAME]}" "${baseModulePath}"
 if (( $commitable )); then
-  msg="You have to commit current changes ('commit --help' for more information)"
+  msg="You have to COMMIT current changes ('commit --help' for more information)"
   if (( $detached )); then
-    msg+=", but CAUTION, one (or more) module(s) detached, than you may lost your changes thereafter."
-    msg2="Your are advised to run CW 'branch ... <branch-name>' command before doing commit"
+    msg2+="One (or more) module(s) DETACHED  ('branch --help' for more information)"
+#    msg2="Your are advised to run CW 'branch ... <branch-name>' command before doing commit"
   fi
   msg+="."
   cw_cr

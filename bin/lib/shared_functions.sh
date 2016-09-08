@@ -117,7 +117,7 @@ function umbrella_bootstrap () {
   globals[$G_ROOT_NAME]=${umbrellaRepoName}
 
   module_startup_investigate "${umbrellaRepoName}" "/" ".git" "${umbrellaRepoDir}" "/"
-  cat $tmpModules >&2
+#  cat $tmpModules >&2
 
   popd &>/dev/null
   splash ${url}
@@ -210,8 +210,8 @@ function splash() {
   url=${url##*/}
   local msg="umbrella repo: "${url}
   local currentGitDir=$(get_repo_git_dir)
-  currentRepoName=${currentGitDir##*/modules/}
-  [[ -n ${currentRepoName} && ${url} != ${currentRepoName} ]] && msg+=", current module '"${currentRepoName}"'"
+  local currentRepoName=${currentGitDir##*/modules/}
+  [[ -n ${currentRepoName} && ${url} != ${currentRepoName} && $currentGitDir != ".git" ]] && msg+=", current module '"${currentRepoName}"'"
   cw_echo "${msg}"
 }
 
@@ -237,6 +237,96 @@ function get_repo_git_dir() {
   echo ${url}
 }
 
+function get_module_path_up() {
+  local ret=1
+
+  if [[ $1 != "/" ]]; then
+    local path=${1%/*}
+
+    (( ! ${#path} )) && path="/"
+    ret=0
+
+  fi
+
+  (( ! $ret )) && echo "${path}"
+  return ${ret}
+}
+
+
+function get_module_path_down() {
+  local path
+  local origin="$1"
+  local reminder="$2"
+  if [[ ${origin:(-1)} == "/" ]]; then
+    path="$origin$reminder"
+  else
+    path="$origin/$reminder"
+  fi
+
+  local ret=1
+
+  for mp in ${g_module_paths[@]}; do
+    if [[ ${mp} == ${path} ]]; then
+      ret=0
+      break
+    fi
+  done
+
+  (( ! $ret )) && echo "${path}"
+  return ${ret}
+}
+
+
+function resolve_module_path() {
+  cantResolve="Can't resolve module path '$1'"
+  local originPath reminder="$1"
+
+  if [[ -n ${reminder} ]]; then
+    if [[ -n ${reminder%%/*} && -n ${reminder%%../*} && $reminder != ".." && -n ${reminder%%./*} && $reminder != "." ]]; then
+      reminder="./$reminder"
+    fi
+
+    if [[ -z ${reminder%%/*} ]]; then
+      originPath="/"
+      reminder=${reminder:1}
+    elif [[ -z ${reminder%%../*} || $reminder == ".." ]]; then
+      reminder=${reminder:3}
+      originPath=$(pmd)
+      originPath=$(get_module_path_up ${originPath})
+      (( $? )) && die "${cantResolve}"
+    elif [[ -z ${reminder%%./*} || $reminder == "." ]]; then
+      reminder=${reminder:2}
+      originPath=$(pmd)
+    fi
+
+    if (( ${#reminder} )); then
+      IFS="/" read -a parts <<< $reminder
+      for part in $parts; do
+        case $part in
+          \.\.\.)
+            die "${cantResolve}"
+          ;;
+          \.\.)
+            originPath=$(get_module_path_up ${originPath})
+            (( $? )) && die "${cantResolve}"
+          ;;
+          \.)
+            ## nothing
+          ;;
+          *)
+            originPath=$(get_module_path_down ${originPath} ${part})
+            (( $? )) && die "${cantResolve}"
+          ;;
+        esac
+      done
+    fi
+  fi
+
+  [[ -z $originPath ]] && originPath="/"
+
+  echo "${originPath}"
+}
+
   #
   ## Print module directory
   ## just like Unix pwd, but for modules hierarchy
@@ -255,6 +345,22 @@ function pmd() {
 
   (( ! $ret )) && echo ${g_module_paths[${index}]}
   return $ret
+}
+
+function module_2_full_path () {
+  local modulePath="$1"
+  local index=0
+  local ret=1
+  for mp in ${g_module_paths[@]}; do
+    if [[ ${mp} = ${modulePath} ]]; then
+      ret=0
+      break
+    fi
+    index=$(( index + 1 ))
+  done
+
+  (( ! $ret )) && echo ${g_full_paths[${index}]}
+  return ${ret}
 }
 
 function is_branch_exists() {
