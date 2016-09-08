@@ -1,9 +1,68 @@
 #!/usr/bin/env bash
 
-function consistentwork_bootstrap () {
+
+  # After call to 'umbrella_bootstrap' this array contains following predefined values.
+  #
+  ## "${globals[$G_ROOT_DIR]}" [cwRoot]           - path to umbrella repository
+  ## "${globals[$G_MODULES_FN]}" [cwTmpSubmodules]  - temporary file name, which listed all current repositories with additional information
+  ## "${globals[$G_MODULE_GIT_DIR]}" [gitDir]           - current repository (or sub repository, from the
+  #
+globals=()
+  #
+  ## Umbrella repo path
+  #
+G_ROOT_DIR=0
+  #
+  ## Reference to temp file which keeps all submodules' path in reversed order
+  ##  It is useful to apply regular actions against all modules, like bulk commit,push,etc
+  #
+G_MODULES_FN=1
+  #
+  ## reference to git directory for current submodule in umbrella coordinates.
+  #
+G_MODULE_GIT_DIR=2
+  #
+  ## Human-readable name of umbrella path
+  #
+G_ROOT_NAME=3
+  #
+  ## Temporary folder owned by script invocation
+G_SCRIPT_TMP_DIRECTORY=4
+
+
+
+#
+## CONSTANTS for module status (see function module_porcelain_status()
+#
+MS_BRANCH_INFO=0
+MS_DETACHED=1
+MS_COMMITABLE=2
+MS_UNTRACKED=3
+MS_MODIFIED=4
+MS_DELETED=5
+MS_ADDED=6
+MS_RENAMED=7
+MS_COPIED=8
+MS_UNMERGED=9
+
+
+#
+## CONSTANTS for module file system
+## Array is filled up in function umbrella_bootstrap () and serves for path resolution
+#
+MFS_MODULE_NAME=0
+MFS_RELATIVE_PATH=1
+MFS_GIT_DIR=2
+MFS_FULL_PATH=3
+
+function umbrella_bootstrap () {
   local gitDir
   local umbrellaRepoDir
-  local -r cwTmpSubmodules="/tmp/_cw_submodules"
+  local tmpDir=$(mktemp -q -d -t "$(basename "$0")" 2>/dev/null || mktemp -q -d)
+  globals[$G_SCRIPT_TMP_DIRECTORY]=${tmpDir}
+
+  tmpModules=${tmpDir}/modules
+  echo ${tmpModules} >&2
   git rev-parse --git-dir &> /dev/null
   ret=$?
   if [[ 0 -ne $ret ]]; then
@@ -28,23 +87,48 @@ function consistentwork_bootstrap () {
     die
   fi
 
-  rm ${cwTmpSubmodules} &>/dev/null
+#  rm ${cwTmpSubmodules} &>/dev/null
   pushd ${umbrellaRepoDir} &>/dev/null
+
   umbrellaOriginUrl=$(git remote get-url origin)
   umbrellaRepoName=${umbrellaOriginUrl##*:}
   umbrellaRepoName=${umbrellaRepoName##*/}
-  git submodule  foreach --recursive  |  tail  -r | sed "s/[^']*//" | tr -d "'" >>  ${cwTmpSubmodules}
 
+#  git submodule foreach --recursive  |  sed "s/[^']*//" | tr -d "'" >>  ${tmpModules}
 
   #globals is an array defined in the caller of this method
-  globals[0]=${umbrellaRepoDir}
-  globals[1]=${cwTmpSubmodules}
-  globals[2]=${gitDir}
-  globals[3]=${umbrellaRepoName}
+  globals[$G_ROOT_DIR]=${umbrellaRepoDir}
+  globals[$G_MODULES_FN]=${tmpModules}
+  globals[$G_MODULE_GIT_DIR]=${gitDir}
+  globals[$G_ROOT_NAME]=${umbrellaRepoName}
+
+  module_startup_investigate
+  cat $tmpModules >&2
+
   popd &>/dev/null
   splash ${url}
 
   return 0
+}
+
+
+function module_startup_investigate() {
+  while read -a module; do
+#    subModule="${module[0]}"                 # MFS_MODULE_NAME=0
+    localPath="${module[1]}"                  # MFS_RELATIVE_PATH=1
+
+    pushd ${localPath} &> /dev/null
+    module+=($(get_repo_git_dir))             # MFS_GIT_DIR=2
+    tmpModules="${globals[$G_MODULES_FN]}"
+    module+=($(pwd))                          # MFS_FULL_PATH=3
+    echo "${module[@]}">>${tmpModules}
+    module_startup_investigate
+    popd &> /dev/null
+  done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+}
+
+function umbrella_finalize() {
+  rm -rf ${globals[$G_SCRIPT_TMP_DIRECTORY]}
 }
 
 function die() {
@@ -62,10 +146,12 @@ function panic() {
 }
 
 typeset cwVerboseContinue=0
+
 function cw_cr() {
   printf "\n"
 
 }
+
 function cw_echo() {
   echo "${0##*/}: $1"
   if [[ -n "$2" ]]; then
@@ -151,19 +237,7 @@ function is_branch_exists() {
   return ${ret}
 }
 
-## Constants
 typeset MODULE_STATUS=()
-MS_BRANCH_INFO=0
-MS_DETACHED=1
-MS_COMMITABLE=2
-MS_UNTRACKED=3
-MS_MODIFIED=4
-MS_DELETED=5
-MS_ADDED=6
-MS_RENAMED=7
-MS_COPIED=8
-MS_UNMERGED=9
-
 #
 ##  Get status for current module
 #
@@ -244,7 +318,7 @@ function possible_branch_from_parent_config() {
     ret=$(git config -f .gitmodules --get "submodule.$repoName.branch")
     popd &> /dev/null
   else
-    ret=/
+    ret=/       ## TODO check, maybe better return empty string?
   fi
-  echo $ret
+  echo ${ret}
 }

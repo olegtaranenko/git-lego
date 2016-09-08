@@ -6,11 +6,11 @@ declare -a args
 
 . $(dirname $0)/lib/shared_functions.sh
 
-consistentwork_bootstrap
+umbrella_bootstrap
 
-cwRoot="${globals[0]}"
-cwTmpSubmodules="${globals[1]}"
-gitDir="${globals[2]}"
+cwRoot="${globals[$G_ROOT_DIR]}"
+cwTmpSubmodules="${globals[$G_MODULES_FN]}"
+gitDir="${globals[$G_MODULE_GIT_DIR]}"
 
 #echo  "${cwRoot} ${gitDir}"
 

@@ -8,24 +8,16 @@
   #
 declare ret=0
 
-  # After call to 'consistentwork_bootstrap' this array contains following predefined values.
-  #
-  ## "${globals[0]}" [cwRoot]           - path to umbrella repository
-  ## "${globals[1]}" [cwTmpSubmodules]  - temporary file name, which listed all current repositories with additional information
-  ## "${globals[2]}" [gitDir]           - current repository (or sub repository, from the
-  #
-globals=()
-
 args=()
 
 . $(dirname $0)/lib/shared_functions.sh
 
 ################################ STANDARD BOOTSTRAP CALL ################################
-consistentwork_bootstrap
+umbrella_bootstrap
 
-cwRoot="${globals[0]}"
-cwTmpSubmodules="${globals[1]}"
-gitDir="${globals[2]}"
+cwRoot="${globals[$G_ROOT_DIR]}"
+cwTmpSubmodules="${globals[$G_MODULES_FN]}"
+gitDir="${globals[$G_MODULE_GIT_DIR]}"
 
 
 ################################ BRANCH-SPECIFIC HELP ################################
