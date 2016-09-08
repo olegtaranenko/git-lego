@@ -8,31 +8,44 @@
   ## "${globals[$G_MODULE_GIT_DIR]}" [gitDir]           - current repository (or sub repository, from the
   #
 globals=()
+
+  ## Global arrays for quick access of
+g_module_name=()
+g_relative_paths=()
+g_git_dirs=()
+g_full_paths=()
+g_module_paths=()
+
+  ################################## CONSTANTS FOR globals array ##########################################
   #
   ## Umbrella repo path
   #
 G_ROOT_DIR=0
   #
-  ## Reference to temp file which keeps all submodules' path in reversed order
-  ##  It is useful to apply regular actions against all modules, like bulk commit,push,etc
-  #
-G_MODULES_FN=1
-  #
   ## reference to git directory for current submodule in umbrella coordinates.
   #
-G_MODULE_GIT_DIR=2
+G_MODULE_GIT_DIR=1
   #
   ## Human-readable name of umbrella path
   #
-G_ROOT_NAME=3
+G_ROOT_NAME=2
   #
   ## Temporary folder owned by script invocation
-G_SCRIPT_TMP_DIRECTORY=4
+G_SCRIPT_TMP_DIRECTORY=3
+  #
+  ## Reference to temp file which keeps all submodules' path in reversed order
+  ##  It is useful to apply regular actions against all modules, like bulk commit,push,etc
+  #
+G_MODULES_FN=4
+  #
+  ## Reference to temp file which keeps all submodules' path in reversed order
+  ##  It is useful to apply regular actions against all modules, like bulk commit,push,etc
+  #
+G_AFFECTED_MODULES=5
 
 
 
-#
-## CONSTANTS for module status (see function module_porcelain_status()
+#################### CONSTANTS for MODULE STATUS (see function module_porcelain_status() ####################
 #
 MS_BRANCH_INFO=0
 MS_DETACHED=1
@@ -46,14 +59,15 @@ MS_COPIED=8
 MS_UNMERGED=9
 
 
-#
-## CONSTANTS for module file system
+
+########################### CONSTANTS FOR MODULE FILE SYSTEM  ###############################################
 ## Array is filled up in function umbrella_bootstrap () and serves for path resolution
 #
 MFS_MODULE_NAME=0
 MFS_RELATIVE_PATH=1
 MFS_GIT_DIR=2
 MFS_FULL_PATH=3
+MFS_MODULE_PATH=4
 
 function umbrella_bootstrap () {
   local gitDir
@@ -102,7 +116,7 @@ function umbrella_bootstrap () {
   globals[$G_MODULE_GIT_DIR]=${gitDir}
   globals[$G_ROOT_NAME]=${umbrellaRepoName}
 
-  module_startup_investigate
+  module_startup_investigate "${umbrellaRepoName}" "/" ".git" "${umbrellaRepoDir}" "/"
   cat $tmpModules >&2
 
   popd &>/dev/null
@@ -113,16 +127,30 @@ function umbrella_bootstrap () {
 
 
 function module_startup_investigate() {
+  echo "$@">>${tmpModules}
+  # map emulation for quick
+  g_module_name+=($1)
+  g_relative_paths+=($2)
+  g_git_dirs+=($3)
+  g_full_paths+=($4)
+  g_module_paths+=($5)
+
   while read -a module; do
-#    subModule="${module[0]}"                 # MFS_MODULE_NAME=0
-    localPath="${module[1]}"                  # MFS_RELATIVE_PATH=1
+    subModule="${module[MFS_MODULE_NAME]}"
+    localPath="${module[MFS_RELATIVE_PATH]}"
 
     pushd ${localPath} &> /dev/null
     module+=($(get_repo_git_dir))             # MFS_GIT_DIR=2
     tmpModules="${globals[$G_MODULES_FN]}"
     module+=($(pwd))                          # MFS_FULL_PATH=3
-    echo "${module[@]}">>${tmpModules}
-    module_startup_investigate
+
+    if [[ $5 == "/" ]]; then                  # MFS_MODULE_PATH = 4
+      module+=("/$subModule")
+    else
+      module+=("$5/$subModule")
+    fi
+
+    module_startup_investigate ${module[@]}
     popd &> /dev/null
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
 }
@@ -207,6 +235,26 @@ function get_repo_git_dir() {
   local url=$(git rev-parse --git-dir)
   [[ -n $1 && $1 != "." ]] && popd  > /dev/null
   echo ${url}
+}
+
+  #
+  ## Print module directory
+  ## just like Unix pwd, but for modules hierarchy
+  #
+function pmd() {
+  local gitDir=$(get_repo_git_dir)
+  local index=0
+  local ret=1
+  for mp in ${g_git_dirs[@]}; do
+    if [[ ${mp} = ${gitDir} ]]; then
+      ret=0
+      break
+    fi
+    index=$(( index + 1 ))
+  done
+
+  (( ! $ret )) && echo ${g_module_paths[${index}]}
+  return $ret
 }
 
 function is_branch_exists() {

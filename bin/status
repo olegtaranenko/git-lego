@@ -200,55 +200,111 @@ function status_level() {
 }
 
 
-function resolve_module_from_path() {
-  local modulePath="$1"
-  [[ -z ${modulePath} ]] && panic "resolve_module_from_path()... parameter 'path' is required"
+function get_module_path_up() {
+  local path=${1%/*}
 
-  pushd . &> /dev/null
-  if [[ -z ${modulePath%%/*} ]]; then
-    cd "${cwRoot}"
-    modulePath=${modulePath:1}
+  local ret=1
+  (( ${#path} )) && ret=0
+
+  (( ! $ret )) && echo "${path}"
+  return ${ret}
+}
+
+
+function get_module_path_down() {
+  local path="$1/$2"
+  local ret=1
+
+  for mp in ${g_module_paths[@]}; do
+    if [[ ${mp} == ${path} ]]; then
+      ret=0
+      break
+    fi
+  done
+
+  (( ! $ret )) && echo "${path}"
+  return ${ret}
+}
+
+
+function resolve_module_path() {
+  cantResolve="Can't resolve module path '$1'"
+  local reminder="$1" originPath
+
+  if [[ -n ${reminder} ]]; then
+    if [[ -z ${reminder%%/*} ]]; then
+      originPath=""
+      reminder=${reminder:1}
+    fi
+
+    if [[ -z ${reminder%%./*} || $reminder == "." ]]; then
+      reminder=${reminder:2}
+      originPath=$(pmd)
+    fi
+
+    if [[ -z ${reminder%%../*} || $reminder == ".." ]]; then
+      reminder=${reminder:3}
+      originPath=$(pmd)
+      originPath=$(get_module_path_up ${originPath})
+    fi
+
+    if (( ${#reminder} )); then
+      IFS="/" read -a parts <<< $reminder
+      for part in $parts; do
+        echo $part
+        case $part in
+          \.\.\.)
+            die "${cantResolve}"
+          ;;
+          \.\.)
+            originPath=$(get_module_path_up ${originPath})
+            (( $? )) && die "${cantResolve}"
+          ;;
+          \.)
+            ## nothing
+          ;;
+          *)
+            originPath=$(get_module_path_down ${originPath} ${part})
+            (( $? )) && die "${cantResolve}"
+          ;;
+        esac
+      done
+    fi
   fi
 
-  IFS="/" read -a parts <<< $modulePath
-  for part in $parts; do
-    echo $part
-    case $part in
-      \.\.)
-        module_up
-      ;;
-      \.)
-        ## nothing
-      ;;
-      *)
-        # enumerate if sub-module exists
-        while read -a module; do
-          subModule="${module[0]}"
-          localPath="${module[1]}"
+  [[ -z "$originPath" ]] && originPath="/"
 
-          if [[ $part == $subModule ]]; then
-            cd ${localPath}
-            break
-          fi
-        done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
-      ;;
-    esac
+
+  local index=0
+  local ret=1
+  local path="$originPath"
+#  if [[ -n $reminder ]]; then
+#    path+=/${reminder}
+#  fi
+  for mp in ${g_module_paths[@]}; do
+    if [[ ${mp} = $path ]]; then
+      ret=0
+      break
+    fi
+    index=$(( index + 1 ))
   done
-  echo $(pwd)
-  popd &> /dev/null
+  echo ${path}
+#  (( ! $ret )) && echo ${g_full_paths[${index}]}
+  return $ret
 }
+
 
 ################################ MAIN SCRIPT LOGIC ################################
 #cat ${uModules}
 
 typeset commitable
 typeset detached
-#set -x
+set -x
 #echo $initialPath
-[[ -z $initialPath ]] && initialPath="/"
 
-typeset resolvedPath=$(resolve_module_from_path $initialPath)
-#echo $resolvedPath
+typeset resolvedPath=$(resolve_module_path $initialPath)
+echo $resolvedPath
+exit 1
 
 pushd ${resolvedPath} &>/dev/null
 status_level "${resolvedPath}" "${globals[$G_ROOT_NAME]}"
