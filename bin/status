@@ -66,6 +66,9 @@ while [[ -n $1 ]]; do
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
       ;;
 
+    --)
+      stopOptions=1
+      ;;
     *)
       if (( $stopOptions )); then
         if [[ -z ${1%%-*} ]]; then
@@ -86,7 +89,7 @@ while [[ -n $1 ]]; do
 done
 
 #echo "args: ${args}"
-set +x
+#set +x
 
 
 ################################ SCRIPT SPECIFIC METHODS ################################
@@ -119,7 +122,7 @@ function show_current_module_status {
   local fineIssues infoIssues
 #  set -x
 
-  module_porcelain_status
+  module_porcelain_status ${0##*/}
   
   (( ${MODULE_STATUS[$MS_DETACHED]} )) && detached=${MODULE_STATUS[$MS_DETACHED]}
   (( ${MODULE_STATUS[$MS_COMMITABLE]} )) && commitable=${MODULE_STATUS[$MS_COMMITABLE]}
@@ -183,13 +186,19 @@ function show_current_module_status {
   fi
 }
 
+
 function status_level() {
   local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "status_level()... parameter 'path' is required"
   local repoBranch
   local ret=0   # return code, 0 - the repo is syncronized
   local childRet # child return code
-  show_current_module_status "$@"
+
+  drop_to_affected ${levelPath}
+  local applied=$?
+  if (( ! $applied )); then
+    show_current_module_status "$@"
+  fi
 
   if [ -f .gitmodules ]; then
     while read -a module; do
@@ -217,21 +226,19 @@ function status_level() {
 
 
 
-
 ################################ MAIN SCRIPT LOGIC ################################
-#cat ${uModules}
-
 typeset commitable
 typeset detached
-#echo "$initialPath"
 
 #set -x
 typeset modulePath=$(resolve_module_path "${initialPath}")
-typeset resolvedPath=$(module_2_full_path "${modulePath}")
+read moduleName resolvedPath < <(module_info "${modulePath}" "name" "path")
 
 pushd ${resolvedPath} &>/dev/null
 baseModulePath=$(pmd)
-status_level "${resolvedPath}" "${globals[$G_ROOT_NAME]}" "${baseModulePath}"
+status_level "${resolvedPath}" "${moduleName}" "${baseModulePath}"
+ret=$?
+
 if (( $commitable )); then
   msg="You have to COMMIT current changes ('commit --help' for more information)"
   if (( $detached )); then
@@ -245,7 +252,6 @@ if (( $commitable )); then
   (( ! $verbose )) && cw_echo "'${0##*/} -v ...' option to get output more verbose or '${0##*/} --help' for other options"
   cw_cr
 fi
-ret=$?
 
 popd &>/dev/null
 

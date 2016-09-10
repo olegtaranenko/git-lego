@@ -47,16 +47,19 @@ G_AFFECTED_MODULES=5
 
 #################### CONSTANTS for MODULE STATUS (see function module_porcelain_status() ####################
 #
-MS_BRANCH_INFO=0
-MS_DETACHED=1
-MS_COMMITABLE=2
-MS_UNTRACKED=3
-MS_MODIFIED=4
-MS_DELETED=5
-MS_ADDED=6
-MS_RENAMED=7
-MS_COPIED=8
-MS_UNMERGED=9
+MS_BRANCH_INFO=0   # String
+MS_DETACHED=1      # 1/0
+MS_COMMITABLE=2    # 1/0
+MS_UNTRACKED=3     # ?
+MS_MODIFIED=4      # M
+MS_DELETED=5       # D
+MS_ADDED=6         # A
+MS_RENAMED=7       # R
+MS_COPIED=8        # C
+MS_UNMERGED=9      # U
+MS_PUSHABLE=10     # 1/0
+MS_PULLABLE=11     # 1/0
+MS_SUBMODULES=12   # S
 
 
 
@@ -170,14 +173,14 @@ function die() {
 function panic() {
   local msg="$1"
   [ -z "${msg}" ] && "Unexpected error. Please check the code or call to support"
-  cw_echo "${msg}"
+  echo "panic: ${msg}"
   exit 2
 }
 
 typeset cwVerboseContinue=0
 
 function cw_cr() {
-  printf "\n"
+  printf "\n" >&2
 
 }
 
@@ -185,6 +188,7 @@ function cw_echo() {
   echo "${0##*/}: $1"
   if [[ -n "$2" ]]; then
     shift
+    cw_verbose_start
     while [ -n "$1" ]; do
       cw_verbose "$1\n"
       shift
@@ -193,14 +197,24 @@ function cw_echo() {
   fi
 }
 
+function cw_verbose_start () {
+  cwVerboseContinue=1
+}
+
+
 function cw_verbose () {
-  (( $verbose )) && printf "verbose: $1" >&2
+  if (( $verbose )); then
+    printf "verbose: $1" >&2
+    (( ! $cwVerboseContinue )) && printf "\n" >&2
+  fi
 }
 
 function cw_verbose_stop () {
-  if (( $verbose )) && (( $cwVerboseContinue )); then
+  if (( $verbose )); then
+    if (( $cwVerboseContinue )); then
+      printf "\n" >&2
+    fi
     cwVerboseContinue=0
-    printf "\n" >&2
   fi
 }
 
@@ -250,6 +264,76 @@ function get_module_path_up() {
   fi
 
   (( ! $ret )) && echo "${path}"
+  return ${ret}
+}
+
+
+function level_verbose_about_to {
+
+  local path=$4
+  local info="about to ${0##*/} module '${1}'"
+  # global
+  verboseMsg=([1]="path: $path")
+  verboseMsg+=("url: "$(get_repo_url))
+
+  if (( $verbose )); then
+    cw_cr
+  fi
+
+  local fineIssues infoIssues
+  verboseMsg[0]=${info}
+#set +x
+  cw_echo "${verboseMsg[@]}"
+
+}
+
+
+#
+## Checks affected modules, which can be set after double dash
+## ie. status / -- libs will check only libs module
+#
+# Parameters
+#     $1 Module's full path to be tested on existence in afterDash array
+#
+# Returns
+#     0 - module is found and listed in after dash parameters, or after-dash parameters are not set
+#     1 - module is found but not listed in after dash parameters (out-filtered)
+#     2 - N/A module is not found or wrong argument
+#
+# Globals using
+#     $afterDash - array contains module list after double dash
+#
+function drop_to_affected() {
+  local ret=0
+  local levelPath=$1
+
+  [[ -z $levelPath ]] && return 2;
+
+  while read -a module; do
+    local moduleName=${module[$MFS_MODULE_NAME]}
+    local found=0
+    local fullPath=${module[MFS_FULL_PATH]}
+    if [ "$levelPath" == "$fullPath" ]; then
+      found=1
+      if (( ! ${#afterDash[@]} )); then
+        for dash in ${afterDash[@]}; do
+          # exact comparison, not matching
+          if [ "${moduleName}" == "${dash}" ]; then
+            found=1
+            break
+          fi
+        done
+      fi
+      if (( ! ${found} )); then
+        ret=1
+      else
+        affected=1
+        echo ${module[@]} >> ${globals[$G_AFFECTED_MODULES]}
+      fi
+      break
+    fi
+  done < <(cat ${globals[$G_MODULES_FN]})
+
   return ${ret}
 }
 
@@ -348,10 +432,12 @@ function pmd() {
   return $ret
 }
 
-function module_2_full_path () {
+function module_info () {
   local modulePath="$1"
+  shift
   local index=0
   local ret=1
+  local results=()
   for mp in ${g_module_paths[@]}; do
     if [[ ${mp} = ${modulePath} ]]; then
       ret=0
@@ -360,7 +446,35 @@ function module_2_full_path () {
     index=$(( index + 1 ))
   done
 
-  (( ! $ret )) && echo ${g_full_paths[${index}]}
+
+  if (( ! $ret )); then
+    ret=1
+    while [[ -n $1 ]]; do
+      ret=0
+      case $1 in
+        index)
+          results+=($index)
+          ;;
+        name)
+          results+=(${g_module_name[$index]})
+          ;;
+        relative|local)
+          results+=(${g_relative_paths[$index]})
+          ;;
+        full|path)
+          results+=(${g_full_paths[$index]})
+          ;;
+        gitdir)
+          results+=(${g_git_dirs[$index]})
+          ;;
+        *)
+          ret=2
+          break
+      esac
+      shift
+    done
+  fi
+  (( ${#results[@]} )) && echo ${results[@]}
   return ${ret}
 }
 
@@ -401,7 +515,7 @@ typeset MODULE_STATUS=()
 #     Directory of module should be set outside this function.
 #
 ## Parameters
-#     none
+#     $1 - mode, which indicated the caller script, ie. "status"/"commit"/...
 #
 ## Globals affected
 #     $MODULE_STATUS array
@@ -419,9 +533,14 @@ function module_porcelain_status () {
 #  else
 #    pwd=$(pwd)
 #  fi
-  unset MODULE_STATUS
 
-  while read -a output; do
+  local interactionRemote=0
+  [[ $1 == "push" || $1 == "pull" ]] && interactionRemote=1
+
+  unset MODULE_STATUS
+#  set -x
+  while read line; do
+    local output=(${line})
     case ${output[0]} in
       \#\#)
         if [[ -n ${output[1]} ]]; then
@@ -434,9 +553,16 @@ function module_porcelain_status () {
           fi
           [[ -z ${MODULE_STATUS[$MS_BRANCH_INFO]} ]] && MODULE_STATUS[$MS_BRANCH_INFO]="${output[@]:1}"
         fi
-      ;;
+        # TODO will not working in locale differs form en
+        # TODO git rev-list --count can help!!
+        if (( $interactionRemote )); then
+#          local remoteRef="origin/"
+          local ahead=$(echo $line | grep -Eo "ahead [[:digit:]]" | grep -Eo "[[:digit:]]")
+          (( ! $? )) && (( $ahead )) && MODULE_STATUS[$MS_PUSHABLE]=1
+        fi
+        ;;
       *)
-        cmd=${output:0:2}
+        local cmd=${output:0:2}
         case ${cmd} in
           \?\?)
             MODULE_STATUS[$MS_UNTRACKED]=1
@@ -453,6 +579,7 @@ function module_porcelain_status () {
       ;;
     esac
   done < <(git status -u --porcelain -b)
+#  set +x
 
 #  [[ -n $1 && $1 != "." ]] && popd  &> /dev/null
 #  set +x

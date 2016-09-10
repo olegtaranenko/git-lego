@@ -53,7 +53,7 @@ EOF
 typeset verbose=0
 typeset afterDash=()
 typeset stopOptions=0
-typeset initialPath commitMessage commitTemplate doRecursive=0 reuse doAppendUntracked=0
+typeset initialPath commitMessage commitTemplate doRecursive=0 reuse doAppendUntracked=1
 #set -x
 
 ################################ PARAMETERS PARSING ################################
@@ -72,13 +72,10 @@ while [[ -n $1 ]]; do
       stopOptions=1
       ;;
 
-    -R)
+    --recursive|-r)
       doRecursive=1
       ;;
-    --recursive)
-      doRecursive=1
-      ;;
-    --no-recursive)
+    --no-recursive|-R)
       doRecursive=0
       ;;
 
@@ -104,9 +101,13 @@ while [[ -n $1 ]]; do
       fi
       ;;
 
-    --append-untracked)
+    --append-untracked|-u)
       doAppendUntracked=1
       ;;
+    --no-append-untracked|-U)
+      doAppendUntracked=0
+      ;;
+
     --message)
       args+=($1)
       args+=("\"$2\"")
@@ -147,91 +148,49 @@ while [[ -n $1 ]]; do
   esac
   shift
 done
-#set +x
-#echo "args: ${args[*]}, message: \"$commitMessage\", template: \"$commitTemplate\", path: $initialPath, afterDash: ${afterDash[*]}, -R: $doRecursive"
-#set -x
-#cat "${cwTmpSubmodules}"
 
 
 ################################ SCRIPT SPECIFIC METHODS ################################
-function about_to_commit_level {
-
-  local path=$4
-  local info="about to commit module '${1}'"
-  local verboseMsg=([1]="path: $path")
-  verboseMsg+=("url: "$(get_repo_url))
-
-  if (( $verbose )); then
-    cw_cr
-  fi
-
-  local fineIssues infoIssues
-  verboseMsg[0]=${info}
-#set +x
-  cw_echo "${verboseMsg[@]}"
-
-}
-
 function prepare_commit_level() {
   local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "status_level()... parameter 'path' is required"
+  local moduleName="$2"
   local repoBranch
   local ret=0   # return code, 0 - the repo is syncronized
   local childRet # child return code
-  local include=0
 
-#set +x
-  module_porcelain_status
-#set -x
+  module_porcelain_status ${0##*/}
 
+  local applied=1
   if (( ${MODULE_STATUS[$MS_COMMITABLE]} )); then
-    while read -a module; do
-      local moduleName=${module[$MFS_MODULE_NAME]}
-      local fullPath=${module[MFS_FULL_PATH]}
-      if [ "$levelPath" == "$fullPath" ]; then
-        include=1
-        if (( ${#afterDash[@]} )); then
-          local found=0
-          for dash in ${afterDash[@]}; do
-            # exact comparison, not matching
-            if [ "${moduleName}" = "${dash}" ]; then
-              found=1
-              break
-            fi
-          done
-          if (( ! ${found} )); then
-            include=0
-          fi
-        fi
+    drop_to_affected ${levelPath}
+    applied=$?
 
-        (( $include )) && break
-      fi
-
-    done < <(cat ${globals[$G_MODULES_FN]})
+    if (( ! $applied )); then
+      affected=1
+      [[ -z ${commitMessage} ]] && onEmptyMessage+="${moduleName}, "
+    fi
   fi
 
-  if (( $include )); then
-    affected=1
-    [[ -z ${commitMessage} ]] && onEmptyMessage+="${moduleName}, "
-    echo ${module[@]} >> ${globals[$G_AFFECTED_MODULES]}
+  if (( $applied )); then
+    skippedModules+=(${moduleName})
   fi
 
   if [ -f .gitmodules ]; then
     while read -a module; do
       childRet=0
       subModule="${module[0]}"
-      checkBranch=$(git config --file .gitmodules --get submodule."${subModule}".branch)
       localPath="${module[1]}"
       subRepoPath="${levelPath}"/"${localPath}"
 
       pushd "${subRepoPath}" &> /dev/null
-#      break
       local modulePath="$3" #/$subModule"
       if [[ ${modulePath:(-1)} != "/" ]]; then
         modulePath+="/"
       fi
       modulePath+="$subModule"
-
+#      stopMachine=$(( $stopMachine + 1 ))
+#      (( $stopMachine > 2 )) && exit 3
       prepare_commit_level "${subRepoPath}" "${subModule}" "${modulePath}"
       childRet=$?
       (( $childRet > $ret )) && ret = ${childRet}
@@ -241,16 +200,17 @@ function prepare_commit_level() {
 }
 
 ################################ MAIN SCRIPT LOGIC ################################
-#set -x
 typeset modulePath=$(resolve_module_path "${initialPath}")
-typeset resolvedPath=$(module_2_full_path "${modulePath}")
+read moduleName resolvedPath < <(module_info "${modulePath}" "name" "path")
+
 typeset affected=0
 typeset onEmptyMessage
+typeset skippedModules=()
 [[ -z ${commitMessage} ]] && onEmptyMessage="commit for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
 
 pushd ${resolvedPath} &>/dev/null
 baseModulePath=$(pmd)
-prepare_commit_level "${resolvedPath}" "${globals[$G_ROOT_NAME]}" "${baseModulePath}"
+prepare_commit_level "${resolvedPath}" "${moduleName}" "${baseModulePath}"
 
 if (( $affected )); then
   if [[ -z ${commitMessage} && -n ${onEmptyMessage} ]]; then
@@ -258,19 +218,23 @@ if (( $affected )); then
    args+=(" \"${onEmptyMessage:0:(${#onEmptyMessage}-2)})\"")
   fi
 
-cat ${globals[$G_AFFECTED_MODULES]}
-
+#cat ${globals[$G_AFFECTED_MODULES]}
 
   while read -a module; do
     cd ${module[$MFS_FULL_PATH]}
-    pwd
-    about_to_commit_level ${module[@]}
-    echo "git commit ${args[@]} ${#args[@]}"
+    level_verbose_about_to ${module[@]}
+#    echo "git commit ${args[@]} ${#args[@]}"
+
     (( $doAppendUntracked )) && git add . -A
     git commit "${args[@]}"
   done < <(cat ${globals[$G_AFFECTED_MODULES]} | tail -r)
 fi
+
+if (( ${#skippedModules} )); then
+  cw_echo "Not affected modules: ${skippedModules[*]}"
+fi
+
 popd &>/dev/null
 umbrella_finalize
 
-exit 0
+exit $ret
