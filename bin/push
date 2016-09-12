@@ -11,6 +11,7 @@ declare ret=0
 
 args=()
 
+. $(dirname $0)/lib/mfs.sh
 . $(dirname $0)/lib/shared_functions.sh
 
 ################################ STANDARD BOOTSTRAP CALL ################################

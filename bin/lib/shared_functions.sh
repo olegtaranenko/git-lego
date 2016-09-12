@@ -161,6 +161,7 @@ function module_startup_investigate() {
 
 function umbrella_finalize() {
   rm -rf ${globals[$G_SCRIPT_TMP_DIRECTORY]}
+  _m_finalize
 }
 
 function die() {
@@ -411,26 +412,6 @@ function resolve_module_path() {
 
   echo "${originPath}"
 }
-
-  #
-  ## Print module directory
-  ## just like Unix pwd, but for modules hierarchy
-  #
-#function pmd() {
-#  local gitDir=$(get_repo_git_dir)
-#  local index=0
-#  local ret=1
-#  for mp in ${g_git_dirs[@]}; do
-#    if [[ ${mp} = ${gitDir} ]]; then
-#      ret=0
-#      break
-#    fi
-#    index=$(( index + 1 ))
-#  done
-#
-#  (( ! $ret )) && echo ${g_module_paths[${index}]}
-#  return $ret
-#}
 
 function module_info () {
   local modulePath="$1"

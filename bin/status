@@ -11,6 +11,7 @@ declare ret=0
 
 args=()
 
+. $(dirname $0)/lib/mfs.sh
 . $(dirname $0)/lib/shared_functions.sh
 
 ################################ STANDARD BOOTSTRAP CALL ################################
@@ -235,7 +236,7 @@ typeset modulePath=$(resolve_module_path "${initialPath}")
 read moduleName resolvedPath < <(module_info "${modulePath}" "name" "path")
 
 pushd ${resolvedPath} &>/dev/null
-baseModulePath=pmd
+baseModulePath=$(_m_pmd)
 status_level "${resolvedPath}" "${moduleName}" "${baseModulePath}"
 ret=$?
 
