@@ -207,7 +207,8 @@ _m_help_options
 }
 
 mls() {
-  path=$1
+  local path=$1
+  local ret=0
   while [[ -n $1 ]]; do
     (( $stopOptions )) && [[ -z ${1%%-*}  ]] && return 1
     case $1 in
@@ -234,15 +235,19 @@ mls() {
 
   _m_not_git_repository; (( $? )) && return 1
 
-  local path=$(_m_path_resolution "$path")
-  if (( $path )); then
+  pushd . &> /dev/null
+  path=$(_m_path_resolution "$path")
+  if [[ -z $path ]]; then
     local dieMsg="wrong path resolution"
     (( $verbose )) && dieMsg+=", current path is $(_m_pmd)"
     _m_die "${dieMsg}"
-    return 1
+    ret=1
   fi
-  pushd "${path}" &> /dev/null
-  _m_mls
+
+  if (( ! "$ret" )); then
+    cd "${path}"
+    _m_mls
+  fi
   popd &> /dev/null
   _m_finalize
   return ${ret}
@@ -257,6 +262,7 @@ function _m_finalize() {
 }
 
 function _m_mls() {
+  local ret=0
   while read -a module; do
     subModule="${module[0]}"
     localPath="${module[1]}"
@@ -264,11 +270,12 @@ function _m_mls() {
     _m_pmd
 
     if (( $recursive )); then
-      _m_mls && return 1
+      _m_mls && ret=1
     fi
 
     popd &> /dev/null
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+  return ${ret}
 }
 
 function _m_not_git_repository() {
@@ -318,7 +325,6 @@ function _m_path_resolution() {
         reminder=${reminder:3}
         _m_pwd 1
         _m_up 1; (( $? )) && return 1
-        (( $? )) && die "${cantResolve}"
       elif [[ -z ${reminder%%./*} || $reminder == "." ]]; then
         reminder=${reminder:2}
         _m_pwd 1
