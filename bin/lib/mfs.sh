@@ -82,15 +82,16 @@ mcd() {
 
   local scopeNotFound=1 pathNotFound=0 pathResolution notFound=1
   for scope in ${scopes[@]}; do
+    scopeNotFound=0
     pathResolution=$(_m_path_resolution "${scope}")
-    scopeNotFound=$?
-
+    [[ -z $pathResolution ]] && scopeNotFound=1
     if (( ! $scopeNotFound )); then
       pushd $pathResolution &> /dev/null
       pathNotFound=${#paths[@]}
       for path in ${paths[@]}; do
-        pathResolution=$(_m_path_resolution "${path}" "$strict")
-        pathNotFound=$?
+        pathNotFound=0
+        pathResolution=$(_m_path_resolution "$path" "$strict")
+        [[ -z $pathResolution ]] && pathNotFound=1
         if (( ! $pathNotFound )); then
           break
         fi
@@ -108,14 +109,21 @@ mcd() {
     cd $pathResolution
     _m_pmd
   else
-    local dieMsg="Can't resolve module path '${paths[@]}'"
-    if (( $verbose )); then
+    local dieMsg="Can't resolve path "
+    if (( ${#paths[@]} )); then
+      dieMsg+="'${paths[@]}'"
+    else
+      local noScopes=1
+      dieMsg+="'${scopes[@]}'"
+    fi
+    if (( $verbose )) && (( ! $noScopes )); then
       dieMsg+=" in scopes '${scopes[@]}'"
     fi
     if [[ -n ${strict} ]]; then
       dieMsg+=", STRICT mode"
     fi
     _m_die "${dieMsg}"
+    return 1
   fi
 
   (( $verbose )) && echo $pathResolution >&2
@@ -227,6 +235,12 @@ mls() {
   _m_not_git_repository; (( $? )) && return 1
 
   local path=$(_m_path_resolution "$path")
+  if (( $path )); then
+    local dieMsg="wrong path resolution"
+    (( $verbose )) && dieMsg+=", current path is $(_m_pmd)"
+    _m_die "${dieMsg}"
+    return 1
+  fi
   pushd "${path}" &> /dev/null
   _m_mls
   popd &> /dev/null
@@ -250,7 +264,7 @@ function _m_mls() {
     _m_pmd
 
     if (( $recursive )); then
-      _m_mls
+      _m_mls && return 1
     fi
 
     popd &> /dev/null
@@ -260,7 +274,7 @@ function _m_mls() {
 function _m_not_git_repository() {
   git rev-parse --git-dir &> /dev/null
   if (( $? )); then
-    echo "Not a git repository" >&2
+    _m_die "Not a git repository"
     return 1
   fi
   return 0
@@ -296,17 +310,14 @@ function _m_path_resolution() {
     local strict=$2
 
     if [[ -n ${reminder} ]]; then
-  #    if [[ -n ${reminder%%/*} && -n ${reminder%%../*} && $reminder != ".." && -n ${reminder%%./*} && $reminder != "." ]]; then
-  #      reminder="./$reminder"
-  #    fi
 
       if [[ -z ${reminder%%/*} ]]; then
-        _m_root 1
+        _m_root 1; (( $? )) && return 1
         reminder=${reminder:1}
       elif [[ -z ${reminder%%../*} || $reminder == ".." ]]; then
         reminder=${reminder:3}
         _m_pwd 1
-        _m_up 1
+        _m_up 1; (( $? )) && return 1
         (( $? )) && die "${cantResolve}"
       elif [[ -z ${reminder%%./*} || $reminder == "." ]]; then
         reminder=${reminder:2}
@@ -318,21 +329,13 @@ function _m_path_resolution() {
         for part in $parts; do
           case $part in
             \.\.)
-              _m_up 1
-              if (( $? )); then
-#                _m_die "${cantResolve}"
-                return 1
-              fi
+              _m_up 1; (( $? )) && return 1
             ;;
             \.)
               ## nothing
             ;;
             *)
-              _m_down ${part} 1 $strict
-              if (( $? )); then
-#                _m_die "${cantResolve}"
-                return 1
-              fi
+              _m_down ${part} 1 $strict; (( $? )) && return 1
             ;;
           esac
         done
@@ -349,9 +352,9 @@ function _m_path_resolution() {
 function _m_up() {
   local doCd=$1
 
-  if (( "$doCd" )); then
+  if [[ "$doCd" == 1 ]]; then
     if [[ $(_m_git_dir) == ".git" ]]; then
-      _m_die "Can't up at the root module"
+      echo "Can't up at the root module" >&2
       return 1
     else
       _m_pwd 1
@@ -360,7 +363,8 @@ function _m_up() {
     fi
   else
     # TODO
-    _m_die "not yet implemented"
+    echo "mode '$FUNCNAME $1' not yet implemented" >&2
+    return 1
   fi
 }
 

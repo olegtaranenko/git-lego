@@ -132,8 +132,9 @@ function prepare_push_level() {
   module_porcelain_status ${0##*/}
 
   local applied=1
-  if [[ -z ${MODULE_STATUS[$MS_DETACHED]} ]]; then
-    die "Push is rejected as module '$moduleName' is detached."
+  echo "$MODULE_STATUS[@]"
+  if (( ${MODULE_STATUS[$MS_DETACHED]} )); then
+    die "Push is peeled rejected as module '$moduleName' is detached."
   elif [[ 1 == ${MODULE_STATUS[$MS_PUSHABLE]}  && -z ${MODULE_STATUS[$MS_PULLABLE]}  &&  -z ${MODULE_STATUS[$MS_DETACHED]} ]]; then
     currentPushable=1
     drop_to_affected ${levelPath}
@@ -187,7 +188,7 @@ typeset vetoed=0
 
 pushd ${resolvedPath} &>/dev/null
 baseModulePath=$(pmd)
-#set -x
+set -x
 prepare_push_level "${resolvedPath}" "${moduleName}" "${baseModulePath}" "0"
 ret=$?
 
