@@ -190,7 +190,7 @@ function show_current_module_status {
 
 function status_level() {
   local levelPath="$1"
-  [[ -z ${levelPath} ]] && panic "status_level()... parameter 'path' is required"
+  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local repoBranch
   local ret=0   # return code, 0 - the repo is syncronized
   local childRet # child return code
@@ -232,12 +232,12 @@ typeset commitable
 typeset detached
 
 #set -x
-typeset modulePath=$(resolve_module_path "${initialPath}")
-read moduleName resolvedPath < <(module_info "${modulePath}" "name" "path")
+typeset modulePath=$(resolve_module_path "${initialPath}" /)
+read moduleName path < <(module_info "${modulePath}" "name" "path")
 
-pushd ${resolvedPath} &>/dev/null
-baseModulePath=$(_m_pmd)
-status_level "${resolvedPath}" "${moduleName}" "${baseModulePath}"
+pushd ${path} &>/dev/null
+#baseModulePath=$(_m_pmd)
+status_level "${path}" "${moduleName}" "${modulePath}"
 ret=$?
 
 if (( $commitable )); then

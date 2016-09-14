@@ -2,10 +2,13 @@
 ################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
 args=()
 
+. $(dirname $0)/lib/mfs.sh
 . $(dirname $0)/lib/shared_functions.sh
 
 ################################ STANDARD BOOTSTRAP CALL ################################
+#set -x
 umbrella_bootstrap
+#set +x
 
 cwRoot="${globals[$G_ROOT_DIR]}"
 cwTmpSubmodules="${globals[$G_MODULES_FN]}"
@@ -102,12 +105,13 @@ EOF
 }
 
 #echo  "${cwRoot} ${gitDir}"
-pushd ${cwRoot} &>/dev/null
+#pushd ${cwRoot} &>/dev/null
 typeset verbose=0
 typeset doAdd=0 # by default do not add
-typeset branchName
-typeset commit=1
+typeset revision
+typeset commit=1 force=0
 typeset fallbacks=()
+typeset initialPath 
 #set -x
 
 ################################ PARAMETERS PARSING ################################
@@ -149,48 +153,83 @@ while [[ -n $1 ]]; do
       commit=0
       ;;
 
+    --force|-f)
+      force=1
+      ;;
+    --no-force|-F)
+      force=0
+      ;;
+
     -b|-B|--orphan)
       die "$1 options is not supported for now. Create new branches using CW 'branch ...' command" >&2
       ;;
     *)
-      if [[ -z ${branchName} ]]; then
-        branchName=$1
+      if [[ -z ${1%%-*} ]]; then
+        die "Unknown option '$1'"
+      elif [[ -z ${revision} ]]; then
+        revision=$1
         noAppendArg=1
+      elif [[ -z ${initialPath} ]]; then
+        initialPath=$1
       fi
       ;;
   esac
-  ((${noAppendArg})) && args+=$1
+  (( ${noAppendArg} )) && args+=$1
   shift
 done
 
+
+if [[ -z $revision ]]; then
+  die "Parameter revision/branch required"
+fi
 #set -x
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 function checkout_level () {
-  local repoPath="$1"
-  local repoBranch="$2"
+  local levelRevision="$1"
+  local modulePath="$2"
+  local moduleName="$3"
+  local levelPath="$4"
+  local doUpdate="$5"
+  local parentCheckBranch="$6"
+
+  local parentCheckCommit="$7"
+  local parentRevision="${parentCheckBranch}"
+  if [[ -z "${parentRevision}" ]]; then
+    parentRevision="${parentCheckCommit}"
+  fi
+
+  if [[ -n "${parentRevision}" ]]; then
+    levelRevision="${parentRevision}"
+  fi
+
+  if [[ -z "${levelRevision}" ]]; then
+    panic "$FUNCNAME: Empty revision"
+  fi
+
   local -a modulesBefore
   local -a modulesAfter
   local -a removedModules
   local -a addedModules
-#  oldIfs=IFS
 
-  cd "${repoPath}"
-  echo "---> checkout_level ${repoPath}"
+  pushd "${levelPath}" &> /dev/null
 
-  while IFS="#" read -a repo; do
-    modulesBefore[${#modulesBefore[@]}]="${repo[2]}"
-  done < <(git submodule status | sed -E 's/(.)([[:xdigit:]]{40})[[:space:]]+([[:graph:]]*).*/\1#\2#\3/' 2>/dev/null)
-  git checkout ${branchName}
-  echo $?
+#  cd "${levelPath}"
+#  echo "---> checkout_level ${levelPath}"
 
-  while IFS="#" read -a repo; do
-    modulesAfter[${#modulesAfter[@]}]="${repo[2]}"
-  done < <(git submodule status | sed -E 's/(.)([[:xdigit:]]{40})[[:space:]]+([[:graph:]]*).*/\1#\2#\3/' 2>/dev/null)
-#  IFS=${oldIfs}
+  while read -a module; do
+    modulesBefore+=("${module[0]}")
+  done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+
+  git checkout ${levelRevision} &> /dev/null
+#  echo $?
+
+  while read -a module; do
+    modulesAfter+=("${module[0]}")
+  done < <(git config --file .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
 
   for b in ${modulesBefore[@]}; do
-    found=0
+    local found=0
     for a in ${modulesAfter[@]}; do
       if [[ $a == $b ]]; then
         found=1
@@ -215,36 +254,185 @@ function checkout_level () {
     fi
   done
 
-  printf "%s\n" "${addedModules[@]}"
-  printf "%s\n" "${removedModules[@]}"
-
-  doGitUpdate=0
-  for modulePath in "${addedModules[@]}"; do
-    git submodule update $modulePath
-  done
+  (( "${#addedModules[@]}" )) && git submodule update --checkout
 
   #By change branch can happen that submodules can't be removed (usually can) if, for example, if submodule has its own submodule.
-  (( "${#removedModules[@]}" )) && git clean -d -f -f
+  (( "${#removedModules[@]}" )) && git clean -d -f -f &> /dev/null
 
   # do recurse call for every sub-repos
-  for modulePath in "${modulesAfter[@]}"; do
-    deleted=0
-    for d in "${removedModules[@]}"; do
-      if [[ ${d} == ${modulePath} ]]; then
+  while read -a module; do
+    local subModule="${module[0]}"
+    local localPath="${module[1]}"
+    local path="${levelPath}"/"${localPath}"
+
+#      checkoutd "${path}" &> /dev/null
+    local childModulePath="${modulePath}"
+    if [[ ${modulePath:(-1)} != "/" ]]; then
+      local childModulePath+="/"
+    fi
+    childModulePath+="$subModule"
+
+    local deleted=0
+    for d in ${removedModules[@]}; do
+      if [[ ${d} == ${subModule} ]]; then
         deleted=1
         break
       fi
     done
+
+#    local added=0
+#    for a in ${addedModules[@]}; do
+#      if [[ ${a} == ${subModule} ]]; then
+#        added=1
+#        break
+#      fi
+#    done
+
     if (( ! $deleted )); then
-      echo "${cwRoot}/${modulePath}"
-      checkout_level "${cwRoot}/${modulePath}"
+      local branchAfter=$(git config --file .gitmodules --get "submodule.${subModule}.branch" &> /dev/null)
+      local commitAfter=$(git config --file .gitmodules --get "submodule.${subModule}.commit" &> /dev/null)
+
+      checkout_level "-" "${childModulePath}" "${subModule}" "${path}" "${added}" "${branchAfter}" "${commitAfter}"
     fi
-  done
-}
+  done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+
+  popd &> /dev/null
+}  ## of checkout_level
+
+
+
+function prepare_checkout_level() {
+#  echo ${FUNCNAME}": $@" >&2
+#  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+  local levelRevision="$1"
+  local modulePath="$2"
+  local moduleName="$3"
+  local levelPath="$4"
+  local toBeDeleted=$5
+  local parentCheckBranch="$6"
+  local parentCheckCommit="$7"
+  local parentRevision="${parentCheckBranch}"
+  if [[ -z "${parentRevision}" ]]; then
+    parentRevision="${parentCheckCommit}"
+  fi
+
+  local -a modulesBefore
+  local -a modulesAfter
+  local -a removedModules
+
+  local ret=0
+  local childRet # child modules return code
+
+  pushd "${levelPath}" &> /dev/null
+
+### Use case when in new checkout revision the submodule not exists, but in current branch it is change
+### It should be vetoed, but this veto can be disclosed only on the next call for getting if sub-module is
+### commitable.
+  while read -a module; do
+    local after="${module[0]}"
+    modulesAfter+=($after)
+    local branchAfter=$(git config --blob ${levelRevision}:.gitmodules --get "submodule.${after}.branch" &> /dev/null)
+    local commitAfter=$(git config --blob ${levelRevision}:.gitmodules --get "submodule.${after}.commit" &> /dev/null)
+    local revisionAfter="${branchAfter}"
+    if [[ -z $revisionAfter ]]; then
+      revisionAfter="${commitAfter}"
+    fi
+    revisionsAfter+=("${revisionAfter}")
+  done < <(git config --blob ${levelRevision}:.gitmodules --get-regexp "submodule.*.path" 2> /dev/null | sed -E "s/submodule\.(.*)\.path/\1/" )
+
+  local found=0
+  while read -a module; do
+    local b="${module[0]}"
+    modulesBefore+=("$b")
+    for a in ${modulesAfter[@]}; do
+      if [[ $a == $b ]]; then
+        found=1
+        break
+      fi
+    done
+    if (( ! $found )); then
+      removedModules+=("${b}")
+    fi
+  done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+
+  if (( $toBeDeleted )); then
+    module_porcelain_status ${0##*/}
+
+    if [[ 0 == ${force} &&  (1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[MS_PUSHABLE]}) ]]; then
+      dieMsg+="Module '$moduleName' has not committed or not pushed changes, but intended to be deleted as it does not exists in revision '$revision'"
+      ret=1
+    fi
+
+  elif [ -f .gitmodules ]; then
+    while read -a module; do
+      childRet=0
+      subModule="${module[0]}"
+      localPath="${module[1]}"
+      local path="${levelPath}"/"${localPath}"
+
+#      checkoutd "${path}" &> /dev/null
+      local childModulePath="${modulePath}"
+      if [[ ${modulePath:(-1)} != "/" ]]; then
+        local childModulePath+="/"
+      fi
+      childModulePath+="$subModule"
+
+      local childToBeDeleted=0
+      for b in ${removedModules[@]}; do
+        if [[ $subModule == $b ]]; then
+          childToBeDeleted=1
+          break
+        fi
+      done
+
+      if (( ! childToBeDeleted )); then
+        local checkBranch=$(git config --blob "${levelRevision}".gitmodules --get submodule."${subModule}".branch) 2> /dev/null
+        local checkCommit=$(git config --blob "${levelRevision}".gitmodules --get submodule."${subModule}".commit) 2> /dev/null
+        local checkRevision="${checkBranch}"
+        if [[ -z $checkRevision ]]; then
+          checkRevision="${checkCommit}"
+        fi
+      else
+        checkRevision="?"
+      fi
+      prepare_checkout_level "${checkRevision}" "${childModulePath}" "${subModule}" "${path}" "${childToBeDeleted}" "${checkBranch}" "${checkCommit}"
+      childRet=$?
+
+      (( $childRet > $ret )) && ret=${childRet}
+      popd  &> /dev/null
+
+    done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+  fi
+
+  popd &> /dev/null
+  return ${ret}
+} ## of prepare_checkout_level
+
 
 ################################ MAIN SCRIPT LOGIC ################################
+#set -x
 
-checkout_level "${cwRoot}" "${branchName}"
+typeset modulePath=$(resolve_module_path "${initialPath}" "/")
+read moduleName path < <(module_info "${modulePath}" "name" "path")
+typeset dieMsg
+typeset skippedModules=()
+typeset affected=0
+typeset vetoed=0
+#pushd ${path} &>/dev/null
+cd ${path}
+git rev-parse "${revision}" &> /dev/null
+(( $? )) && die "Revision '$revision' not exists in the module '$moduleName'"
+
+prepare_checkout_level "${revision}" "${modulePath}" "${moduleName}" "${path}" 0
+if (( $? )); then
+  if [[ -n $dieMsg ]]; then
+    die "${dieMsg}"
+  fi
+fi
+
+#set -x
+checkout_level "${revision}" "${modulePath}" "${moduleName}" "${path}" 0
+#popd &> /dev/null can be meanwhile already removed
 
 exit 0
 
@@ -252,8 +440,8 @@ exit 0
 [[ ${#args} ]] && echo "${args[*]}"
 typeset checkoutEnvironment
 
-if [[ -n ${branchName} ]]; then
-  checkoutEnvironment="switch to \""${branchName}"\""
+if [[ -n ${revision} ]]; then
+  checkoutEnvironment="switch to \""${revision}"\""
   [[ -n ${fallback} ]] && checkoutEnvironment+=", fallback branch \""${fallback}"\""
   [[ -z ${fallback} ]] && checkoutEnvironment+=", no fallback branch "
 else
@@ -265,11 +453,11 @@ cd ${cwRoot}
 [[ 1 == ${verbose} ]] && cw_echo "$(pwd), $checkoutEnvironment"
 hasBranch=()
 typeset subBranch
-hasBranch[0]=$(is_branch_exists "$branchName")
+hasBranch[0]=$(is_branch_exists "$revision")
 #set +x
 
 if ((! ${hasBranch[0]} )); then
-  cw_echo 'ERROR: branch '$branchName' does not exists in umbrella repo.
+  cw_echo 'ERROR: branch '$revision' does not exists in umbrella repo.
     Create it using CW branch command: branch --help' >&2
   exit 1
 fi
@@ -280,9 +468,9 @@ while read -r -a line; do
   path=${line[0]}
   cd "${cwRoot}/${path}"
   checkoutMsg=$(pwd)
-  subBranch=$(is_branch_exists "$branchName")
+  subBranch=$(is_branch_exists "$revision")
   if [[ ${subBranch} == 1 ]]; then
-    subBranch=${branchName}
+    subBranch=${revision}
   fi
   if [[ 0 == ${subBranch} && -n ${fallback} ]]; then
     subBranch=$(is_branch_exists "$fallback")
@@ -302,13 +490,13 @@ while read -r -a line; do
   fi
   git clean -f -d
   if [[ 1 == ${commit} ]]; then
-    git commit -am "switch to branch ${branchName}"
+    git commit -am "switch to branch ${revision}"
   fi
 done < <(cat ${cwTmpSubmodules})
   echo "${hasBranch[*]}"
 cd ${cwRoot}
-git checkout "${args} ${branchName}"
-git commit -am "switch to branch ${branchName}"
+git checkout "${args} ${revision}"
+git commit -am "switch to branch ${revision}"
 
 
 : <<EOF
@@ -316,7 +504,7 @@ while read -r -a line; do
   path=${line[0]}
   cd "${cwRoot}/${path}"
   cw_echo $(pwd)
-  hasBranch=$(is_branch_exists "$branchName")
+  hasBranch=$(is_branch_exists "$revision")
   #  git checkout "${args}"
 done < <(cat ${cwTmpSubmodules})
 EOF

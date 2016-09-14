@@ -114,7 +114,7 @@ function prepare_push_level() {
   local parentPushable=$4
   local currentPushable=0
   local levelPath="$1"
-  [[ -z ${levelPath} ]] && panic "status_level()... parameter 'path' is required"
+  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local moduleName="$2"
   local ret=0
   local childRet # child modules return code
@@ -132,7 +132,7 @@ function prepare_push_level() {
   module_porcelain_status ${0##*/}
 
   local applied=1
-  echo "$MODULE_STATUS[@]"
+#  echo "$MODULE_STATUS[@]"
   if (( ${MODULE_STATUS[$MS_DETACHED]} )); then
     die "Push is peeled rejected as module '$moduleName' is detached."
   elif [[ 1 == ${MODULE_STATUS[$MS_PUSHABLE]}  && -z ${MODULE_STATUS[$MS_PULLABLE]}  &&  -z ${MODULE_STATUS[$MS_DETACHED]} ]]; then
@@ -180,7 +180,7 @@ function prepare_push_level() {
 
 
 ################################ MAIN SCRIPT LOGIC ################################
-typeset modulePath=$(resolve_module_path "${initialPath}")
+typeset modulePath=$(resolve_module_path "${initialPath}" /)
 read moduleName resolvedPath < <(module_info "${modulePath}" "name" "path")
 typeset skippedModules=()
 typeset affected=0
@@ -188,7 +188,7 @@ typeset vetoed=0
 
 pushd ${resolvedPath} &>/dev/null
 baseModulePath=$(pmd)
-set -x
+#set -x
 prepare_push_level "${resolvedPath}" "${moduleName}" "${baseModulePath}" "0"
 ret=$?
 

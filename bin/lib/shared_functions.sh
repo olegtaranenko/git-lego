@@ -78,14 +78,9 @@ function umbrella_bootstrap () {
   local tmpDir=$(mktemp -q -d -t "$(basename "$0")" 2>/dev/null || mktemp -q -d)
   globals[$G_SCRIPT_TMP_DIRECTORY]=${tmpDir}
 
-  tmpModules=${tmpDir}/modules
 #  echo ${tmpModules} >&2
-  git rev-parse --git-dir &> /dev/null
-  ret=$?
-  if [[ 0 -ne $ret ]]; then
-    die
-    exit 1
-  fi
+
+  _m_not_git_repository; (( $? )) && exit 1
 
   gitDir=$(git rev-parse --git-dir)
   normalizedGitDir=${gitDir##*/}
@@ -97,42 +92,51 @@ function umbrella_bootstrap () {
     popd  > /dev/null
   fi
 
-  local url=$(get_repo_url "$umbrellaRepoDir")
-  local cwUrl=${url%%gitadmin@git.consistentwork.com:*}
-  if [[ -n ${cwUrl} ]]; then
-    cw_echo ${cwUrl}
-    die
-  fi
-
 #  rm ${cwTmpSubmodules} &>/dev/null
   pushd ${umbrellaRepoDir} &>/dev/null
 
-  umbrellaOriginUrl=$(git remote get-url origin)
-  umbrellaRepoName=${umbrellaOriginUrl##*:}
-  umbrellaRepoName=${umbrellaRepoName##*/}
+  local remoteOrigin=$(git remote show)
+  local umbrellaOriginUrl umbrellaRepoName
+  if [[ -n $remoteOrigin ]]; then
+    local url=$(get_repo_url "$umbrellaRepoDir")
+#    local cwUrl=${url%%gitadmin@git.consistentwork.com:*}
+#    if [[ -n ${cwUrl} ]]; then
+#      cw_echo ${cwUrl}
+#      die
+#    fi
+    umbrellaOriginUrl=$(git remote get-url origin)
+    umbrellaRepoName=${umbrellaOriginUrl##*:}
+    umbrellaRepoName=${umbrellaRepoName##*/}
+
+  else
+    umbrellaOriginUrl=$(pwd)
+    umbrellaRepoName=${umbrellaOriginUrl##*/}
+  fi
+
+  globals[$G_AFFECTED_MODULES]=${tmpDir}/affected
+  globals[$G_MODULES_FN]=${tmpDir}/modules
 
 #  git submodule foreach --recursive  |  sed "s/[^']*//" | tr -d "'" >>  ${tmpModules}
 
   #globals is an array defined in the caller of this method
   globals[$G_ROOT_DIR]=${umbrellaRepoDir}
-  globals[$G_MODULES_FN]=${tmpModules}
-  globals[$G_AFFECTED_MODULES]=${tmpDir}/affected
   globals[$G_MODULE_GIT_DIR]=${gitDir}
   globals[$G_ROOT_NAME]=${umbrellaRepoName}
 
   module_startup_investigate "${umbrellaRepoName}" "/" ".git" "${umbrellaRepoDir}" "/"
-#  cat $tmpModules >&2
+#  cat ${globals[$G_MODULES_FN]} >&2
 
   popd &>/dev/null
-  splash ${url}
+  splash ${umbrellaRepoName}
 
   return 0
 }
 
 
 function module_startup_investigate() {
+  local tmpModules=${globals[$G_MODULES_FN]}
   echo "$@">>${tmpModules}
-  # map emulation for quick
+  # map emulation for quick access of the
   g_module_name+=($1)
   g_relative_paths+=($2)
   g_git_dirs+=($3)
@@ -222,8 +226,6 @@ function cw_verbose_stop () {
 function splash() {
   (( $skipSplash )) && return
   local url=$1
-  url=${url##*:}
-  url=${url##*/}
   local msg="umbrella repo: "${url}
   local currentGitDir=$(get_repo_git_dir)
   local currentRepoName=${currentGitDir##*/modules/}
@@ -232,9 +234,9 @@ function splash() {
 }
 
 function get_repo_url() {
-  [[ -n $1 && $1 != "." ]] && pushd $1  > /dev/null
-  local url=$(git remote get-url origin)
-  [[ -n $1 && $1 != "." ]] && popd  > /dev/null
+  [[ -n $1 && $1 != "." ]] && pushd $1  &> /dev/null
+  local url=$(git remote get-url origin &> /dev/null)
+  [[ -n $1 && $1 != "." ]] && popd  &> /dev/null
   echo ${url}
 }
 
@@ -366,6 +368,7 @@ function get_module_path_down() {
 function resolve_module_path() {
   cantResolve="Can't resolve module path '$1'"
   local originPath reminder="$1"
+  local default="$2"
 
   if [[ -n ${reminder} ]]; then
     if [[ -n ${reminder%%/*} && -n ${reminder%%../*} && $reminder != ".." && -n ${reminder%%./*} && $reminder != "." ]]; then
@@ -408,7 +411,7 @@ function resolve_module_path() {
     fi
   fi
 
-  [[ -z $originPath ]] && originPath="/"
+  [[ -z $originPath ]] && originPath="${default}"
 
   echo "${originPath}"
 }
@@ -428,33 +431,30 @@ function module_info () {
   done
 
 
-  if (( ! $ret )); then
-    ret=1
-    while [[ -n $1 ]]; do
-      ret=0
-      case $1 in
-        index)
-          results+=($index)
-          ;;
-        name)
-          results+=(${g_module_name[$index]})
-          ;;
-        relative|local)
-          results+=(${g_relative_paths[$index]})
-          ;;
-        full|path)
-          results+=(${g_full_paths[$index]})
-          ;;
-        gitdir)
-          results+=(${g_git_dirs[$index]})
-          ;;
-        *)
-          ret=2
-          break
-      esac
-      shift
-    done
-  fi
+  while [[ -n $1 ]]; do
+    case $1 in
+      index)
+        results+=($index)
+        ;;
+      name)
+        results+=(${g_module_name[$index]})
+        ;;
+      relative|local)
+        results+=(${g_relative_paths[$index]})
+        ;;
+      full|path)
+        results+=(${g_full_paths[$index]})
+        ;;
+      gitdir)
+        results+=(${g_git_dirs[$index]})
+        ;;
+      *)
+        ret=2
+        break
+    esac
+    shift
+  done
+
   (( ${#results[@]} )) && echo ${results[@]}
   return ${ret}
 }

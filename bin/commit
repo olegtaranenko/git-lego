@@ -154,7 +154,7 @@ done
 ################################ SCRIPT SPECIFIC METHODS ################################
 function prepare_commit_level() {
   local levelPath="$1"
-  [[ -z ${levelPath} ]] && panic "status_level()... parameter 'path' is required"
+  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local moduleName="$2"
   local repoBranch
   local ret=0   # return code, 0 - the repo is syncronized
@@ -201,7 +201,8 @@ function prepare_commit_level() {
 }
 
 ################################ MAIN SCRIPT LOGIC ################################
-typeset modulePath=$(resolve_module_path "${initialPath}")
+set -x
+typeset modulePath=$(resolve_module_path "${initialPath}" /)
 read moduleName resolvedPath < <(module_info "${modulePath}" "name" "path")
 
 typeset affected=0
