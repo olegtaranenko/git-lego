@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-if [ -n $CWORK_HOME ]; then
+if [ -z $CWORK_HOME ]; then
   # path where consistentwork projects are cloned
   export CWORK_HOME=~/consistentwork
 fi
