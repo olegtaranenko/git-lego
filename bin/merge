@@ -1,2 +1,310 @@
 #!/usr/bin/env bash
-echo "I a'm" $(basename $0) "started from" $(dirname $0)
+
+################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
+
+  #
+  ## Exit code of the script
+  ## 0 - success
+  ## 1 - un-success (bad options/... etc)
+  ## 2 - unexpected error (wrong code)
+  #
+declare ret=0
+
+args=()
+
+. $(dirname $0)/lib/mfs.sh
+. $(dirname $0)/lib/shared_functions.sh
+
+################################ STANDARD BOOTSTRAP CALL ################################
+umbrella_bootstrap
+
+cwRoot="${globals[$G_ROOT_DIR]}"
+cwTmpSubmodules="${globals[$G_MODULES_FN]}"
+gitDir="${globals[$G_MODULE_GIT_DIR]}"
+
+
+################################ BRANCH-SPECIFIC HELP ################################
+function show_help() {
+cat << EOF
+
+NAME:
+    ${0##*/} status in git umbrella-managed modules
+
+SYNOPSIS:
+    '${0##*/} [<any-git-commit-options>] [-v|--verbose] [<path-resolution>] -- [[<module-name>] ...]'
+
+DESCRIPTION:
+
+
+EXAMPLES:
+    '${0##*/} -v .' -> show verbose status for current module only
+
+
+OPTIONS:
+      --help|-h|-\?
+          get this help
+
+      --
+          marks state after which repositories will be shown in status.
+
+
+EOF
+}
+
+#echo  "${cwRoot} ${gitDir}"
+typeset verbose=0
+typeset afterDash=()
+typeset stopOptions=0
+typeset initialPath mergeMessage commitTemplate doRecursive=0 reuse doAppendUntracked=1
+#set -x
+
+################################ PARAMETERS PARSING ################################
+while [[ -n $1 ]]; do
+  (( $stopOptions )) && [[ -z ${1%%-*}  ]] && die "after '--' additional options ($1) are not allowed "
+  noAppendArg=0
+  case $1 in
+    -h|-\?|--help)
+      show_help
+      exit
+      ;;
+    -v|--verbose)
+      verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
+      noAppendArg=1
+      ;;
+
+    --fallback)
+      if [ -n "$2" ]; then
+        noAppendArg=1
+        ${fallbacks[${#fallbacks[@]}]}=$2
+        shift
+      else
+        die "--fallback requires a non-empty option argument."
+      fi
+      ;;
+    --fallback=?*)
+      noAppendArg=1
+      ${fallbacks[${#fallbacks[@]}]}=${1#*=} # Delete everything up to "=" and assign the remainder.
+      ;;
+    --fallback=)         # Handle the case of an empty --fallback=
+      die "--fallback requires a non-empty option argument."
+      ;;
+
+    --message)
+      args+=($1)
+      args+=("\"$2\"")
+      mergeMessage=$2
+      shift
+      ;;
+    --message=*)
+      mergeMessage=${1#*=}
+      [[ -z ${mergeMessage} ]] && die "message is not given $1"
+      args+=("\"$1\"")
+      ;;
+
+
+    --commit)
+      commit=1
+      ;;
+    --no-commit)
+      commit=0
+      ;;
+
+    --force|-f)
+      force=1
+      ;;
+    --no-force|-F)
+      force=0
+      ;;
+
+    -b|-B|--orphan)
+      die "$1 options is not supported for now. Create new branches using CW 'branch ...' command" >&2
+      ;;
+    *)
+      if [[ -z ${1%%-*} ]]; then
+        die "Unknown option '$1'"
+      elif [[ -z ${revision} ]]; then
+        revision=$1
+        noAppendArg=1
+      elif [[ -z ${initialPath} ]]; then
+        initialPath=$1
+      fi
+      ;;
+  esac
+  (( ${noAppendArg} )) && args+=$1
+  shift
+done
+
+
+if [[ -z $revision ]]; then
+  die "Parameter revision/branch required"
+fi
+#set -x
+
+
+################################ SCRIPT SPECIFIC METHODS ################################
+function merge_level () {
+  local levelRevision="$1"
+  local modulePath="$2"
+  local moduleName="$3"
+  local levelPath="$4"
+  local doUpdate="$5"
+  local parentCheckBranch="$6"
+
+  local parentCheckCommit="$7"
+  local parentRevision="${parentCheckBranch}"
+  if [[ -z "${parentRevision}" ]]; then
+    parentRevision="${parentCheckCommit}"
+  fi
+
+  if [[ -n "${parentRevision}" ]]; then
+    levelRevision="${parentRevision}"
+  fi
+
+  if [[ -z "${levelRevision}" ]]; then
+    panic "$FUNCNAME: Empty revision"
+  fi
+
+  local -a modulesBefore
+  local -a modulesAfter
+  local -a removedModules
+  local -a addedModules
+
+  pushd "${levelPath}" &> /dev/null
+
+#  cd "${levelPath}"
+#  echo "---> merge_level ${levelPath}"
+
+  while read -a module; do
+    modulesBefore+=("${module[0]}")
+  done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+
+#  git merge ${levelRevision} &> /dev/null
+#  echo $?
+
+  while read -a module; do
+    modulesAfter+=("${module[0]}")
+  done < <(git config --blob ${levelRevision}.gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+
+  for b in ${modulesBefore[@]}; do
+    local found=0
+    for a in ${modulesAfter[@]}; do
+      if [[ $a == $b ]]; then
+        found=1
+        break
+      fi
+    done
+    if (( ! $found )); then
+      removedModules[${#removedModules[@]}]="${b}"
+    fi
+  done
+
+  for a in ${modulesAfter[@]}; do
+    found=0
+    for b in ${modulesBefore[@]}; do
+      if [[ $a == $b ]]; then
+        found=1
+        break
+      fi
+    done
+    if (( ! $found )); then
+      addedModules[${#addedModules[@]}]="$a"
+    fi
+  done
+
+#  (( "${#addedModules[@]}" )) && git submodule update --merge
+
+  #By change branch can happen that submodules can't be removed (usually can) if, for example, if submodule has its own submodule.
+#  (( "${#removedModules[@]}" )) && git clean -d -f -f &> /dev/null
+
+  # do recurse call for every sub-repos
+  while read -a module; do
+    local subModule="${module[0]}"
+    local localPath="${module[1]}"
+    local path="${levelPath}"/"${localPath}"
+
+#      merged "${path}" &> /dev/null
+    local childModulePath="${modulePath}"
+    if [[ ${modulePath:(-1)} != "/" ]]; then
+      local childModulePath+="/"
+    fi
+    childModulePath+="$subModule"
+
+    local deleted=0
+    for d in ${removedModules[@]}; do
+      if [[ ${d} == ${subModule} ]]; then
+        deleted=1
+        break
+      fi
+    done
+
+#    local added=0
+#    for a in ${addedModules[@]}; do
+#      if [[ ${a} == ${subModule} ]]; then
+#        added=1
+#        break
+#      fi
+#    done
+
+    if (( ! $deleted )); then
+      local branchAfter=$(git config --file .gitmodules --get "submodule.${subModule}.branch" &> /dev/null)
+      local commitAfter=$(git config --file .gitmodules --get "submodule.${subModule}.commit" &> /dev/null)
+
+      merge_level "-" "${childModulePath}" "${subModule}" "${path}" "${added}" "${branchAfter}" "${commitAfter}"
+    fi
+  done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+
+  popd &> /dev/null
+}  ## of merge_level
+
+
+################################ MAIN SCRIPT LOGIC ################################
+#set -x
+
+typeset modulePath=$(resolve_module_path "${initialPath}" "/")
+read moduleName path < <(module_info "${modulePath}" "name" "path")
+typeset dieMsg
+typeset skippedModules=()
+typeset affected=0
+typeset vetoed=0
+#pushd ${path} &>/dev/null
+cd ${path}
+git rev-parse "${revision}" &> /dev/null
+(( $? )) && die "Revision '$revision' not exists in the module '$moduleName'"
+
+
+prepare_checkout_level "${revision}" "${modulePath}" "${moduleName}" "${path}" 0
+if (( $? )); then
+  if [[ -n $dieMsg ]]; then
+    die "${dieMsg}"
+  fi
+fi
+
+#set -x
+if (( $affected )); then
+  if [[ -z ${mergeMessage} && -n ${onEmptyMessage} ]]; then
+   args+=('--message' )
+   args+=(" \"${onEmptyMessage:0:(${#onEmptyMessage}-2)})\"")
+  fi
+
+#cat ${globals[$G_AFFECTED_MODULES]}
+
+  while read -a module; do
+    cd ${module[$MFS_FULL_PATH]}
+    level_verbose_about_to ${module[@]}
+#    echo "git merge ${args[@]} ${#args[@]}"
+
+    git merge "${args[@]}"
+  done < <(cat ${globals[$G_AFFECTED_MODULES]} | tail -r)
+fi
+
+if (( ${#skippedModules} )); then
+  cw_echo "Not affected modules: ${skippedModules[*]}"
+fi
+
+popd &>/dev/null
+umbrella_finalize
+
+exit $ret
+#popd &> /dev/null can be meanwhile already removed
+
+exit 0

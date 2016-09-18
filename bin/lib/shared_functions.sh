@@ -585,3 +585,188 @@ function possible_branch_from_parent_config() {
   fi
   echo ${ret}
 }
+
+
+construct_section_name() {
+  local modulePath="$1"
+  local extension="$2"
+  local dir="${globals[$G_SCRIPT_TMP_DIRECTORY]}"
+  local fn once=0
+
+  if [[ ${#modulePath} == 0 || ${modulePath:0:1} != "/" ]]; then
+    fn+="/"
+  fi
+  (( ${#modulePath} )) && fn+=${modulePath}
+
+  fn=$(echo ${fn} | tr "/" "_")
+  echo "$dir/${fn}.${extension}"
+}
+
+function export_gitmodules_section {
+  echo ${FUNCNAME}": $@" >&2
+  local modulePath="$1"
+  local moduleName="$2"
+  local revision="$3"
+  local dumpFileName=$(construct_section_name "$1" "$3")
+#  echo "${dumpFileName}"
+#  pwd
+  while  read -a module; do
+    echo ${module[@]} >> ${dumpFileName}
+  done < <(git config --file .gitmodules --get-regexp "submodule.${moduleName}.*")
+#  cat "${dumpFileName}"
+}
+
+function import_gitmodules_section {
+  echo ${FUNCNAME}": $@" >&2
+  local modulePath="$1"
+  local moduleName="$2"
+  local revision="$3"
+  local dumpFileName=$(construct_section_name "$1" "$3")
+#  echo "${dumpFileName}"
+#  pwd
+  while  read -a setting; do
+    git conifg --file .gitmodules ${setting[@]}
+  done < <(cat "${dumpFileName}")
+}
+
+
+function prepare_checkout_level() {
+  echo ${FUNCNAME}": $@" >&2
+#  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+  local levelRevision="$1"
+  local modulePath="$2"
+  local moduleName="$3"
+  local levelPath="$4"
+  local toBeDeleted=$5
+  local parentCheckBranch="$6"
+  local parentCheckCommit="$7"
+  local parentRevision="${parentCheckBranch}"
+  if [[ -z "${parentRevision}" ]]; then
+    parentRevision="${parentCheckCommit}"
+  fi
+
+  local -a modulesBefore
+  local -a modulesAfter
+  local -a removedModules
+
+  local ret=0 checkRevision
+  local childRet # child modules return code
+
+  pushd "${levelPath}" &> /dev/null
+
+  if (( $toBeDeleted )); then
+
+    module_porcelain_status ${0##*/}
+
+    if [[ 0 == ${force} &&  (1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[MS_PUSHABLE]}) ]]; then
+      dieMsg+="Module '$moduleName' has not committed or not pushed changes, but intended to be deleted as it does not exists in revision '$revision'"
+      ret=1
+    fi
+
+  else
+    ### Use case when in new checkout revision the submodule not exists, but in current branch it is change
+    ### It should be vetoed, but this veto can be disclosed only on the next call for getting if sub-module is
+    ### commitable.
+    while read -a module; do
+      local after="${module[0]}"
+      modulesAfter+=($after)
+      local branchAfter=$(git config --blob ${levelRevision}:.gitmodules --get "submodule.${after}.branch" &> /dev/null)
+      local commitAfter=$(git config --blob ${levelRevision}:.gitmodules --get "submodule.${after}.commit" &> /dev/null)
+      local revisionAfter="${branchAfter}"
+      if [[ -z $revisionAfter ]]; then
+        revisionAfter="${commitAfter}"
+      fi
+      revisionsAfter+=("${revisionAfter}")
+    done < <(git config --blob ${levelRevision}:.gitmodules --get-regexp "submodule.*.path" 2> /dev/null | sed -E "s/submodule\.(.*)\.path/\1/" )
+
+    local found=0
+    while read -a module; do
+      local b="${module[0]}"
+      modulesBefore+=("$b")
+      for a in ${modulesAfter[@]}; do
+        if [[ $a == $b ]]; then
+          found=1
+          break
+        fi
+      done
+      if (( ! $found )); then
+        removedModules+=("${b}")
+      fi
+    done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+
+    drop_to_affected "${levelPath}"
+
+    found=0
+    while read -a module; do
+      local after="${module[0]}"
+      found=0
+      for b in ${modulesBefore[@]}; do
+        if [[ $after == $b ]]; then
+          found=1
+          break
+        fi
+      done
+      if (( ! $found )); then
+#        drop_to_affected "${levelPath}/${module[1]}"
+        local localPath="${module[1]}"
+        local childModulePath="${modulePath}"
+        if [[ ${modulePath:(-1)} != "/" ]]; then
+          local childModulePath+="/"
+        fi
+        childModulePath+="$after"
+        ## dummy git dir
+        echo "${after}" "${localPath}" "^" "${levelPath}/${localPath}" "$childModulePath" >> ${globals[$G_AFFECTED_MODULES]}
+        affected=1
+      fi
+    done < <(git config --blob ${levelRevision}:.gitmodules --get-regexp "submodule.*.path" 2> /dev/null | sed -E "s/submodule\.(.*)\.path/\1/" )
+
+
+    if [ -f .gitmodules ]; then
+      while read -a module; do
+        childRet=0
+        subModule="${module[0]}"
+        localPath="${module[1]}"
+        local path="${levelPath}"/"${localPath}"
+
+  #      checkoutd "${path}" &> /dev/null
+        local childModulePath="${modulePath}"
+        if [[ ${modulePath:(-1)} != "/" ]]; then
+          local childModulePath+="/"
+        fi
+        childModulePath+="$subModule"
+
+        local childToBeDeleted=0
+        for b in ${removedModules[@]}; do
+          if [[ $subModule == $b ]]; then
+            childToBeDeleted=1
+            break
+          fi
+        done
+
+        if (( ! childToBeDeleted )); then
+          local checkBranch=$(git config --blob "${levelRevision}":.gitmodules --get submodule."${subModule}".branch) 2> /dev/null
+          local checkCommit=$(git config --blob "${levelRevision}":.gitmodules --get submodule."${subModule}".commit) 2> /dev/null
+          checkRevision="${checkBranch}"
+          if [[ -z $checkRevision ]]; then
+            checkRevision="${checkCommit}"
+          fi
+        else
+          checkRevision="^"
+          # dump .gitmodules section in the separate temp file, (merge preparation)
+#          export_gitmodules_section "${path}" "${subModule}" "${checkRevision}"
+        fi
+
+        prepare_checkout_level "${checkRevision}" "${childModulePath}" "${subModule}" "${path}" "${childToBeDeleted}" "${checkBranch}" "${checkCommit}"
+        childRet=$?
+
+        (( $childRet > $ret )) && ret=${childRet}
+        popd  &> /dev/null
+
+      done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+    fi
+  fi
+
+  popd &> /dev/null
+  return ${ret}
+} ## of prepare_checkout_level
+
