@@ -313,12 +313,13 @@ function drop_to_affected() {
   [[ -z $levelPath ]] && return 2;
 
   while read -a module; do
-    local moduleName=${module[$MFS_MODULE_NAME]}
     local found=0
+    local moduleName=${module[$MFS_MODULE_NAME]}
     local fullPath=${module[MFS_FULL_PATH]}
     if [ "$levelPath" == "$fullPath" ]; then
       found=1
-      if (( ! ${#afterDash[@]} )); then
+      if (( ${#afterDash[@]} )); then
+        found=0
         for dash in ${afterDash[@]}; do
           # exact comparison, not matching
           if [ "${moduleName}" == "${dash}" ]; then
@@ -327,14 +328,14 @@ function drop_to_affected() {
           fi
         done
       fi
-      if (( ! ${found} )); then
-        ret=1
-      else
-        affected=1
-        echo ${module[@]} >> ${globals[$G_AFFECTED_MODULES]}
-      fi
+    fi
+
+    if (( ${found} )); then
+      affected=1
+      echo ${module[@]} >> ${globals[$G_AFFECTED_MODULES]}
       break
     fi
+
   done < <(cat ${globals[$G_MODULES_FN]})
 
   return ${ret}

@@ -201,7 +201,7 @@ function prepare_commit_level() {
 }
 
 ################################ MAIN SCRIPT LOGIC ################################
-set -x
+#set -x
 typeset modulePath=$(resolve_module_path "${initialPath}" /)
 read moduleName resolvedPath < <(module_info "${modulePath}" "name" "path")
 
