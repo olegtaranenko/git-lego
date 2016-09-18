@@ -771,3 +771,97 @@ function prepare_checkout_level() {
   return ${ret}
 } ## of prepare_checkout_level
 
+##
+## Checks branching state for current repository
+## Let name the branch is synched if entry submodule.<subrepo>.branch in .gitmodules is matched
+## to the branch of the sub-repository, (what can be checked via 'cd subrepo; git branch',
+## It they are mismatched, 3 options are possible.
+## 1. Sub-repo can be detached. In this case we are looking for value in the outer repo and doing git checkout branch
+## 2. Sub-repo is pinned to another branch then it is given in .gitmodules. To sync this we just changing v
+##    value in .gitmodules file of outer repo
+## 3. Sub-repo is detached, no value in .gitmodules. We are uneble to re-syncronize, notifying user about and exitiing.
+## Parameters:
+##      1. path [required] - path getting started checking. It can be called recursively to drill down to the leaves repos.
+## Returns
+##
+function check_branch_sync() {
+  local levelPath="$1"
+  [[ -z ${levelPath} ]] && panic "check_branch_sync()... parameter 'path' is required"
+  local repoBranch
+  local ret=0   # return code, 0 - the repo is syncronized
+  local childRet # child return code
+  cd "${levelPath}"
+
+  while read -a repo; do
+    childRet=0
+    subRepoName="${repo[0]}"
+    checkBranch=$(git config --file .gitmodules --get submodule."${subRepoName}".branch)
+    checkPath="${repo[1]}"
+    subRepoPath="${levelPath}"/"${checkPath}"
+
+    #    echo "${subRepoName}" "${checkBranch}" "${checkPath}"
+
+    pushd "${subRepoPath}" &> /dev/null
+    #    pwd
+
+    repoBranch=$(git rev-parse --abbrev-ref HEAD)
+    local detached=0
+    [[ "${repoBranch}" == "HEAD" ]] && detached=1
+
+    #    echo "${repoBranch}"
+    if [[ ${repoBranch} != ${checkBranch} ]]; then
+
+      ret=1
+      (( ! $doSync )) && cw_echo "Module ${subRepoName} is not synchronized"
+      #      echo "$repoBranch != $checkBranch"
+
+      #
+      if [[ -n "${repoBranch}" && ${detached} == 0  ]]; then
+        cd "${levelPath}"
+        if (( $doSync )); then
+          cw_echo "About to change reference in .gitmodules for submodule $subRepoName to branch $repoBranch"
+          git config --file .gitmodules submodule."${subRepoName}".branch "${repoBranch}"
+          ret=$?
+        fi
+      elif [[ -n "${checkBranch}" && ${detached} == 1 ]]; then
+        cd "${subRepoPath}"
+        if (( $doSync )); then
+          cw_echo "About to checkout submodule $subRepoName to branch $checkBranch"
+          git checkout ${checkBranch}
+          ret=$?
+        fi
+      else
+        cw_echo "Warning: submodule ${subRepoName} can't be syncronized"
+        ret=2
+      fi
+    else
+      (( $doView )) && cw_echo "Module '$subRepoName' at '$checkBranch' branch"
+    fi
+
+    if [[ -e .gitmodules ]]; then
+      check_branch_sync "${subRepoPath}"
+      childRet=$?
+    fi
+    (( $childRet )) && ret=1
+
+
+    popd  &> /dev/null
+
+    if (( $doSync )); then
+      git diff --exit-code --quiet -- .gitmodules
+      needToCommit=$?
+      #echo "needToCommit=${needToCommit}"
+      if (( $qeedToCommit )); then
+        if (( $doAutoCommit )); then
+          git add .gitmodules
+          git commit -m "$subRepoName submodule configuration is changed"
+        else
+          needMessageToPush=1
+        fi
+      fi
+    fi
+  done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+
+  return "${ret}"
+} ## of check_branch_sync
+

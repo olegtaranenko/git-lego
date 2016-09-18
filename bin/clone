@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
+################################ OPTIONAL INPUT PARAMETERS ################################
+typeset repoUrl=$1
+typeset repoPath=$2
+
+
 declare -a globals
 declare -a args="$@"
+################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
+  #
+  ## Exit code of the script
+  ## 0 - success
+  ## 1 - un-success (bad options/... etc)
+  ## 2 - unexpected error (wrong code)
+  #
+declare ret=0
 
+. $(dirname $0)/lib/mfs.sh
 . $(dirname $0)/lib/shared_functions.sh
-
-repoUrl=$1
-repoPath=$2
 
 # Maybe we trying to cloning inside of the existing branding repo?
 # Right now it doesn't permitted
@@ -30,4 +41,18 @@ fi
 
 cd "$repoPath"
 
+#pushd . &> /dev/null
 git submodule update --recursive --init
+
+#set -x
+umbrella_bootstrap
+
+cwRoot="${globals[$G_ROOT_DIR]}"
+#popd &> /dev/null
+
+doSync=1
+check_branch_sync "${cwRoot}"
+ret=$?
+
+umbrella_finalize
+exit ${ret}
