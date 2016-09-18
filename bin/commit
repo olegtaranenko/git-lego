@@ -229,7 +229,7 @@ if (( $affected )); then
 
     (( $doAppendUntracked )) && git add . -A
     git commit "${args[@]}"
-  done < <(cat ${globals[$G_AFFECTED_MODULES]} | tail -r)
+  done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
 fi
 
 if (( ${#skippedModules} )); then
