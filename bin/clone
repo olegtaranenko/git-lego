@@ -51,7 +51,7 @@ cwRoot="${globals[$G_ROOT_DIR]}"
 #popd &> /dev/null
 
 doSync=1
-check_branch_sync "${cwRoot}"
+check_branch_sync "${cwRoot}" 1
 ret=$?
 
 umbrella_finalize

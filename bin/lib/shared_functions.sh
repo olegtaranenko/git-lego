@@ -779,13 +779,15 @@ function prepare_checkout_level() {
 ## 1. Sub-repo can be detached. In this case we are looking for value in the outer repo and doing git checkout branch
 ## 2. Sub-repo is pinned to another branch then it is given in .gitmodules. To sync this we just changing v
 ##    value in .gitmodules file of outer repo
-## 3. Sub-repo is detached, no value in .gitmodules. We are uneble to re-syncronize, notifying user about and exitiing.
+## 3. Sub-repo is detached, no value in .gitmodules. We are unable to re-syncronize, notifying user about and exitiing.
 ## Parameters:
 ##      1. path [required] - path getting started checking. It can be called recursively to drill down to the leaves repos.
+##      2. doSync [optional, by default 0] - perform synchronization (1) or not
 ## Returns
 ##
 function check_branch_sync() {
   local levelPath="$1"
+  doSync=${2:-0}
   [[ -z ${levelPath} ]] && panic "check_branch_sync()... parameter 'path' is required"
   local repoBranch
   local ret=0   # return code, 0 - the repo is syncronized
@@ -839,7 +841,7 @@ function check_branch_sync() {
     fi
 
     if [[ -e .gitmodules ]]; then
-      check_branch_sync "${subRepoPath}"
+      check_branch_sync "${subRepoPath}" ${doSync}
       childRet=$?
     fi
     (( $childRet )) && ret=1

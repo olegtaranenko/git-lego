@@ -249,7 +249,7 @@ EOF
     cw_echo "Umbrella repo at '$mainBranch' branch"
   fi
 
-  check_branch_sync "${cwRoot}"
+  check_branch_sync "${cwRoot}" ${doSync}
   ret=$?
 
   (( ! $ret )) && cw_echo "All submodules are mutually syncronized."
