@@ -312,8 +312,8 @@ function _m_die() {
 
 
 function _m_path_resolution() {
-  if [[ $1 != "." ]]; then
-    local originPath reminder="$1"
+  local originPath reminder="$1"
+  if [[ ${reminder} != "." && -n ${reminder} ]]; then
     local strict=$2
 
     if [[ -n ${reminder} ]]; then
