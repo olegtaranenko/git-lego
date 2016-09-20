@@ -300,7 +300,6 @@ function checkout_level () {
 
 
 ################################ MAIN SCRIPT LOGIC ################################
-set -x
 
 typeset modulePath=$(resolve_module_path "${initialPath}" "/")
 read moduleName path < <(module_info "${modulePath}" "name" "path")
