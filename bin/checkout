@@ -216,9 +216,10 @@ function checkout_level () {
 
   while read -a module; do
     modulesBefore+=("${module[0]}")
-  done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+  done < <(git config --file .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
 
-  git checkout ${levelRevision} &> /dev/null
+  pwd
+  git checkout ${levelRevision}
 #  echo $?
 
   while read -a module; do
@@ -251,7 +252,7 @@ function checkout_level () {
     fi
   done
 
-  (( "${#addedModules[@]}" )) && git submodule update --checkout
+  (( "${#addedModules[@]}" )) && git submodule update --init
 
   #By change branch can happen that submodules can't be removed (usually can) if, for example, if submodule has its own submodule.
   (( "${#removedModules[@]}" )) && git clean -d -f -f &> /dev/null
@@ -286,8 +287,8 @@ function checkout_level () {
 #    done
 
     if (( ! $deleted )); then
-      local branchAfter=$(git config --file .gitmodules --get "submodule.${subModule}.branch" &> /dev/null)
-      local commitAfter=$(git config --file .gitmodules --get "submodule.${subModule}.commit" &> /dev/null)
+      local branchAfter=$(git config --file .gitmodules --get "submodule.${subModule}.branch")
+      local commitAfter=$(git config --file .gitmodules --get "submodule.${subModule}.commit")
 
       checkout_level "-" "${childModulePath}" "${subModule}" "${path}" "${added}" "${branchAfter}" "${commitAfter}"
     fi
@@ -299,7 +300,7 @@ function checkout_level () {
 
 
 ################################ MAIN SCRIPT LOGIC ################################
-#set -x
+set -x
 
 typeset modulePath=$(resolve_module_path "${initialPath}" "/")
 read moduleName path < <(module_info "${modulePath}" "name" "path")
@@ -310,7 +311,12 @@ typeset vetoed=0
 #pushd ${path} &>/dev/null
 cd ${path}
 git rev-parse "${revision}" &> /dev/null
-(( $? )) && die "Revision '$revision' not exists in the module '$moduleName'"
+if (( $? )); then
+  git rev-parse "origin/${revision}" &> /dev/null
+  if (( $? )); then
+    die "Revision '$revision' not exists in the module '$moduleName'"
+  fi
+fi
 
 prepare_checkout_level "${revision}" "${modulePath}" "${moduleName}" "${path}" 0
 if (( $? )); then

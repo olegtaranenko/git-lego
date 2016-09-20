@@ -671,14 +671,14 @@ function prepare_checkout_level() {
     while read -a module; do
       local after="${module[0]}"
       modulesAfter+=($after)
-      local branchAfter=$(git config --blob ${levelRevision}:.gitmodules --get "submodule.${after}.branch" &> /dev/null)
-      local commitAfter=$(git config --blob ${levelRevision}:.gitmodules --get "submodule.${after}.commit" &> /dev/null)
-      local revisionAfter="${branchAfter}"
+      local branchAfter=$(git config --blob ${levelRevision}:.gitmodules --get "submodule.${after}.branch" )
+      local commitAfter=$(git config --blob ${levelRevision}:.gitmodules --get "submodule.${after}.commit" )
+      local revisionAfter=${branchAfter}
       if [[ -z $revisionAfter ]]; then
-        revisionAfter="${commitAfter}"
+        revisionAfter=${commitAfter}
       fi
-      revisionsAfter+=("${revisionAfter}")
-    done < <(git config --blob ${levelRevision}:.gitmodules --get-regexp "submodule.*.path" 2> /dev/null | sed -E "s/submodule\.(.*)\.path/\1/" )
+      revisionsAfter+=(${revisionAfter})
+    done < <(git config --blob ${levelRevision}:.gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/" )
 
     local found=0
     while read -a module; do
