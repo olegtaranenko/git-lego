@@ -30,10 +30,11 @@ fi
 cw_echo "Will clone repository $repoUrl to $repoPath"
 git clone "$@"
 
+#set -x
 if [[ -z "${repoPath}" ]]; then
   # no explicit destination repository given
   # take from last created directory
-  for i in `ls -lat1 | grep -v ^.$`; do
+  for i in `ls -t1 | grep -v ^.$`; do
     repoPath=${i};
     break;
   done
