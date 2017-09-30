@@ -4,7 +4,7 @@ if [ -z $CWORK_HOME ]; then
   # path where consistentwork projects are cloned
   export CWORK_HOME=~/consistentwork
 fi
-export PATH="~/.consistentwork/bin:$CWORK_HOME/bin:$PATH"
+export PATH="~/.consistentwork:$CWORK_HOME/bin:$PATH"
 
 
 # preference to locally built git
@@ -19,4 +19,4 @@ export PATH="~/.consistentwork/bin:$CWORK_HOME/bin:$PATH"
 #  fi
 #fi
 
-. $HOME/.consistentwork/bin/lib/mfs.sh
+#. $HOME/.consistentwork/bin/lib/mfs.sh

@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set +o posix
+################################ OPTIONAL INPUT PARAMETERS ################################
+typeset repoUrl=$1
+typeset repoPath=$2
+
+
+usage() {
+  cat << EOF
+    usage: git lego clone <any-legal-arguments for git clone>
+EOF
+}
+
+
+cmd_default() {
+  ################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
+    #
+    ## Exit code of the script
+    ## 0 - success
+    ## 1 - un-success (bad options/... etc)
+    ## 2 - unexpected error (wrong code)
+    #
+  declare ret=0
+
+  #set -x
+
+  # Maybe we trying to cloning inside of the existing branding repo?
+  # Right now it doesn't permitted
+  exists=$(git rev-parse --git-dir &> /dev/null)
+  if (( ! $? )); then
+    # TODO instead of 'cloning' add repo as submodule
+  #  die "It's not permitted to clone inside of an existing git repo. Look in "$(dirname $0)"/Readme.MD for more information"
+    exit 0
+  fi
+
+    cw_echo "Redirect to 'git clone'"
+    git clone "$@"
+    ret=$?
+  #echo $ret
+
+  if [[ ${repoUrl} == "--help" || -z ${repoUrl} ]]; then
+      exit 0
+  fi
+
+
+  if (( $ret )); then
+       die "Unrecoverable error by cloning"
+  fi
+
+
+  #set -x
+  if [[ ! -d "${repoPath}" ]]; then
+    # no explicit destination repository given
+    # take from last created directory
+    for i in `ls -t1 | grep -v ^.$`; do
+      repoPath=${i};
+      break;
+    done
+  fi
+
+
+  cd "$repoPath"
+
+  #pushd . &> /dev/null
+  git submodule update --recursive --init
+
+  #set -x
+  umbrella_bootstrap
+
+  cwRoot="${globals[$G_ROOT_DIR]}"
+  #popd &> /dev/null
+
+  doSync=1
+  check_branch_sync "${cwRoot}" 1
+  ret=$?
+
+  umbrella_finalize
+  exit ${ret}
+}
+
+cmd_help() {
+	usage
+	exit 0
+}

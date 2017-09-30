@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set +o posix
+
 ################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
   #
   ## Exit code of the script
@@ -7,12 +9,10 @@
   ## 1 - un-success (bad options/... etc)
   ## 2 - unexpected error (wrong code)
   #
+
 declare ret=0
 
 args=()
-
-. $(dirname $0)/lib/mfs.sh
-. $(dirname $0)/lib/shared_functions.sh
 
 ################################ STANDARD BOOTSTRAP CALL ################################
 umbrella_bootstrap
@@ -228,33 +228,36 @@ function status_level() {
 
 
 ################################ MAIN SCRIPT LOGIC ################################
-typeset commitable
-typeset detached
+cmd_default() {
 
-#set -x
-typeset modulePath=$(resolve_module_path "${initialPath}" /)
-read moduleName path < <(module_info "${modulePath}" "name" "path")
+  local commitable
+  local detached
 
-pushd ${path} &>/dev/null
-#baseModulePath=$(_m_pmd)
-status_level "${path}" "${moduleName}" "${modulePath}"
-ret=$?
+  #set -x
+  local modulePath=$(resolve_module_path "${initialPath}" /)
+  read moduleName path < <(module_info "${modulePath}" "name" "path")
 
-if (( $commitable )); then
-  msg="You have to COMMIT current changes ('commit --help' for more information)"
-  if (( $detached )); then
-    msg2+="One (or more) module(s) DETACHED  ('branch --help' for more information)"
-#    msg2="Your are advised to run CW 'branch ... <branch-name>' command before doing commit"
+  pushd ${path} &>/dev/null
+  #baseModulePath=$(_m_pmd)
+  status_level "${path}" "${moduleName}" "${modulePath}"
+  ret=$?
+
+  if (( $commitable )); then
+    msg="You have to COMMIT current changes ('commit --help' for more information)"
+    if (( $detached )); then
+      msg2+="One (or more) module(s) DETACHED  ('branch --help' for more information)"
+  #    msg2="Your are advised to run CW 'branch ... <branch-name>' command before doing commit"
+    fi
+    msg+="."
+    cw_cr
+    cw_echo "${msg}"
+    [[ -n ${msg2} ]] && cw_echo "${msg2}"
+    (( ! $verbose )) && cw_echo "'${0##*/} -v ...' option to get output more verbose or '${0##*/} --help' for other options"
+    cw_cr
   fi
-  msg+="."
-  cw_cr
-  cw_echo "${msg}"
-  [[ -n ${msg2} ]] && cw_echo "${msg2}"
-  (( ! $verbose )) && cw_echo "'${0##*/} -v ...' option to get output more verbose or '${0##*/} --help' for other options"
-  cw_cr
-fi
 
-popd &>/dev/null
+  popd &>/dev/null
 
-umbrella_finalize
-exit ${ret}
+  umbrella_finalize
+  exit ${ret}
+}

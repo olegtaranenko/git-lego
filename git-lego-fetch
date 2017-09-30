@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set +o posix
 ################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
 
   #
@@ -10,9 +11,6 @@
 declare ret=0
 
 args=()
-
-. $(dirname $0)/lib/mfs.sh
-. $(dirname $0)/lib/shared_functions.sh
 
 ################################ STANDARD BOOTSTRAP CALL ################################
 umbrella_bootstrap
@@ -100,7 +98,7 @@ done
 
 
 ################################ SCRIPT SPECIFIC METHODS ################################
-function prepare_fetch_level () {
+prepare_fetch_level () {
   local modulePath="$1"
   local moduleName="$2"
   local levelPath="$3"
@@ -131,33 +129,34 @@ function prepare_fetch_level () {
 
 ################################ MAIN SCRIPT LOGIC ################################
 #set -x
+cmd_default() {
+  typeset modulePath=$(resolve_module_path "${initialPath}" "/")
+  read moduleName path < <(module_info "${modulePath}" "name" "path")
+  typeset dieMsg
+  typeset skippedModules=()
+  typeset affected=0
+  typeset vetoed=0
+  #pushd ${path} &>/dev/null
+  cd ${path}
 
-typeset modulePath=$(resolve_module_path "${initialPath}" "/")
-read moduleName path < <(module_info "${modulePath}" "name" "path")
-typeset dieMsg
-typeset skippedModules=()
-typeset affected=0
-typeset vetoed=0
-#pushd ${path} &>/dev/null
-cd ${path}
+  prepare_fetch_level "${modulePath}" "${moduleName}" "${path}"
 
-prepare_fetch_level "${modulePath}" "${moduleName}" "${path}"
+  if (( $affected )); then
 
-if (( $affected )); then
+    while read -a module; do
+      cd ${module[$MFS_FULL_PATH]}
+      level_verbose_about_to ${module[@]}
 
-  while read -a module; do
-    cd ${module[$MFS_FULL_PATH]}
-    level_verbose_about_to ${module[@]}
+      git fetch "${args[@]}"
+    done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
+  fi
 
-    git fetch "${args[@]}"
-  done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
-fi
+  if (( ${#skippedModules} )); then
+    cw_echo "Not affected modules: ${skippedModules[*]}"
+  fi
 
-if (( ${#skippedModules} )); then
-  cw_echo "Not affected modules: ${skippedModules[*]}"
-fi
+  popd &>/dev/null
+  umbrella_finalize
 
-popd &>/dev/null
-umbrella_finalize
-
-exit $ret
+  exit $ret
+}

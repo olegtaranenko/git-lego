@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set +o posix
 
 #set -x
 ################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
@@ -9,10 +10,6 @@
   ## 2 - unexpected error (wrong code)
   #
 declare ret=0
-
-. $(dirname $0)/lib/mfs.sh
-. $(dirname $0)/lib/shared_functions.sh
-
 
 ################################ BRANCH-SPECIFIC HELP ################################
 function show_help() {
@@ -222,71 +219,72 @@ needMessageToPush=0
 
 
 ################################ MAIN SCRIPT LOGIC ################################
+cmd_default() {
+  cd "${cwRoot}"
+    ##
+    ## Current state of umbrella branch
+    ##
+  mainBranch=$(git rev-parse --abbrev-ref HEAD)
 
-cd "${cwRoot}"
-  ##
-  ## Current state of umbrella branch
-  ##
-mainBranch=$(git rev-parse --abbrev-ref HEAD)
+  if (( "$doView" )); then
+  ############################################### CHECK STATE (SHOW) (VIEW) ################################################
+    #printf "do view"
+    #(( $doSync )) && printf ", do sync"; (( $doAutoCommit )) && printf "(autocommit)"; (( ! $doAutoCommit )) && printf "(NO autocommit)"; (( ! $doSync )) && printf ", NO sync"
+    #(( $doPush )) && printf ", do push";  (( ! $doPush )) && printf ", NO push"
+  #  printf "\n"
 
-if (( "$doView" )); then
-############################################### CHECK STATE (SHOW) (VIEW) ################################################
-  #printf "do view"
-  #(( $doSync )) && printf ", do sync"; (( $doAutoCommit )) && printf "(autocommit)"; (( ! $doAutoCommit )) && printf "(NO autocommit)"; (( ! $doSync )) && printf ", NO sync"
-  #(( $doPush )) && printf ", do push";  (( ! $doPush )) && printf ", NO push"
-#  printf "\n"
-
-  if [[ ${mainBranch} == "HEAD" ]]; then
-    instruction="$(cat<<EOF
+    if [[ ${mainBranch} == "HEAD" ]]; then
+      instruction="$(cat<<EOF
 Umbrella repo is in the detached mode.
         You need to configure it using 'checkout ${branchName:-<branch-name>}'
         Use '${0##*/} --help' for more information
 EOF
-)"
-    cw_echo "${instruction}"
-    ret=1
-  else
-    cw_echo "Umbrella repo at '$mainBranch' branch"
+  )"
+      cw_echo "${instruction}"
+      ret=1
+    else
+      cw_echo "Umbrella repo at '$mainBranch' branch"
+    fi
+
+    check_branch_sync "${cwRoot}" ${doSync}
+    ret=$?
+
+    (( ! $ret )) && cw_echo "All submodules are mutually syncronized."
+    [[ $ret == 1 ]] && cw_echo "Submodules are not synchronized. Run '${0##*/} --sync' to fix"
+    [[ $ret == 2 ]] && cw_echo "Unexpected error"
+
+  elif (( $doUpdate )); then
+  ################################################# UPDATE #################################################
+    currentUmbrellaState="'${mainBranch}'"
+    [[ $mainBranch == "HEAD" ]] && currentUmbrellaState="detached"
+
+    typeset mainAlreadyExists=$(is_branch_exists "${branchName}")
+    if (( $mainAlreadyExists )) && (( $doUmbrella )); then
+      die "Branch '$branchName' already exists in the umbrella repo.
+          You are advised to do 'checkout $branchName' and then continue to create branch in sub-repositories
+          with '${0##*/} ... --no-umbrella ...' option"
+    fi
+
+    verboseMsgs=()
+
+    if (( $doUmbrella )); then
+      verboseMsgs[0]="About to create new branch '$branchName' for umbrella repo"
+    else
+      verboseMsgs[0]="About to create branch '$branchName' in sub-repositories only"
+    fi
+    verboseMsgs[1]="Current umbrella branch: $currentUmbrellaState"
+    verboseMsgs[2]="Affected sub repositories: ${repos[*]}"
+  #  verboseMsgs[3]="Fallback branches: ${fallbacks[*]}"
+
+    cw_echo "${verboseMsgs[@]}"
+
+    if (( $doUmbrella )); then
+      reposPath[0]="${cwRoot}"
+    fi
   fi
 
-  check_branch_sync "${cwRoot}" ${doSync}
-  ret=$?
 
-  (( ! $ret )) && cw_echo "All submodules are mutually syncronized."
-  [[ $ret == 1 ]] && cw_echo "Submodules are not synchronized. Run '${0##*/} --sync' to fix"
-  [[ $ret == 2 ]] && cw_echo "Unexpected error"
-
-elif (( $doUpdate )); then
-################################################# UPDATE #################################################
-  currentUmbrellaState="'${mainBranch}'"
-  [[ $mainBranch == "HEAD" ]] && currentUmbrellaState="detached"
-
-  typeset mainAlreadyExists=$(is_branch_exists "${branchName}")
-  if (( $mainAlreadyExists )) && (( $doUmbrella )); then
-    die "Branch '$branchName' already exists in the umbrella repo.
-        You are advised to do 'checkout $branchName' and then continue to create branch in sub-repositories
-        with '${0##*/} ... --no-umbrella ...' option"
-  fi
-
-  verboseMsgs=()
-
-  if (( $doUmbrella )); then
-    verboseMsgs[0]="About to create new branch '$branchName' for umbrella repo"
-  else
-    verboseMsgs[0]="About to create branch '$branchName' in sub-repositories only"
-  fi
-  verboseMsgs[1]="Current umbrella branch: $currentUmbrellaState"
-  verboseMsgs[2]="Affected sub repositories: ${repos[*]}"
-#  verboseMsgs[3]="Fallback branches: ${fallbacks[*]}"
-
-  cw_echo "${verboseMsgs[@]}"
-
-  if (( $doUmbrella )); then
-    reposPath[0]="${cwRoot}"
-  fi
-fi
-
-
-umbrella_finalize
-cw_verbose_stop
-exit $ret
+  umbrella_finalize
+  cw_verbose_stop
+  exit $ret
+}

@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
+set +o posix
+
 ################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
 args=()
-
-. $(dirname $0)/lib/mfs.sh
-. $(dirname $0)/lib/shared_functions.sh
 
 ################################ STANDARD BOOTSTRAP CALL ################################
 #set -x
@@ -56,7 +55,7 @@ EXAMPLES:
         This action may cause (or may not) enclosed module to be dirty, if previous commit differs to develop.
         ACTION: if umbrella module branch differs from develop, it will be checked out to develop,
         all sub-modules have to be updated to develop as well. If there is any module having no develop branch,
-        getting warning about this, no commit (if no --force given), state of that module is not chnanged.
+        getting warning about this, no commit (if no --force given), state of that module is not changed.
 
     '${0##*/} --fallback=develop qa' -> absolute mode, --recursive, --current, --commit, --push
         ACTION: if umbrella module branch differs from develop, it will be checked out to develop,
@@ -182,7 +181,7 @@ fi
 #set -x
 
 ################################ SCRIPT SPECIFIC METHODS ################################
-function checkout_level () {
+checkout_level () {
   local levelRevision="$1"
   local modulePath="$2"
   local moduleName="$3"
@@ -300,32 +299,34 @@ function checkout_level () {
 
 
 ################################ MAIN SCRIPT LOGIC ################################
+cmd_default() {
+  typeset modulePath=$(resolve_module_path "${initialPath}" "/")
+  read moduleName path < <(module_info "${modulePath}" "name" "path")
+  typeset dieMsg
+  typeset skippedModules=()
+  typeset affected=0
+  typeset vetoed=0
 
-typeset modulePath=$(resolve_module_path "${initialPath}" "/")
-read moduleName path < <(module_info "${modulePath}" "name" "path")
-typeset dieMsg
-typeset skippedModules=()
-typeset affected=0
-typeset vetoed=0
-#pushd ${path} &>/dev/null
-cd ${path}
-git rev-parse "${revision}" &> /dev/null
-if (( $? )); then
-  git rev-parse "origin/${revision}" &> /dev/null
+  #pushd ${path} &>/dev/null
+  cd ${path}
+  git rev-parse "${revision}" &> /dev/null
   if (( $? )); then
-    die "Revision '$revision' not exists in the module '$moduleName'"
+    git rev-parse "origin/${revision}" &> /dev/null
+    if (( $? )); then
+      die "Revision '$revision' not exists in the module '$moduleName'"
+    fi
   fi
-fi
 
-prepare_checkout_level "${revision}" "${modulePath}" "${moduleName}" "${path}" 0
-if (( $? )); then
-  if [[ -n $dieMsg ]]; then
-    die "${dieMsg}"
+  prepare_checkout_level "${revision}" "${modulePath}" "${moduleName}" "${path}" 0
+  if (( $? )); then
+    if [[ -n $dieMsg ]]; then
+      die "${dieMsg}"
+    fi
   fi
-fi
 
-#set -x
-checkout_level "${revision}" "${modulePath}" "${moduleName}" "${path}" 0
-#popd &> /dev/null can be meanwhile already removed
+  #set -x
+  checkout_level "${revision}" "${modulePath}" "${moduleName}" "${path}" 0
+  #popd &> /dev/null can be meanwhile already removed
 
-exit 0
+  exit 0
+}

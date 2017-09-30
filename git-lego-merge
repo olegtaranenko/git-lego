@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set +o posix
 
 ################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
 
@@ -11,9 +12,6 @@
 declare ret=0
 
 args=()
-
-. $(dirname $0)/lib/mfs.sh
-. $(dirname $0)/lib/shared_functions.sh
 
 ################################ STANDARD BOOTSTRAP CALL ################################
 umbrella_bootstrap
@@ -259,52 +257,53 @@ function merge_level () {
 
 ################################ MAIN SCRIPT LOGIC ################################
 #set -x
+cmd_default() {
+  typeset modulePath=$(resolve_module_path "${initialPath}" "/")
+  read moduleName path < <(module_info "${modulePath}" "name" "path")
+  typeset dieMsg
+  typeset skippedModules=()
+  typeset affected=0
+  typeset vetoed=0
+  #pushd ${path} &>/dev/null
+  cd ${path}
+  git rev-parse "${revision}" &> /dev/null
+  (( $? )) && die "Revision '$revision' not exists in the module '$moduleName'"
 
-typeset modulePath=$(resolve_module_path "${initialPath}" "/")
-read moduleName path < <(module_info "${modulePath}" "name" "path")
-typeset dieMsg
-typeset skippedModules=()
-typeset affected=0
-typeset vetoed=0
-#pushd ${path} &>/dev/null
-cd ${path}
-git rev-parse "${revision}" &> /dev/null
-(( $? )) && die "Revision '$revision' not exists in the module '$moduleName'"
 
-
-prepare_checkout_level "${revision}" "${modulePath}" "${moduleName}" "${path}" 0
-if (( $? )); then
-  if [[ -n $dieMsg ]]; then
-    die "${dieMsg}"
-  fi
-fi
-
-#set -x
-if (( $affected )); then
-  if [[ -z ${mergeMessage} && -n ${onEmptyMessage} ]]; then
-   args+=('--message' )
-   args+=(" \"${onEmptyMessage:0:(${#onEmptyMessage}-2)})\"")
+  prepare_checkout_level "${revision}" "${modulePath}" "${moduleName}" "${path}" 0
+  if (( $? )); then
+    if [[ -n $dieMsg ]]; then
+      die "${dieMsg}"
+    fi
   fi
 
-#cat ${globals[$G_AFFECTED_MODULES]}
+  #set -x
+  if (( $affected )); then
+    if [[ -z ${mergeMessage} && -n ${onEmptyMessage} ]]; then
+     args+=('--message' )
+     args+=(" \"${onEmptyMessage:0:(${#onEmptyMessage}-2)})\"")
+    fi
 
-  while read -a module; do
-    cd ${module[$MFS_FULL_PATH]}
-    level_verbose_about_to ${module[@]}
-#    echo "git merge ${args[@]} ${#args[@]}"
+  #cat ${globals[$G_AFFECTED_MODULES]}
 
-    git merge "${args[@]}"
-  done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
-fi
+    while read -a module; do
+      cd ${module[$MFS_FULL_PATH]}
+      level_verbose_about_to ${module[@]}
+  #    echo "git merge ${args[@]} ${#args[@]}"
 
-if (( ${#skippedModules} )); then
-  cw_echo "Not affected modules: ${skippedModules[*]}"
-fi
+      git merge "${args[@]}"
+    done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
+  fi
 
-popd &>/dev/null
-umbrella_finalize
+  if (( ${#skippedModules} )); then
+    cw_echo "Not affected modules: ${skippedModules[*]}"
+  fi
 
-exit $ret
-#popd &> /dev/null can be meanwhile already removed
+  popd &>/dev/null
+  umbrella_finalize
 
-exit 0
+  exit $ret
+  #popd &> /dev/null can be meanwhile already removed
+
+  exit 0
+}

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+set +o posix
+
 ################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
 
   #
@@ -10,9 +12,6 @@
 declare ret=0
 
 args=()
-
-. $(dirname $0)/lib/mfs.sh
-. $(dirname $0)/lib/shared_functions.sh
 
 ################################ STANDARD BOOTSTRAP CALL ################################
 umbrella_bootstrap
@@ -201,42 +200,43 @@ function prepare_commit_level() {
 }
 
 ################################ MAIN SCRIPT LOGIC ################################
-#set -x
-typeset modulePath=$(resolve_module_path "${initialPath}" /)
-read moduleName resolvedPath < <(module_info "${modulePath}" "name" "path")
+cmd_default() {
+  typeset modulePath=$(resolve_module_path "${initialPath}" /)
+  read moduleName resolvedPath < <(module_info "${modulePath}" "name" "path")
 
-typeset affected=0
-typeset onEmptyMessage
-typeset skippedModules=()
-[[ -z ${commitMessage} ]] && onEmptyMessage="commit for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
+  typeset affected=0
+  typeset onEmptyMessage
+  typeset skippedModules=()
+  [[ -z ${commitMessage} ]] && onEmptyMessage="commit for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
 
-pushd ${resolvedPath} &>/dev/null
-baseModulePath=$(pmd)
-prepare_commit_level "${resolvedPath}" "${moduleName}" "${baseModulePath}"
+  pushd ${resolvedPath} &>/dev/null
+  baseModulePath=$(pmd)
+  prepare_commit_level "${resolvedPath}" "${moduleName}" "${baseModulePath}"
 
-if (( $affected )); then
-  if [[ -z ${commitMessage} && -n ${onEmptyMessage} ]]; then
-   args+=('--message' )
-   args+=(" \"${onEmptyMessage:0:(${#onEmptyMessage}-2)})\"")
+  if (( $affected )); then
+    if [[ -z ${commitMessage} && -n ${onEmptyMessage} ]]; then
+     args+=('--message' )
+     args+=(" \"${onEmptyMessage:0:(${#onEmptyMessage}-2)})\"")
+    fi
+
+  #cat ${globals[$G_AFFECTED_MODULES]}
+
+    while read -a module; do
+      cd ${module[$MFS_FULL_PATH]}
+      level_verbose_about_to ${module[@]}
+  #    echo "git commit ${args[@]} ${#args[@]}"
+
+      (( $doAppendUntracked )) && git add . -A
+      git commit "${args[@]}"
+    done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
   fi
 
-#cat ${globals[$G_AFFECTED_MODULES]}
+  if (( ${#skippedModules} )); then
+    cw_echo "Not affected modules: ${skippedModules[*]}"
+  fi
 
-  while read -a module; do
-    cd ${module[$MFS_FULL_PATH]}
-    level_verbose_about_to ${module[@]}
-#    echo "git commit ${args[@]} ${#args[@]}"
+  popd &>/dev/null
+  umbrella_finalize
 
-    (( $doAppendUntracked )) && git add . -A
-    git commit "${args[@]}"
-  done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
-fi
-
-if (( ${#skippedModules} )); then
-  cw_echo "Not affected modules: ${skippedModules[*]}"
-fi
-
-popd &>/dev/null
-umbrella_finalize
-
-exit $ret
+  exit $ret
+}

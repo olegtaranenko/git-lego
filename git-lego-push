@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-
+set +o posix
 ################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
   #
   ## Exit code of the script
@@ -10,9 +10,6 @@
 declare ret=0
 
 args=()
-
-. $(dirname $0)/lib/mfs.sh
-. $(dirname $0)/lib/shared_functions.sh
 
 ################################ STANDARD BOOTSTRAP CALL ################################
 umbrella_bootstrap
@@ -180,54 +177,56 @@ function prepare_push_level() {
 
 
 ################################ MAIN SCRIPT LOGIC ################################
-typeset modulePath=$(resolve_module_path "${initialPath}" /)
-read moduleName resolvedPath < <(module_info "${modulePath}" "name" "path")
-typeset skippedModules=()
-typeset affected=0
-typeset vetoed=0
+cmd_default() {
+  typeset modulePath=$(resolve_module_path "${initialPath}" /)
+  read moduleName resolvedPath < <(module_info "${modulePath}" "name" "path")
+  typeset skippedModules=()
+  typeset affected=0
+  typeset vetoed=0
 
-pushd ${resolvedPath} &>/dev/null
-baseModulePath=$(pmd)
-#set -x
-prepare_push_level "${resolvedPath}" "${moduleName}" "${baseModulePath}" "0"
-ret=$?
+  pushd ${resolvedPath} &>/dev/null
+  baseModulePath=$(pmd)
+  #set -x
+  prepare_push_level "${resolvedPath}" "${moduleName}" "${baseModulePath}" "0"
+  ret=$?
 
-if (( $ret )); then
-  vetoed=1
-fi
-
-wasPushed=0
-if (( ! $vetoed )); then
-  if (( $affected )); then
-    while read -a module; do
-      cd ${module[$MFS_FULL_PATH]}
-      pwd
-      level_verbose_about_to ${module[@]}
-  #    echo "git push ${args[@]} ${#args[@]}"
-      git push "${args[@]}"
-      if (( $? )); then
-        panic $(pwd)
-        panic "Unexpected error 'git push' command"
-      fi
-      wasPushed+=(module[$MFS_MODULE_NAME])
-    done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
+  if (( $ret )); then
+    vetoed=1
   fi
-else
-  mainWarn="Request to push is rejected. "
-  (( $verbose )) && mainWarn+="Use '${0##*/} -v' to figure out the reason."
-  (( 1 == $verbose )) && mainWarn+="'${0##*/} -v -v' to get more detailed information."
 
-  cw_echo  ${mainWarn} \
-  "Some mutual dependent repositories will not be pushed, but required." \
-  "Pushing at current state will break consistence of modules hierarchy."
-fi
+  wasPushed=0
+  if (( ! $vetoed )); then
+    if (( $affected )); then
+      while read -a module; do
+        cd ${module[$MFS_FULL_PATH]}
+        pwd
+        level_verbose_about_to ${module[@]}
+    #    echo "git push ${args[@]} ${#args[@]}"
+        git push "${args[@]}"
+        if (( $? )); then
+          panic $(pwd)
+          panic "Unexpected error 'git push' command"
+        fi
+        wasPushed+=(module[$MFS_MODULE_NAME])
+      done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
+    fi
+  else
+    mainWarn="Request to push is rejected. "
+    (( $verbose )) && mainWarn+="Use '${0##*/} -v' to figure out the reason."
+    (( 1 == $verbose )) && mainWarn+="'${0##*/} -v -v' to get more detailed information."
 
-(( ! ${#wasPushed[@]} )) && cw_echo "Push not happens"
+    cw_echo  ${mainWarn} \
+    "Some mutual dependent repositories will not be pushed, but required." \
+    "Pushing at current state will break consistence of modules hierarchy."
+  fi
 
-if (( ${#skippedModules} )); then
-  cw_echo "Not affected modules: ${skippedModules[*]}"
-fi
+  (( ! ${#wasPushed[@]} )) && cw_echo "Push not happens"
 
-popd &>/dev/null
-umbrella_finalize
-exit ${ret}
+  if (( ${#skippedModules} )); then
+    cw_echo "Not affected modules: ${skippedModules[*]}"
+  fi
+
+  popd &>/dev/null
+  umbrella_finalize
+  exit ${ret}
+}
