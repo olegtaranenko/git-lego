@@ -22,12 +22,12 @@ uModules="${globals[$G_MODULES_FN]}"
 gitDir="${globals[$G_MODULE_GIT_DIR]}"
 
 
-################################ BRANCH-SPECIFIC HELP ################################
+################################ SCRIPT-SPECIFIC HELP ################################
 function show_help() {
 cat << EOF
 
 NAME:
-    ${0##*/} status in git umbrella-managed modules
+    ${0##*/} status in git lego-managed modules
 
 SYNOPSIS:
     '${0##*/} [<any-git-status-options>] [-v|--verbose] [<path-resolution>] -- [[<module-name>] ...]'
