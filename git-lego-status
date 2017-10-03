@@ -18,7 +18,6 @@ args=()
 umbrella_bootstrap
 
 cwRoot="${globals[$G_ROOT_DIR]}"
-uModules="${globals[$G_MODULES_FN]}"
 gitDir="${globals[$G_MODULE_GIT_DIR]}"
 
 
@@ -27,16 +26,16 @@ function show_help() {
 cat << EOF
 
 NAME:
-    ${0##*/} status in git lego-managed modules
+    ${FLAGS_PREFIX} status in git lego-managed modules
 
 SYNOPSIS:
-    '${0##*/} [<any-git-status-options>] [-v|--verbose] [<path-resolution>] -- [[<module-name>] ...]'
+    '${FLAGS_PREFIX} [<any-git-status-options>] [-v|--verbose] [<path-resolution>] -- [[<module-name>] ...]'
 
 DESCRIPTION:
 
 
 EXAMPLES:
-    '${0##*/} -v .' -> show verbose status for current module only
+    '${FLAGS_PREFIX} -v .' -> show verbose status for current module only
 
 
 OPTIONS:
@@ -100,8 +99,8 @@ done
 # ... (tbd)
 ## Parameters
 #   $1 file path to module toplevel
-#   $3 module name
 #   $2 path to the enclosed module in module hierarchy
+#   $3 module name
 #
 ##  Globals settings.
 #     $quiet ??
@@ -110,9 +109,15 @@ done
 #     $commitable - sets to 1, if one of affected module has dirty state, required to be commit
 # .
 #
+typeset info
+
 function show_current_module_status {
-  local filePath=$1
-  local info="${3}"
+#"${subRepoPath}" "${subModule}" "${modulePath}" "${initialized}" "${stickOnBranch:--}"
+  local filePath="$1"
+  info="${3}"                  # starting with module path
+  local initialized="${4:-1}"
+  local stickOnBranch="$5"
+
   local verboseMsg=([1]="path: $filePath")
   verboseMsg+=("url: "$(get_repo_url))
 
@@ -120,11 +125,13 @@ function show_current_module_status {
     cw_cr
   fi
 
-  local fineIssues infoIssues
+  local verboseIssues infoIssues
 #  set -x
 
-  module_porcelain_status ${0##*/}
-  
+  # gather all additional fine information into $MODULE_STATUS global array
+  module_porcelain_status status ${info} "${initialized}" "${stickOnBranch}"
+
+  # two below vars are defined to cmd_default()
   (( ${MODULE_STATUS[$MS_DETACHED]} )) && detached=${MODULE_STATUS[$MS_DETACHED]}
   (( ${MODULE_STATUS[$MS_COMMITABLE]} )) && commitable=${MODULE_STATUS[$MS_COMMITABLE]}
 
@@ -132,51 +139,69 @@ function show_current_module_status {
   [[ -n ${branchInfo} ]] && info+=", ${branchInfo}"
 
   if (( ${MODULE_STATUS[$MS_UNTRACKED]} )); then
-    (( ${#fineIssues} )) && fineIssues+=", "
-    fineIssues+="untracked"
+    (( ${#verboseIssues} )) && verboseIssues+=", "
+    verboseIssues+="untracked"
     infoIssues+="?"
   fi
   if (( ${MODULE_STATUS[$MS_ADDED]} )); then
-    (( ${#fineIssues} )) && fineIssues+=", "
-    fineIssues+="added"
+    (( ${#verboseIssues} )) && verboseIssues+=", "
+    verboseIssues+="added"
     infoIssues+="A"
   fi
   if (( ${MODULE_STATUS[$MS_MODIFIED]} )); then
-    (( ${#fineIssues} )) && fineIssues+=", "
-    fineIssues+="modified"
+    (( ${#verboseIssues} )) && verboseIssues+=", "
+    verboseIssues+="modified"
     infoIssues+="M"
   fi
   if (( ${MODULE_STATUS[$MS_DELETED]} )); then
-    (( ${#fineIssues} )) && fineIssues+=", "
-    fineIssues+="deleted"
+    (( ${#verboseIssues} )) && verboseIssues+=", "
+    verboseIssues+="deleted"
     infoIssues+="D"
   fi
   if (( ${MODULE_STATUS[$MS_RENAMED]} )); then
-    (( ${#fineIssues} )) && fineIssues+=", "
-    fineIssues+="renamed"
+    (( ${#verboseIssues} )) && verboseIssues+=", "
+    verboseIssues+="renamed"
     infoIssues+="R"
   fi
   if (( ${MODULE_STATUS[$MS_COPIED]} )); then
-    (( ${#fineIssues} )) && fineIssues+=", "
-    fineIssues+="copied"
+    (( ${#verboseIssues} )) && verboseIssues+=", "
+    verboseIssues+="copied"
     infoIssues+="C"
   fi
   if (( ${MODULE_STATUS[$MS_UNMERGED]} )); then
-    (( ${#fineIssues} )) && fineIssues+=", "
-    fineIssues+="unmerged"
+    (( ${#verboseIssues} )) && verboseIssues+=", "
+    verboseIssues+="unmerged"
     infoIssues+="U"
   fi
 
 #  set -x
-  if (( ${#infoIssues} )); then
-    fineIssues="issues: "$fineIssues" paths"
-    verboseMsg+=("${fineIssues}")
-    info+=", dirty: "${infoIssues}
-#    commitable=1
+  if [[ ${MODULE_STATUS[$MS_UNINITIALIZED]} == 1 ]]; then
+    info+=", not initialized"
+    verboseMsg+=("The module not initialized yet. 'git-lego init --reconcile' to fix it.")
+    print_if_expected
   else
-    verboseMsg+=("no commitable changes")
-    [[ ${MODULE_STATUS[$MS_DETACHED]} != 1 ]] && info+=", clean"
-    (( ${MODULE_STATUS[$MS_DETACHED]} )) && info+=", no changes"
+    if (( ${#infoIssues} )) ; then
+      verboseIssues="issues: "$verboseIssues" paths"
+      verboseMsg+=("${verboseIssues}")
+      info+=", dirty: "${infoIssues}
+    else
+      if [[ ${MODULE_STATUS[$MS_DETACHED]} == 1 ]] ; then
+        info+=", detached"
+        verboseMsg+=("You need to run either 'git-lego checkout <branch-name>' or 'git-lego init [--reconcile|--pin]' to make those consent.")
+      fi
+      if [[ ${MODULE_STATUS[$MS_INCONSISTENT]} == 1 ]] ; then
+        info+=", not consistent"
+        verboseMsg+=("Module has discrepancy between its current state and revision, which outer module expected")
+      fi
+      print_if_expected ${MODULE_STATUS[$MS_INCONSISTENT]}
+      if [[ -n ${MODULE_STATUS[$MS_GUESSED_BRANCHES]} ]] ; then
+        info+=", possible: ${MODULE_STATUS[$MS_GUESSED_BRANCHES]}"
+#        verboseMsg+=("Module has discrepancy between its current state and revision, which outer module expected")
+      fi
+      if (( ${MODULE_STATUS[$MS_INCONSISTENT]} )) ; then
+        info+=")"
+      fi
+    fi
   fi
   verboseMsg[0]=${info}
 #  set +x
@@ -187,27 +212,42 @@ function show_current_module_status {
   fi
 }
 
+print_if_expected() {
+  if (( $1 )) ; then
+    info+=" ("
+  else
+    if [[ -n ${MODULE_STATUS[$MS_INNER_REV_HINT]} ]]; then
+      info+=", "
+    fi
+  fi
+  info+="expected:${MODULE_STATUS[$MS_INNER_REV_HINT]:-no hint}"
+  if [[ -n ${MODULE_STATUS[$MS_INNER_REV_HINT]} ]]; then
+    verboseMsg+=("Expected, that module should be initialized to ${MODULE_STATUS[$MS_INNER_REV_HINT]} revision")
+  fi
+}
 
 function status_level() {
   local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local repoBranch
   local ret=0   # return code, 0 - the repo is syncronized
-  local childRet # child return code
+  local childRet=${asdf} # child return code
+  local stickOnBranch=${5:--}
 
+#  set -x
   drop_to_affected ${levelPath}
-  local applied=$?
-  if (( ! $applied )); then
-    show_current_module_status "$@"
-  fi
+
+  (( ! $? )) && show_current_module_status "$@"
+#  set +x
 
   if [ -f .gitmodules ]; then
     while read -a module; do
       childRet=0
       subModule="${module[0]}"
-      checkBranch=$(git config --file .gitmodules --get submodule."${subModule}".branch)
+      stickOnBranch=$(git config --file .gitmodules --get submodule."${subModule}".branch)
       localPath="${module[1]}"
       subRepoPath="${levelPath}"/"${localPath}"
+      initialized=$(is_repo_initialized ${subRepoPath})
 
       pushd "${subRepoPath}" &> /dev/null
 #      break
@@ -217,12 +257,15 @@ function status_level() {
       fi
       modulePath+="$subModule"
 
-      status_level "${subRepoPath}" "${subModule}" "${modulePath}"
+      status_level "${subRepoPath}" "${subModule}" "${modulePath}" "${initialized}" "${stickOnBranch}"
       childRet=$?
-      (( $childRet > $ret )) && ret = ${childRet}
+      if [[ ${childRet} > ${ret} ]] ; then
+        ret=${childRet}
+      fi
       popd  &> /dev/null
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
+  return $ret
 }
 
 
@@ -230,29 +273,31 @@ function status_level() {
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
 
+  # 'cumulative variables, if any of module hits.
   local commitable
   local detached
 
-  #set -x
+#  set -x
   local modulePath=$(resolve_module_path "${initialPath}" /)
   read moduleName path < <(module_info "${modulePath}" "name" "path")
 
   pushd ${path} &>/dev/null
   #baseModulePath=$(_m_pmd)
   status_level "${path}" "${moduleName}" "${modulePath}"
+#  set +x
   ret=$?
 
   if (( $commitable )); then
-    msg="You have to COMMIT current changes ('commit --help' for more information)"
+    msg="You have to COMMIT current changes ('git-lego commit --help' for more information)"
     if (( $detached )); then
-      msg2+="One (or more) module(s) DETACHED  ('branch --help' for more information)"
+      msg2+="One (or more) module(s) DETACHED ('git-lego branch --help' for more information)"
   #    msg2="Your are advised to run CW 'branch ... <branch-name>' command before doing commit"
     fi
     msg+="."
     cw_cr
     cw_echo "${msg}"
     [[ -n ${msg2} ]] && cw_echo "${msg2}"
-    (( ! $verbose )) && cw_echo "'${0##*/} -v ...' option to get output more verbose or '${0##*/} --help' for other options"
+    (( ! $verbose )) && cw_echo "${FLAGS_PREFIX} -v ... option to get output more verbose or ${FLAGS_PREFIX} --help for other options"
     cw_cr
   fi
 

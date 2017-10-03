@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set +o posix
-
 ################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
 
   #
@@ -50,9 +49,14 @@ EOF
 
 typeset verbose=0
 typeset afterDash=()
+typeset attachHints=()
 typeset stopOptions=0
-typeset initialPath doRecursive=0 reuse
 #set -x
+typeset autoAttach=$(git config --get "lego.autoAttach")
+autoAttach=$(READ_boolean ${autoAttach} 1) # 1 === true :(
+echo ${autoAttach}
+#set +x
+typeset initialPath doRecursive=0 reuse
 
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
@@ -66,8 +70,21 @@ while [[ -n $1 ]]; do
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
       ;;
 
-    --)
-      stopOptions=1
+		-f | --force)
+			force=$1
+			;;
+
+    --auto-attach|-a)
+      autoAttach=1
+      ;;
+    --no-auto-attach|-A)
+      autoAttach=0
+      ;;
+    --attach-hint)
+        case "$2" in '') usage ;; esac
+        attachModule="$2"
+        attachHints+=(${attachModule})
+        shift
       ;;
 
     --recursive|-r)
@@ -98,14 +115,14 @@ done
 
 
 ################################ SCRIPT SPECIFIC METHODS ################################
-function prepare_pull_level () {
+reset_first_affected () {
   local modulePath="$1"
   local moduleName="$2"
   local levelPath="$3"
 
   pushd "${levelPath}" &> /dev/null
 
-  drop_to_affected ${levelPath}
+#  drop_to_affected ${levelPath}
 
   # do recurse call for every sub-repos
   while read -a module; do
@@ -119,12 +136,12 @@ function prepare_pull_level () {
     fi
     childModulePath+="$subModule"
 
-    prepare_pull_level "${childModulePath}" "${subModule}" "${path}"
+    #reset_first_affected "${childModulePath}" "${subModule}" "${path}"
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
 
   popd &> /dev/null
 
-}  ## of pull_level
+}  ## of reset_level
 
 
 ################################ MAIN SCRIPT LOGIC ################################
@@ -136,24 +153,38 @@ cmd_default() {
   typeset skippedModules=()
   typeset affected=0
   typeset vetoed=0
-  #pushd ${path} &>/dev/null
+  typeset affected_module=0
+#  pushd ${path} &>/dev/null
   cd ${path}
 
-  prepare_pull_level "${modulePath}" "${moduleName}" "${path}"
 
-  if (( $affected )); then
+  while  read -a module ; do
+    local subModule="${module[0]}"
+    local localPath="${module[1]}"
+    local path="${levelPath}"/"${localPath}"
 
-    while read -a module; do
-      cd ${module[$MFS_FULL_PATH]}
-      level_verbose_about_to ${module[@]}
+    local childModulePath="${modulePath}"
+    if [[ ${modulePath:(-1)} != "/" ]]; then
+      local childModulePath+="/"
+    fi
+    childModulePath+="$subModule"
 
-      git pull "${args[@]}"
-    done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
-  fi
+    reset_first_affected "${childModulePath}" "${subModule}" "${path}"
+  done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
 
-  if (( ${#skippedModules} )); then
-    cw_echo "Not affected modules: ${skippedModules[*]}"
-  fi
+#  if (( $affected )); then
+#
+#    while read -a module; do
+#      cd ${module[$MFS_FULL_PATH]}
+#      level_verbose_about_to ${module[@]}
+#
+#      git reset "${args[@]}"
+#    done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
+#  fi
+#
+#  if (( ${#skippedModules} )); then
+#    cw_echo "Not affected modules: ${skippedModules[*]}"
+#  fi
 
   popd &>/dev/null
   umbrella_finalize

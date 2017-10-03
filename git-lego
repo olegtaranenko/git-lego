@@ -2,43 +2,46 @@
 
   # After call to 'umbrella_bootstrap' this array contains following predefined values.
   #
-  ## "${globals[$G_ROOT_DIR]}" [cwRoot]           - path to umbrella repository
-  ## "${globals[$G_MODULES_FN]}" [cwTmpSubmodules]  - temporary file name, which listed all current repositories with additional information
-  ## "${globals[$G_MODULE_GIT_DIR]}" [gitDir]           - current repository (or sub repository, from the
+  ## "${globals[$G_ROOT_DIR]}" [cwRoot]             - file system path to root repository
+  ## "${globals[$G_MODULES_FN]}" [cwTmpSubmodules]  - temporary file name, which listed all current repositories
+  #                                                   with additional information
+  ## "${globals[$G_MODULE_GIT_DIR]}" [gitDir]       - current repository
   #
-globals=()
 
-  ## Global arrays for quick access of
+## Global arrays for quick access of frequently used parameters
+## There are basically a cache
 g_module_name=()
 g_relative_paths=()
 g_git_dirs=()
 g_full_paths=()
 g_module_paths=()
 
+globals=()
   ################################## CONSTANTS FOR globals array ##########################################
   #
-  ## Umbrella repo path
+  ## Root repo path
   #
 G_ROOT_DIR=0
   #
-  ## reference to git directory for current submodule in umbrella coordinates.
+  ## reference to git directory for current submodule.
   #
 G_MODULE_GIT_DIR=1
   #
-  ## Human-readable name of umbrella path
+  ## Human-readable name of root repository path
   #
 G_ROOT_NAME=2
   #
   ## Temporary folder owned by script invocation
 G_SCRIPT_TMP_DIRECTORY=3
   #
-  ## Reference to temp file which keeps all submodules' path in reversed order
+  ## Reference to temporary file which keeps all submodules' path in reversed order
   ##  It is useful to apply regular actions against all modules, like bulk commit,push,etc
   #
 G_MODULES_FN=4
   #
-  ## Reference to temp file which keeps all submodules' path in reversed order
-  ##  It is useful to apply regular actions against all modules, like bulk commit,push,etc
+  ## Reference to temporary file which keeps modules' paths, which are effectively affected by
+  # applying bulk operations such pull, commit, etc
+  # They are in 'absolute' module structure form like /, or /macosx/docs
   #
 G_AFFECTED_MODULES=5
 
@@ -47,7 +50,7 @@ G_AFFECTED_MODULES=5
 #################### CONSTANTS for MODULE STATUS (see function module_porcelain_status() ####################
 #
 MS_BRANCH_INFO=0   # String
-MS_DETACHED=1      # 1/0
+MS_DETACHED=1      # 0 is clean, 1 is detached, 2 is not synced
 MS_COMMITABLE=2    # 1/0
 MS_UNTRACKED=3     # ?
 MS_MODIFIED=4      # M
@@ -60,6 +63,25 @@ MS_PUSHABLE=10     # 1/0
 MS_PULLABLE=11     # 1/0
 MS_SUBMODULES=12   # S
 
+# To make module orchestration convenient for clone/merge/etc, in outer module we keep hint, which symbolic reference
+# (tag or branch) the inner module should be checked out.
+# This hint is maintained in .gitmodules branch
+MS_INNER_REV_HINT=13
+
+# Inner module is initialized, but can be detached or not.
+# In case of it is attached, possible situation where outer repo has revision hint other than inner module is
+# In case of module is detached, we looking into possible branches/tags and looking what are points to the
+# sha, currently inner module stick on. If there is the only one, we are assuming module is consent.
+# otherwise module reconciliation is required.
+MS_INCONSISTENT=14
+
+# One or more branches referencing on the inner:HEAD, which can be synchronized to the branch
+# after attaching without getting outer repo dirty
+MS_GUESSED_BRANCHES=15 # strings' array
+
+# Module is not initialized yet or git submodule deinit was applied
+MS_UNINITIALIZED=16  # 1/0
+
 
 
 ########################### CONSTANTS FOR MODULE FILE SYSTEM  ###############################################
@@ -70,20 +92,22 @@ MFS_RELATIVE_PATH=1
 MFS_GIT_DIR=2
 MFS_FULL_PATH=3
 MFS_MODULE_PATH=4
+MFS_MODULE_INITIALIZED=5
 
 
 
 # set this to workaround expr problems in shFlags on freebsd
-if uname -s | egrep -iq 'bsd'; then export EXPR_COMPAT=1; fi
+#if uname -s | egrep -iq 'bsd'; then export EXPR_COMPAT=1; fi
 
 
-function umbrella_bootstrap () {
+umbrella_bootstrap (){
+  legoRemote=$(get_submodule_config "lego.remote")
   local gitDir
   local umbrellaRepoDir
   local tmpDir=$(mktemp -q -d -t "$(basename "$0")" 2>/dev/null || mktemp -q -d)
   globals[$G_SCRIPT_TMP_DIRECTORY]=${tmpDir}
-
-#  echo ${tmpModules} >&2
+  globals[$G_LEGO_REMOTE]=${legoRemote:-origin}
+  legoRemote=${globals[$G_LEGO_REMOTE]}
 
   _m_not_git_repository; (( $? )) && exit 1
 
@@ -92,7 +116,7 @@ function umbrella_bootstrap () {
   if [[ ${normalizedGitDir} == ".git" ]]; then
     umbrellaRepoDir=$(git rev-parse --show-toplevel)
   else
-    pushd "${gitDir%%/.git/*}"  > /dev/null
+    pushd "${gitDir%%/.git/*}"  &>/dev/null
     umbrellaRepoDir=$(git rev-parse --show-toplevel)
     popd  > /dev/null
   fi
@@ -100,16 +124,12 @@ function umbrella_bootstrap () {
 #  rm ${cwTmpSubmodules} &>/dev/null
   pushd ${umbrellaRepoDir} &>/dev/null
 
-  local remoteOrigin=$(git remote show)
+#  local remoteOrigin=$(git remote show)
   local umbrellaOriginUrl umbrellaRepoName
   if [[ -n $remoteOrigin ]]; then
     local url=$(get_repo_url "$umbrellaRepoDir")
-#    local cwUrl=${url%%gitadmin@git.consistentwork.com:*}
-#    if [[ -n ${cwUrl} ]]; then
-#      cw_echo ${cwUrl}
-#      die
-#    fi
-    umbrellaOriginUrl=$(git remote get-url origin)
+
+    umbrellaOriginUrl=$(git remote get-url "${legoRemote}")
     umbrellaRepoName=${umbrellaOriginUrl##*:}
     umbrellaRepoName=${umbrellaRepoName##*/}
 
@@ -127,10 +147,7 @@ function umbrella_bootstrap () {
   globals[$G_ROOT_DIR]=${umbrellaRepoDir}
   globals[$G_MODULE_GIT_DIR]=${gitDir}
   globals[$G_ROOT_NAME]=${umbrellaRepoName}
-
-  module_startup_investigate "${umbrellaRepoName}" "/" ".git" "${umbrellaRepoDir}" "/"
-#  cat ${globals[$G_MODULES_FN]} >&2
-
+  module_startup_investigate "${umbrellaRepoName}" "/" ".git" "${umbrellaRepoDir}" "/" 1
   popd &>/dev/null
   splash ${umbrellaRepoName}
 
@@ -148,16 +165,15 @@ function module_startup_investigate() {
   g_full_paths+=($4)
   g_module_paths+=($5)
 
-#set -x
-
   while read -a module
   do
-    subModule="${module[MFS_MODULE_NAME]}"
-    localPath="${module[MFS_RELATIVE_PATH]}"
+    local subModule="${module[MFS_MODULE_NAME]}"
+    local localPath="${module[MFS_RELATIVE_PATH]}"
+    local is_initialized=1
+    local moduleStatus=$(git submodule status -- ${subModule})
 
     pushd ${localPath} &> /dev/null
     module+=($(get_repo_git_dir))             # MFS_GIT_DIR=2
-    tmpModules="${globals[$G_MODULES_FN]}"
     module+=($(pwd))                          # MFS_FULL_PATH=3
 
     if [[ $5 == "/" ]]; then                  # MFS_MODULE_PATH = 4
@@ -165,12 +181,16 @@ function module_startup_investigate() {
     else
       module+=("$5/$subModule")
     fi
+    if [[ ${moduleStatus:0:1} == "-" ]]; then
+      is_initialized=0
+    fi
+    module+=(${is_initialized})
 
     module_startup_investigate ${module[@]}
     popd &> /dev/null
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
 }
-#set +x
+
 
 function umbrella_finalize() {
   rm -rf ${globals[$G_SCRIPT_TMP_DIRECTORY]}
@@ -318,24 +338,30 @@ function level_verbose_about_to {
 #
 # Globals using
 #     $afterDash - array contains module list after double dash
+#     $affected  - this variable should be defined outside of this function (output variable)
+#
+# TODO take into account --recursive flag
 #
 function drop_to_affected() {
-  local ret=0
   local levelPath=$1
+  local found=0
+  local ret=1
 
-  [[ -z $levelPath ]] && return 2;
+#  affected=0
+
+  [[ -z ${levelPath} ]] && panic "$FUNCNAME() missed parameter 'path'"
 
   while read -a module; do
-    local found=0
+    found=0
     local moduleName=${module[$MFS_MODULE_NAME]}
     local fullPath=${module[MFS_FULL_PATH]}
     if [ "$levelPath" == "$fullPath" ]; then
       found=1
       if (( ${#afterDash[@]} )); then
         found=0
-        for dash in ${afterDash[@]}; do
+        for branch in ${afterDash[@]}; do
           # exact comparison, not matching
-          if [ "${moduleName}" == "${dash}" ]; then
+          if [ "${moduleName}" == "${branch}" ]; then
             found=1
             break
           fi
@@ -345,6 +371,7 @@ function drop_to_affected() {
 
     if (( ${found} )); then
       affected=1
+      ret=0
       echo ${module[@]} >> ${globals[$G_AFFECTED_MODULES]}
       break
     fi
@@ -473,6 +500,24 @@ function module_info () {
   return ${ret}
 }
 
+
+function is_repo_initialized() {
+  local levelPath=$1
+  local ret=0
+  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+
+  while read -a module; do
+    local fullPath=${module[${MFS_FULL_PATH}]}
+    if [[ ${levelPath} == ${fullPath} && ${module[${MFS_MODULE_INITIALIZED}]} == 1 ]]; then
+      ret=1
+      break
+    fi
+  done < <(cat ${globals[${G_MODULES_FN}]})
+
+  echo ${ret};
+  return ${ret}
+}
+
 function is_branch_exists() {
   [[ -z $1 ]] && (panic "'branch' argument for is_branch_exists() should be given")
   local branchName=$1
@@ -510,74 +555,82 @@ typeset MODULE_STATUS=()
 #     Directory of module should be set outside this function.
 #
 ## Parameters
-#     $1 - mode, which indicated the caller script, ie. "status"/"commit"/...
+#     $1  - mode, which indicated the caller script, ie. "status"/"commit"/..
+#     $2  - path of current module
+#     ... - other parameters relevant to its caller
+#       For 'status' mode
+#           $3 - module is initialized (1/0)
+#           $4 - stick-on-branches, branch which outer module expects inner module to be
 #
 ## Globals affected
 #     $MODULE_STATUS array
 #
-function module_porcelain_status () {
-#  set -x
+function module_porcelain_status() {
+#module_porcelain_status status $modulePath "${initialized}" "${stickOnBranch}"
+  local remoteInteraction=0 stickOnBranch guessedBranched
 
-#  local pwd
-#  if [[ -n $1 && $1 != "." && $1 != "/" && $1 != ".." ]]; then
-#    pwd=$1
-#    pushd $pwd  &> /dev/null
-#  elif [[ $1 == "/" ]]; then
-#    pwd=${globals[0]}
-#    pushd $pwd  &> /dev/null
-#  else
-#    pwd=$(pwd)
-#  fi
-
-  local interactionRemote=0
-  [[ $1 == "push" || $1 == "pull" ]] && interactionRemote=1
+  [[ $1 == "push" || $1 == "pull" ]] && remoteInteraction=1
 
   unset MODULE_STATUS
-#  set -x
-  while read line; do
-    local output=(${line})
-    case ${output[0]} in
-      \#\#)
-        if [[ -n ${output[1]} ]]; then
-          if [[ ${output[1]} == "HEAD" ]]; then
-            MODULE_STATUS[$MS_DETACHED]=1
-            possibleBranch=$(possible_branch_from_parent_config)
-            if [[ -n $possibleBranch ]]; then
-              MODULE_STATUS[$MS_BRANCH_INFO]="detached (${possibleBranch}?)"
-            fi
-          fi
-          [[ -z ${MODULE_STATUS[$MS_BRANCH_INFO]} ]] && MODULE_STATUS[$MS_BRANCH_INFO]="${output[@]:1}"
-        fi
-        # TODO will not working in locale differs form en
-        # TODO git rev-list --count can help!!
-        if (( $interactionRemote )); then
-#          local remoteRef="origin/"
-          local ahead=$(echo $line | grep -Eo "ahead [[:digit:]]" | grep -Eo "[[:digit:]]")
-          (( ! $? )) && (( $ahead )) && MODULE_STATUS[$MS_PUSHABLE]=1
-        fi
-        ;;
-      *)
-        local cmd=${output:0:2}
-        case ${cmd} in
-          \?\?)
-            MODULE_STATUS[$MS_UNTRACKED]=1
-          ;;
-          *)
-            [[ ${cmd:0:1} == "M" || ${cmd:1:1} == "M" ]] && MODULE_STATUS[$MS_MODIFIED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
-            [[ ${cmd:0:1} == "A" || ${cmd:1:1} == "A" ]] && MODULE_STATUS[$MS_ADDED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
-            [[ ${cmd:0:1} == "D" || ${cmd:1:1} == "D" ]] && MODULE_STATUS[$MS_DELETED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
-            [[ ${cmd:0:1} == "R" || ${cmd:1:1} == "R" ]] && MODULE_STATUS[$MS_RENAMED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
-            [[ ${cmd:0:1} == "C" || ${cmd:1:1} == "C" ]] && MODULE_STATUS[$MS_COPIED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
-            [[ ${cmd:0:1} == "U" || ${cmd:1:1} == "U" ]] && MODULE_STATUS[$MS_UNMERGED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
-          ;;
-        esac
-      ;;
-    esac
-  done < <(git status -u --porcelain -b)
-#  set +x
+  local modulePath="$2"
+  local initialized="$3"
+  local stickOnBranch="$4"
 
-#  [[ -n $1 && $1 != "." ]] && popd  &> /dev/null
-#  set +x
+  # TODO take care about ambiguous references like master & tags/master
+  test -n ${stickOnBranch} && MODULE_STATUS[$MS_INNER_REV_HINT]=${stickOnBranch}
+
+#  set -x
+  if (( ${initialized} )) || [[ ${modulePath} == / ]] ; then
+    while read line; do
+      # parse line into array or words
+      local output=(${line})
+
+      case ${output[0]} in
+        \#\#)
+          if [[ -n ${output[1]} ]]; then
+            guessedBranched=$(guess_branch_from_hash HEAD $modulePath)
+
+            if [[ ${output[1]} == "HEAD" ]]; then
+              MODULE_STATUS[$MS_DETACHED]=1
+            fi
+            if [[ ${guessedBranched} != ${stickOnBranch} ]]; then
+              MODULE_STATUS[$MS_INCONSISTENT]=1
+              MODULE_STATUS[$MS_GUESSED_BRANCHES]=${guessedBranched}
+            fi
+            MODULE_STATUS[$MS_BRANCH_INFO]="${output[@]:1}"
+          fi
+
+          # TODO will not working in locale differs form en_US (or en_XX)
+          # TODO git rev-list --count can help?
+          if (( $remoteInteraction )); then
+  #          local remoteRef="origin/"
+            local ahead=$(echo $line | grep -Eo "ahead [[:digit:]]" | grep -Eo "[[:digit:]]")
+            (( ! $? )) && (( $ahead )) && MODULE_STATUS[$MS_PUSHABLE]=1
+          fi
+          ;;
+        *)
+          local cmd=${output:0:2}
+          case ${cmd} in
+            \?\?)
+              MODULE_STATUS[$MS_UNTRACKED]=1
+            ;;
+            *)
+              local fChar=${cmd:0:1} sChar=${cmd:1:1}
+              [[ ${fChar} == "M" || ${sChar} == "M" ]] && MODULE_STATUS[$MS_MODIFIED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
+              [[ ${fChar} == "A" || ${sChar} == "A" ]] && MODULE_STATUS[$MS_ADDED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
+              [[ ${fChar} == "D" || ${sChar} == "D" ]] && MODULE_STATUS[$MS_DELETED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
+              [[ ${fChar} == "R" || ${sChar} == "R" ]] && MODULE_STATUS[$MS_RENAMED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
+              [[ ${fChar} == "C" || ${sChar} == "C" ]] && MODULE_STATUS[$MS_COPIED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
+              [[ ${fChar} == "U" || ${sChar} == "U" ]] && MODULE_STATUS[$MS_UNMERGED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
+            ;;
+          esac
+        ;;
+      esac
+    done < <(git status -u --porcelain -b)
+  elif (( ! $initialized )) ; then
+    MODULE_STATUS[$MS_UNINITIALIZED]=1
+  fi
+#  echo "$FUNCNAME(): ${MODULE_STATUS[@]}"
 }
 
 function module_up() {
@@ -586,18 +639,44 @@ function module_up() {
 }
 
 function possible_branch_from_parent_config() {
-  local ret repoName
-  repoName=$(get_repo_name_from_path)
-  if [[ $repoName != "/" ]]; then
-    pushd . &> /dev/null
+  local ret
+  local repoName=$(get_repo_name_from_path)
 
+  if [[ ${repoName} != / ]]; then
+    pushd . &> /dev/null
     module_up
     ret=$(git config -f .gitmodules --get "submodule.$repoName.branch")
     popd &> /dev/null
   else
-    ret=/       ## TODO check, maybe better return empty string?
+    ret=/
   fi
   echo ${ret}
+}
+
+function guess_branch_from_hash() {
+  local ret hash=${1:-HEAD}
+  local branches=()
+  repoPath="$2"
+  # const
+  local legoRemote=origin
+
+  if [[ ${repoPath} != / ]]; then
+    while read sha commit ref; do
+      refParsed=$(git rev-parse --abbrev-ref=strict ${ref})
+      found=0
+      for branch in ${branches[@]}; do
+        if [[ "${branch}" = ${refParsed#${legoRemote}/} ]] || [[ ${refParsed%%/*} != ${legoRemote} ]] ; then
+          found=1
+          break
+        fi
+      done
+
+      if [[ ${found} == 0 ]]; then
+        branches+=("${refParsed#${legoRemote}/}")
+      fi
+    done < <(git for-each-ref --points-at=${hash})
+  fi
+  echo ${branches[@]}
 }
 
 
@@ -670,7 +749,7 @@ function prepare_checkout_level() {
 
   if (( $toBeDeleted )); then
 
-    module_porcelain_status ${0##*/}
+    module_porcelain_status checkout
 
     if [[ 0 == ${force} &&  (1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[MS_PUSHABLE]}) ]]; then
       dieMsg+="Module '$moduleName' has not committed or not pushed changes, but intended to be deleted as it does not exists in revision '$revision'"
@@ -786,8 +865,8 @@ function prepare_checkout_level() {
 
 ##
 ## Checks branching state for current repository
-## Let name the branch is synched if entry submodule.<subrepo>.branch in .gitmodules is matched
-## to the branch of the sub-repository, (what can be checked via 'cd subrepo; git branch',
+## Let name the branch is synchronized if entry submodule.<module-name>.branch in .gitmodules is matched
+## to the branch of the sub-repository, (what can be checked via 'cd module-path; git branch',
 ##
 ## It they are mismatched, 3 options are possible.
 ##
@@ -897,12 +976,12 @@ function _m_finalize() {
   unset strict
   unset verbose
   unset recursive
-  set +x
+#  set +x
 }
 
 function _m_mls() {
   local ret=0
-  set -x
+#  set -x
   while read -a module; do
     subModule="${module[0]}"
     localPath="${module[1]}"
@@ -915,7 +994,7 @@ function _m_mls() {
 
     popd &> /dev/null
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
-  set +x
+#  set +x
   return ${ret}
 }
 
@@ -1085,17 +1164,57 @@ function _m_root() {
   fi
 }
 
+#
+# Boolean treated as it does in Java/javascript where true == 1|false == 0,
+# opposed to bash world, where true == 0|false=1
+# Sorry for inconvenience ;)
+#
+READ_boolean() {
+  local input=${1:-0};
+  local default=${2}
 
+  case "${input}" in
+    true|t|1)
+      input=1;
+    ;;
+    false|f|0)
+      input=0
+    ;;
+    *) warn "wrong format for boolean value, defaulting to 0" ;;
+  esac
+  echo ${input}
+}
+
+#
+# Print a submodule configuration setting
+#
+# $1 = submodule name
+# $2 = option name
+# $3 = default value
+#
+# Checks in the usual git-config places first (for overrides),
+# otherwise it falls back on .gitmodules.  This allows you to
+# distribute project-wide defaults in .gitmodules, while still
+# customizing individual repositories if necessary.  If the option is
+# not in .gitmodules either, print a default value.
+#
+get_submodule_config () {
+	name="$1"
+	option="$2"
+	default="$3"
+	value=$(git config submodule."$name"."$option")
+	if test -z "$value"
+	then
+		value=$(git config -f .gitmodules submodule."$name"."$option")
+	fi
+	printf '%s' "${value:-$default}"
+}
 
 
   ######################################################################################################################
   ############################################  MAIN SCRIPT  ###########################################################
   ######################################################################################################################
 
-# enable debug mode
-if [ "$DEBUG" = "yes" ]; then
-	set -x
-fi
 
 # The sed expression here replaces all backslashes by forward slashes.
 # This helps our Windows users, while not bothering our Unix users.
@@ -1105,7 +1224,7 @@ usage() {
 
   cat << EOF
 
-    Git extension to working with intensive using of git submodules
+    Git extension to ease work with intensive using of git submodules
 
     working dir: ${GITLEGO_DIR}
     usage: git lego <subcommand>
@@ -1140,22 +1259,21 @@ main() {
 		exit 1
 	fi
 
+  FLAGS_PREFIX="'${0##*/} $SUBCOMMAND'"
 	# run command
 	. "$GITLEGO_DIR/git-lego-$SUBCOMMAND"
 
 
 	SUBACTION="default"
 
-	# Particular script can define a specific action depends on arguments.
+	# Particular script can figure out a specific action depends on arguments or other circumstances.
 	# In this case it should define cmd_sub_action function and echo'ing required action.
 	# If cmd_sub_action returns empty string - default is using
 	if type "cmd_sub_action" >/dev/null 2>&1; then
-
 		local customized=$(cmd_sub_action "$@")
 		if [[ -n $customized ]]; then
-		  SUBACTION=$(cmd_sub_action "$@")
+		  SUBACTION=$(customized)
 		fi
-
 	fi
 
 	if ! type "cmd_$SUBACTION" >/dev/null 2>&1; then

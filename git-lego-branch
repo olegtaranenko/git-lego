@@ -16,13 +16,13 @@ function show_help() {
 cat << EOF
 
 NAME:
-    ${0##*/}
+    ${FLAGS_PREFIX}
 
 SYNOPSIS:
-    ${0##*/} [--show] [--[no-]sync] [--[no-]push [<remote>]]
-    ${0##*/} --[no-]current [--[no-]recursive] ...] [--[no-]push] new-branch
-    ${0##*/} [--[no-]umbrella] [--[no-]push] new-branch -- <repo> ...
-    ${0##*/}  --delete|-d|-D branch [--[no-]push [<remote>]]
+    ${FLAGS_PREFIX} [--show] [--[no-]sync] [--[no-]push [<remote>]]
+    ${FLAGS_PREFIX} --[no-]current [--[no-]recursive] ...] [--[no-]push] new-branch
+    ${FLAGS_PREFIX} [--[no-]umbrella] [--[no-]push] new-branch -- <repo> ...
+    ${FLAGS_PREFIX}  --delete|-d|-D branch [--[no-]push [<remote>]]
 
 
 DESCRIPTION:
@@ -34,12 +34,12 @@ DESCRIPTION:
     There are two different modes for creating branches for repositories.
 
     1) direct repositories names listing after '--'; name it "absolute"
-    2) depending, from module ${0##*/} is started: name it "relative" mode.
+    2) depending, from module ${FLAGS_PREFIX} is started: name it "relative" mode.
 
       In absolute mode doesn\'t matter current module, and affecting on only umbrella (managed by
     --[no-]umbrella option) and modules, listed after '--'
 
-      In relative mode calling ${0##*/} affects on modules depends on options --[no-]recursive and
+      In relative mode calling ${FLAGS_PREFIX} affects on modules depends on options --[no-]recursive and
     --[no-]umbrella. If current module is umbrella
     new branch will be created to current and umbrella repositories only
 
@@ -210,7 +210,6 @@ umbrella_bootstrap
 (( $doAutoCommit && ! $doSync )) && die "--auto-commit should be set only with --sync option"
 
 cwRoot="${globals[$G_ROOT_DIR]}"
-cwTmpSubmodules="${globals[$G_MODULES_FN]}"
 gitDir="${globals[$G_MODULE_GIT_DIR]}"
 needMessageToPush=0
 
@@ -237,7 +236,7 @@ cmd_default() {
       instruction="$(cat<<EOF
 Umbrella repo is in the detached mode.
         You need to configure it using 'checkout ${branchName:-<branch-name>}'
-        Use '${0##*/} --help' for more information
+        Use '${FLAGS_PREFIX} --help' for more information
 EOF
   )"
       cw_echo "${instruction}"
@@ -250,7 +249,7 @@ EOF
     ret=$?
 
     (( ! $ret )) && cw_echo "All submodules are mutually syncronized."
-    [[ $ret == 1 ]] && cw_echo "Submodules are not synchronized. Run '${0##*/} --sync' to fix"
+    [[ $ret == 1 ]] && cw_echo "Submodules are not synchronized. Run '${FLAGS_PREFIX} --sync' to fix"
     [[ $ret == 2 ]] && cw_echo "Unexpected error"
 
   elif (( $doUpdate )); then
@@ -262,7 +261,7 @@ EOF
     if (( $mainAlreadyExists )) && (( $doUmbrella )); then
       die "Branch '$branchName' already exists in the umbrella repo.
           You are advised to do 'checkout $branchName' and then continue to create branch in sub-repositories
-          with '${0##*/} ... --no-umbrella ...' option"
+          with '${FLAGS_PREFIX} ... --no-umbrella ...' option"
     fi
 
     verboseMsgs=()

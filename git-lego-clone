@@ -6,10 +6,80 @@ typeset repoPath=$2
 
 
 usage() {
+  if test -n $1; then
+    echo $1
+  fi
   cat << EOF
-    usage: git lego clone <any-legal-arguments for git clone>
+
+    usage: ${FLAGS_PREFIX} [--[no-]auto-attach|-a|-A] [--attach-hint <module:branch>...] [-- <git-parameters-for-git-clone>]
 EOF
+  exit
 }
+
+typeset autoAttach=0
+typeset attachHints=()
+typeset force=0
+typeset verbose=0
+typeset doInit=0
+
+################################ PARAMETERS PARSING ################################
+while [[ -n $1 ]]; do
+  noAppendArg=0
+  case $1 in
+    -h|-\?|--help)
+      usage
+      exit
+      ;;
+    -v|--verbose)
+      verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
+      ;;
+
+		-f | --force)
+			force=$1
+			;;
+
+    --auto-attach|-a)
+      autoAttach=1
+      ;;
+    --no-auto-attach|-A)
+      autoAttach=0
+      ;;
+    --attach-hint)
+        case "$2" in '') usage "$1 parameter requires further value" ;; esac
+        attachHints+=("$2")
+        shift
+      ;;
+
+    --recursive|-r)
+      doRecursive=1
+      ;;
+    --no-recursive|-R)
+      doRecursive=0
+      ;;
+
+    --)
+      stopOptions=1
+      ;;
+
+    *)
+      if (( $stopOptions )); then
+        if [[ -z ${1%%-*} ]]; then
+          die "after '--' additional options ($1) are not allowed "
+        else
+          afterDash+=($1)
+        fi
+      elif [[ -z ${1%%-*} ]]; then
+        args+=($1)
+      elif [[ -z ${initialPath} ]]; then
+        initialPath=$1
+      else
+        die "error in parameters [$1]"
+      fi
+      ;;
+  esac
+  shift
+done
+
 
 
 cmd_default() {

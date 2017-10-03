@@ -10,7 +10,6 @@ umbrella_bootstrap
 #set +x
 
 cwRoot="${globals[$G_ROOT_DIR]}"
-cwTmpSubmodules="${globals[$G_MODULES_FN]}"
 gitDir="${globals[$G_MODULE_GIT_DIR]}"
 
 
@@ -19,10 +18,10 @@ function show_help() {
 cat << EOF
 
 NAME:
-    ${0##*/} tool to manage checkouts different version onto umbrella-managed git repositories
+    ${FLAGS_PREFIX} tool to manage checkouts different version onto umbrella-managed git repositories
 
 SYNOPSIS:
-    ${0##*/} --[no-]current [--[no-]recursive] ...] [[--fallback <branch1> ...] ([--[no-]push] | [--[no-]commit] | <revision|reference-resolution>) [<path-resolution>] -- <module1> ...
+    ${FLAGS_PREFIX} --[no-]current [--[no-]recursive] ...] [[--fallback <branch1> ...] ([--[no-]push] | [--[no-]commit] | <revision|reference-resolution>) [<path-resolution>] -- <module1> ...
 
 DESCRIPTION:
     Checkout in umbrella mode handles slightly differ from its 'git checkout' counterpart.
@@ -45,37 +44,37 @@ DESCRIPTION:
 
 
 EXAMPLES:
-    '${0##*/} master /' -> absolute mode, --no-recursive, --current, --no-commit, --no-push
+    '${FLAGS_PREFIX} master /' -> absolute mode, --no-recursive, --current, --no-commit, --no-push
         ACTION: if umbrella module branch is different from master, it will be checked out to master,
         all sub-modules will be updated to master as well
 
-    '${0##*/} master' -> same as above
+    '${FLAGS_PREFIX} master' -> same as above
 
-    '${0##*/} develop .' -> relative mode, --no-recursive, --current, --commit, --push
+    '${FLAGS_PREFIX} develop .' -> relative mode, --no-recursive, --current, --commit, --push
         This action may cause (or may not) enclosed module to be dirty, if previous commit differs to develop.
         ACTION: if umbrella module branch differs from develop, it will be checked out to develop,
         all sub-modules have to be updated to develop as well. If there is any module having no develop branch,
         getting warning about this, no commit (if no --force given), state of that module is not changed.
 
-    '${0##*/} --fallback=develop qa' -> absolute mode, --recursive, --current, --commit, --push
+    '${FLAGS_PREFIX} --fallback=develop qa' -> absolute mode, --recursive, --current, --commit, --push
         ACTION: if umbrella module branch differs from develop, it will be checked out to develop,
         all sub-modules have to be updated to develop as well. Any of module has no develop branch,
         but has develop, will be checked out to develop.
 
-    '${0##*/} --fallback=develop --fallback=master qa' -> same as above, but if no qa and develop exists,
+    '${FLAGS_PREFIX} --fallback=develop --fallback=master qa' -> same as above, but if no qa and develop exists,
         change to master
 
-    '${0##*/} master .' -> relative mode, --no-recursive, --current, --no-commit, --no-push
+    '${FLAGS_PREFIX} master .' -> relative mode, --no-recursive, --current, --no-commit, --no-push
         Change for current module to master branch. Get warning, if enclosing repo not referencing to master.
         All options except umbrella-specific will be passed to underlying 'git checkout ...' command.
 
-    '${0##*/} release . --commit --push' -> solo mode, --no-recursive, --current, --push
+    '${FLAGS_PREFIX} release . --commit --push' -> solo mode, --no-recursive, --current, --push
         all predecessor modules will be updated to new state, if required. After they will be committed and
         pushed to origin.
 
-    '${0##*/} release ./wiki' -> relative mode, change branch for first sibling wiki module to 'release', --commit
+    '${FLAGS_PREFIX} release ./wiki' -> relative mode, change branch for first sibling wiki module to 'release', --commit
 
-    '${0##*/} release -- wiki docs' -> absolute, looking from umbrella root, doesn\'t matter deep of module.
+    '${FLAGS_PREFIX} release -- wiki docs' -> absolute, looking from umbrella root, doesn\'t matter deep of module.
 
 
 OPTIONS:

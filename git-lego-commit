@@ -17,7 +17,6 @@ args=()
 umbrella_bootstrap
 
 cwRoot="${globals[$G_ROOT_DIR]}"
-cwTmpSubmodules="${globals[$G_MODULES_FN]}"
 gitDir="${globals[$G_MODULE_GIT_DIR]}"
 
 
@@ -26,16 +25,16 @@ function show_help() {
 cat << EOF
 
 NAME:
-    ${0##*/} status in git umbrella-managed modules
+    ${FLAGS_PREFIX} commit current lego
 
 SYNOPSIS:
-    '${0##*/} [<any-git-commit-options>] [-v|--verbose] [<path-resolution>] -- [[<module-name>] ...]'
+    '${FLAGS_PREFIX} [<any-git-commit-options>] [-v|--verbose] [<path-resolution>] -- [[<module-name>] ...]'
 
 DESCRIPTION:
 
 
 EXAMPLES:
-    '${0##*/} -v .' -> show verbose status for current module only
+    '${FLAGS_PREFIX} -v .' -> show verbose status for current module only
 
 
 OPTIONS:
@@ -159,7 +158,7 @@ function prepare_commit_level() {
   local ret=0   # return code, 0 - the repo is syncronized
   local childRet # child return code
 
-  module_porcelain_status ${0##*/}
+  module_porcelain_status commit
 
   local applied=1
   if (( ${MODULE_STATUS[$MS_COMMITABLE]} )); then

@@ -15,7 +15,6 @@ args=()
 umbrella_bootstrap
 
 cwRoot="${globals[$G_ROOT_DIR]}"
-uModules="${globals[$G_MODULES_FN]}"
 gitDir="${globals[$G_MODULE_GIT_DIR]}"
 
 
@@ -24,16 +23,16 @@ function show_help() {
 cat << EOF
 
 NAME:
-    ${0##*/} status in git umbrella-managed modules
+    ${FLAGS_PREFIX} status in git umbrella-managed modules
 
 SYNOPSIS:
-    '${0##*/} [<any-git-status-options>] [-v|--verbose] [<path-resolution>] -- [[<module-name>] ...]'
+    '${FLAGS_PREFIX} [<any-git-status-options>] [-v|--verbose] [<path-resolution>] -- [[<module-name>] ...]'
 
 DESCRIPTION:
 
 
 EXAMPLES:
-    '${0##*/} -v .' -> show verbose status for current module only
+    '${FLAGS_PREFIX} -v .' -> show verbose status for current module only
 
 
 OPTIONS:
@@ -126,7 +125,7 @@ function prepare_push_level() {
     (( $? )) && panic "Something wrong with git fetch"
   fi
 
-  module_porcelain_status ${0##*/}
+  module_porcelain_status push
 
   local applied=1
 #  echo "$MODULE_STATUS[@]"
@@ -212,8 +211,8 @@ cmd_default() {
     fi
   else
     mainWarn="Request to push is rejected. "
-    (( $verbose )) && mainWarn+="Use '${0##*/} -v' to figure out the reason."
-    (( 1 == $verbose )) && mainWarn+="'${0##*/} -v -v' to get more detailed information."
+    (( $verbose )) && mainWarn+="Use '${FLAGS_PREFIX} -v' to figure out the reason."
+    (( 1 == $verbose )) && mainWarn+="'${FLAGS_PREFIX} -v -v' to get more detailed information."
 
     cw_echo  ${mainWarn} \
     "Some mutual dependent repositories will not be pushed, but required." \
