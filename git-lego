@@ -337,7 +337,7 @@ function level_verbose_about_to {
 #     2 - N/A module is not found or wrong argument
 #
 # Globals using
-#     $afterDash - array contains module list after double dash
+#     $afterDash - array, which contains restricted module list, can be given after double dash or some other manner
 #     $affected  - this variable should be defined outside of this function (output variable)
 #
 # TODO take into account --recursive flag
@@ -379,6 +379,26 @@ function drop_to_affected() {
   done < <(cat ${globals[$G_MODULES_FN]})
 
   return ${ret}
+}
+
+function module_descriptor() {
+  local levelPath=$1
+  local found=0
+
+  while read -a module; do
+    found=0
+    local moduleName=${module[$MFS_MODULE_NAME]}
+    local fullPath=${module[MFS_FULL_PATH]}
+    if [ "$levelPath" == "$fullPath" ]; then
+      found=1
+    fi
+
+    if (( ${found} )); then
+      echo ${module[@]}
+      break
+    fi
+
+  done < <(cat ${globals[$G_MODULES_FN]})
 }
 
 
@@ -566,8 +586,8 @@ typeset MODULE_STATUS=()
 #     $MODULE_STATUS array
 #
 function module_porcelain_status() {
-#module_porcelain_status status $modulePath "${initialized}" "${stickOnBranch}"
-  local remoteInteraction=0 stickOnBranch guessedBranched
+#echo "$FUNCNAME() mode: $1, modulePath: $2, initialized: $3, stickOnBranch: $4"
+  local remoteInteraction=0 stickOnBranch guessedBranched=()
 
   [[ $1 == "push" || $1 == "pull" ]] && remoteInteraction=1
 
@@ -586,20 +606,19 @@ function module_porcelain_status() {
       local output=(${line})
 
       case ${output[0]} in
+        # first line in the output
         \#\#)
           if [[ -n ${output[1]} ]]; then
-            guessedBranched=$(guess_branch_from_hash HEAD $modulePath)
-
-            if [[ ${output[1]} == "HEAD" ]]; then
+            guessedBranched=($(guess_branch_from_hash HEAD "$modulePath"))
+            if [[ ${output[1]} == HEAD ]]; then
               MODULE_STATUS[$MS_DETACHED]=1
             fi
             if [[ ${guessedBranched} != ${stickOnBranch} ]]; then
               MODULE_STATUS[$MS_INCONSISTENT]=1
-              MODULE_STATUS[$MS_GUESSED_BRANCHES]=${guessedBranched}
+              MODULE_STATUS[$MS_GUESSED_BRANCHES]="${guessedBranched}"
             fi
             MODULE_STATUS[$MS_BRANCH_INFO]="${output[@]:1}"
           fi
-
           # TODO will not working in locale differs form en_US (or en_XX)
           # TODO git rev-list --count can help?
           if (( $remoteInteraction )); then
@@ -609,21 +628,14 @@ function module_porcelain_status() {
           fi
           ;;
         *)
-          local cmd=${output:0:2}
-          case ${cmd} in
-            \?\?)
-              MODULE_STATUS[$MS_UNTRACKED]=1
-            ;;
-            *)
-              local fChar=${cmd:0:1} sChar=${cmd:1:1}
-              [[ ${fChar} == "M" || ${sChar} == "M" ]] && MODULE_STATUS[$MS_MODIFIED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
-              [[ ${fChar} == "A" || ${sChar} == "A" ]] && MODULE_STATUS[$MS_ADDED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
-              [[ ${fChar} == "D" || ${sChar} == "D" ]] && MODULE_STATUS[$MS_DELETED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
-              [[ ${fChar} == "R" || ${sChar} == "R" ]] && MODULE_STATUS[$MS_RENAMED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
-              [[ ${fChar} == "C" || ${sChar} == "C" ]] && MODULE_STATUS[$MS_COPIED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
-              [[ ${fChar} == "U" || ${sChar} == "U" ]] && MODULE_STATUS[$MS_UNMERGED]=1; MODULE_STATUS[$MS_COMMITABLE]=1
-            ;;
-          esac
+          local fChar=${line:0:1} sChar=${line:1:1}
+          [[ ${fChar} == "?" ]] && MODULE_STATUS[$MS_UNTRACKED]=$(( MODULE_STATUS[$MS_UNTRACKED] + 1 ))
+          [[ ${fChar} == M || ${sChar} == M ]] && MODULE_STATUS[$MS_MODIFIED]=$(( MODULE_STATUS[$MS_MODIFIED] + 1 )) ; MODULE_STATUS[$MS_COMMITABLE]=1
+          [[ ${fChar} == A || ${sChar} == A ]] && MODULE_STATUS[$MS_ADDED]=$(( MODULE_STATUS[$MS_ADDED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1
+          [[ ${fChar} == D || ${sChar} == D ]] && MODULE_STATUS[$MS_DELETED]=$(( MODULE_STATUS[$MS_DELETED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1
+          [[ ${fChar} == R || ${sChar} == R ]] && MODULE_STATUS[$MS_RENAMED]=$(( MODULE_STATUS[$MS_RENAMED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1
+          [[ ${fChar} == C || ${sChar} == C ]] && MODULE_STATUS[$MS_COPIED]=$(( MODULE_STATUS[$MS_COPIED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1
+          [[ ${fChar} == U || ${sChar} == U ]] && MODULE_STATUS[$MS_UNMERGED]=$(( MODULE_STATUS[$MS_UNMERGED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1
         ;;
       esac
     done < <(git status -u --porcelain -b)
@@ -1080,7 +1092,7 @@ function _m_up() {
 
   if [[ "$doCd" == 1 ]]; then
     if [[ $(_m_git_dir) == ".git" ]]; then
-      echo "Can't up at the root module" >&2
+      echo "Can't get up at the root module" >&2
       return 1
     else
       _m_pwd 1
@@ -1211,6 +1223,99 @@ get_submodule_config () {
 }
 
 
+get_lego_setting() {
+  local section=${2:-core}
+  local               value=$( get_lego_setting_concrete "$1" "${section}" "-f .gitlego" )
+  test -z "$value" && value=$( get_lego_setting_concrete "$1" "${section}" )
+#  [[ -z value ]] || value=$( get_lego_setting_concrete $1 ${section} "--local" } )
+#  [[ -z value ]] && value=$( get_lego_setting_concrete $1 ${section} "--global"} )
+#  [[ -z value ]] && value=$( get_lego_setting_concrete $1 ${section} "--system"} )
+  echo "$value"
+}
+
+
+##
+get_lego_setting_concrete() {
+  local key="$1"
+  [[ -z $key ]] && panic "$FUNCNAME() missing setting name"
+  local file_option="${3---}"
+  local section="${2:-core}"
+  if [[ -z "${file_option##--*}" ]] && [[ ${section} == core ]] ; then
+    section=lego
+  fi
+
+  if [[ $file_option == -- ]]; then
+    unset file_option
+  fi
+
+  echo $(git config ${file_option} --get "${section:+$section.}$key") 2>/dev/null
+}
+
+get_lego_mode() {
+  local mode=$( get_lego_setting "mode")
+  if [[ -z "$mode" ]] ; then
+    mode=$( investigate_lego_mode )
+  fi
+  echo ${mode}
+}
+
+investigate_lego_mode() {
+#  echo $FUNCNAME
+  local mode
+  local ambiguous
+  local value
+
+  pushd ${cwRoot} &> /dev/null
+  if [[ -e "$cwRoot/.gitlego" ]] ; then
+    mode=versioned
+  fi
+
+  if [[  -e "${cwRoot}/.gitmodules" ]] ; then
+
+    while read module path; do
+      if [[ $(get_lego_setting_concrete "${module}.branch" "submodule" "-f .gitmodules") ]]; then
+        if (( $( check_ambiguous_mode versioned ${mode} ) )) ; then
+          mode=ambiguous
+        else
+          mode=versioned
+        fi
+        break
+      fi
+    done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+
+    while read module value; do
+      if [[ $value == true ]] && [[ $(get_lego_setting_concrete "${module}.branch" "submodule" "--local") ]]; then
+        if (( $( check_ambiguous_mode solo ${mode} ) )) ; then
+          mode=ambiguous
+        else
+          mode=solo
+        fi
+        break
+      fi
+    done < <(git config --get-regexp "submodule.*.active" | sed -E "s/submodule\.(.*)\.active/\1/")
+
+  #else
+  #   TODO if no .gitmodules file -> no submodule -> git-lego ambigious
+  #
+  fi
+
+  popd > /dev/null
+  echo "${mode:-empty}"
+}
+
+check_ambiguous_mode() {
+  local val=$1
+  local prevVal=$2
+  if [[ -n $prevVal ]] && [[ $val != $prevVal ]] ; then
+    echo 1
+  else
+    echo 0
+  fi
+}
+
+
+
+
   ######################################################################################################################
   ############################################  MAIN SCRIPT  ###########################################################
   ######################################################################################################################
@@ -1267,12 +1372,12 @@ main() {
 	SUBACTION="default"
 
 	# Particular script can figure out a specific action depends on arguments or other circumstances.
-	# In this case it should define cmd_sub_action function and echo'ing required action.
-	# If cmd_sub_action returns empty string - default is using
-	if type "cmd_sub_action" >/dev/null 2>&1; then
-		local customized=$(cmd_sub_action "$@")
-		if [[ -n $customized ]]; then
-		  SUBACTION=$(customized)
+	# In this case it should define what_sub_action function and echo'ing required action.
+	# If what_sub_action returns empty string - default is using
+	if type "what_sub_action" >/dev/null 2>&1; then
+		local customized=$(what_sub_action "$@")
+		if [[ -n ${customized} ]]; then
+		  SUBACTION=${customized}
 		fi
 	fi
 
