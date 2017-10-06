@@ -17,9 +17,6 @@ args=()
 ################################ STANDARD BOOTSTRAP CALL ################################
 umbrella_bootstrap
 
-cwRoot="${globals[$G_ROOT_DIR]}"
-gitDir="${globals[$G_MODULE_GIT_DIR]}"
-
 
 ################################ SCRIPT-SPECIFIC HELP ################################
 function show_help() {
@@ -112,13 +109,14 @@ done
 typeset oneLine
 
 function show_current_module_status {
-#echo "$FUNCNAME(): ${subRepoPath}" "${subModule}" "${modulePath}" "${initialized}" "${stickOnBranch:--}"
+#echo "$FUNCNAME(): subRepoPath=$1 subModule=$2 modulePath=$3 initialized=$4 stickOnBranch$5 managed=$6" >&2
 #printf "%s,\n" "${MODULE_STATUS[@]}"
   local filePath="$1"
-  oneLine="${3}"                  # starting with module path
-  local initialized="${4:-1}"
-  local stickOnBranch="$5"
-
+  local moduleName="$2"
+  oneLine="$3"                  # starting with module path
+  local initialized="$4"
+  local managed="$5"
+  local managedBranch="$6" # optional, can be null
   local verboseMsg=([1]="path: $filePath")
   verboseMsg+=("url: "$(get_repo_url))
 
@@ -130,7 +128,7 @@ function show_current_module_status {
 #  set -x
 
   # gather all additional fine information into $MODULE_STATUS global array
-  module_porcelain_status status ${oneLine} "${initialized}" "${stickOnBranch}"
+  module_porcelain_status status ${oneLine} "${managedBranch}"
 
   # two below variables are defined to cmd_default()
   (( ${MODULE_STATUS[$MS_DETACHED]} )) && detached=${MODULE_STATUS[$MS_DETACHED]}
@@ -138,11 +136,11 @@ function show_current_module_status {
 
   typeset branchInfo=${MODULE_STATUS[$MS_BRANCH_INFO]}
 #  local statusLine
-  [[ -n ${branchInfo} ]] && oneLine+=", ${branchInfo}"
+  [[ -n ${branchInfo} ]] && [[ $branchInfo != HEAD ]] && oneLine+=", ${branchInfo}"
 
   if (( ${MODULE_STATUS[$MS_UNTRACKED]} )); then
     verboseIssues+="${verboseIssues:+ ,}untracked (${MODULE_STATUS[$MS_UNTRACKED]} files)"
-    infoIssues+="?x${MODULE_STATUS[$MS_UNTRACKED]}"
+    infoIssues+="Nx${MODULE_STATUS[$MS_UNTRACKED]}"
   fi
   if (( ${MODULE_STATUS[$MS_ADDED]} )); then
     verboseIssues+="${verboseIssues:+ ,}added (${MODULE_STATUS[$MS_ADDED]} files)"
@@ -175,7 +173,7 @@ function show_current_module_status {
   if (( ${MODULE_STATUS[$MS_UNINITIALIZED]} )); then
     oneLine+=", not initialized"
     verboseMsg+=("The module not initialized yet. 'git-lego init --reconcile' to fix it.")
-    print_consistent_status
+    print_managed_status ${managed}
   else
     if (( ${MODULE_STATUS[$MS_DETACHED]} )); then
       oneLine+=", detached"
@@ -191,7 +189,7 @@ function show_current_module_status {
       fi
     fi
 #    set +x
-    print_consistent_status ${MODULE_STATUS[$MS_INCONSISTENT]} ${MODULE_STATUS[$MS_DETACHED]}
+    print_managed_status ${managed}
     if [[ -n ${MODULE_STATUS[$MS_GUESSED_BRANCHES]} ]] && (( ${MODULE_STATUS[$MS_DETACHED]} )) ; then
       oneLine+=", possible: ${MODULE_STATUS[$MS_GUESSED_BRANCHES]}"
 #        verboseMsg+=("Module has discrepancy between its current state and revision, which outer module expected")
@@ -211,13 +209,19 @@ function show_current_module_status {
   fi
 }
 
-print_consistent_status() {
+print_managed_status() {
+  local inconsistent=${MODULE_STATUS[$MS_INCONSISTENT]}
+  local detached=${MODULE_STATUS[$MS_DETACHED]}
+  local managed=${1}
   local isOK=1
-  if (( ${2:-0} )) || (( ${1:-0} )); then
+  if (( ${detached:-0} )) || (( ${inconsistent:-0} )) || (( ! ${managed} )) ; then
     isOK=0
   fi
-  if (( ! $isOK )); then
-    oneLine+=", expected:${MODULE_STATUS[$MS_INNER_REV_HINT]:-no hint}"
+
+  if (( ! $managed )) ; then
+    oneLine+=", unmanaged"
+  elif (( ! $isOK )); then
+    oneLine+="${MODULE_STATUS[$MS_INNER_REV_HINT]:+, expected:${MODULE_STATUS[$MS_INNER_REV_HINT]}}"
   else
     oneLine+=", OK"
   fi
@@ -232,7 +236,7 @@ function status_level() {
   local repoBranch
   local ret=0   # return code, 0 - the repo is syncronized
   local childRet # child return code
-  local stickOnBranch=${5:--}
+  local managedBranch
 
   drop_to_affected ${levelPath}
 
@@ -242,20 +246,22 @@ function status_level() {
     while read -a module; do
       childRet=0
       subModule="${module[0]}"
-      stickOnBranch=$(git config --file .gitmodules --get submodule."${subModule}".branch)
+      managedBranch=$(git config --file .gitmodules --get submodule."${subModule}".branch)
       localPath="${module[1]}"
-      subRepoPath="${levelPath}"/"${localPath}"
-      initialized=$(is_repo_initialized ${subRepoPath})
+#      set -x
+      subRepoPath=${levelPath}/${localPath}
+      initialized=$(is_module_initialized ${subRepoPath})
+      managed=$(is_module_managed ${subRepoPath})
+#      set +x
 
       pushd "${subRepoPath}" &> /dev/null
-#      break
       local modulePath="$3" #/$subModule"
       if [[ ${modulePath:(-1)} != "/" ]]; then
         modulePath+="/"
       fi
       modulePath+="$subModule"
 
-      status_level "${subRepoPath}" "${subModule}" "${modulePath}" "${initialized}" "${stickOnBranch}"
+      status_level "${subRepoPath}" "${subModule}" "${modulePath}" "${initialized}" "${managed}" "${managedBranch}"
       childRet=$?
       if [[ ${childRet} > ${ret} ]] ; then
         ret=${childRet}

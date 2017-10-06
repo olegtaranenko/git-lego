@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+set +o posix
+
+################################ STANDARD BOOTSTRAP CALL ################################
+umbrella_bootstrap
+
+
+################################ BRANCH-SPECIFIC HELP ################################
+function show_help() {
+cat << EOF
+
+NAME:
+    ${FLAGS_PREFIX} status in git umbrella-managed modules
+
+SYNOPSIS:
+    '${FLAGS_PREFIX} [options] [-v|--verbose]'
+    '${FLAGS_PREFIX} [--local|--global|--system] --lego-mode[[=| [versioned|solo] [--force|-f]' # view or set lego mode
+
+DESCRIPTION:
+
+EXAMPLES:
+    '${FLAGS_PREFIX} -v .' -> show verbose status for current module only
+
+
+OPTIONS:
+      --help|-h|-\?
+          get this help
+
+EOF
+}
+
+typeset verbose=0
+typeset afterDash=()
+typeset stopOptions=0
+typeset initialPath updateMessage updateTemplate doRecursive=1  doForce=1 
+
+################################ PARAMETERS PARSING ################################
+while [[ -n $1 ]]; do
+  noAppendArg=0
+  case $1 in
+    -h|-\?|--help)
+      show_help
+      exit
+      ;;
+    -v|--verbose)
+      verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
+      ;;
+
+    --)
+      stopOptions=1
+      ;;
+
+    --recursive|-r)
+      doRecursive=1
+      ;;
+    --no-recursive|-R)
+      doRecursive=0
+      ;;
+
+    --force|-f)
+      doForce=1
+      ;;
+    --no-force)
+      doForce=0
+      ;;
+
+    *)
+      if (( $stopOptions )); then
+        if [[ -z ${1%%-*} ]]; then
+          die "after '--' additional options ($1) are not allowed "
+        else
+          afterDash+=($1)
+        fi
+      elif [[ -z ${1%%-*} ]]; then
+        args+=($1)
+      elif [[ -z ${initialPath} ]]; then
+        initialPath=$1
+      else
+        die "error in parameters [$1]"
+      fi
+      ;;
+  esac
+  shift
+done
+#set +x
+
+
+################################ SCRIPT SPECIFIC METHODS ################################
+function update_level() {
+#echo "$FUNCNAME()" $@ >&2
+  local levelPath="$1"
+  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+  local moduleName="$2"
+  local modulePath="$3"
+  local repoBranch
+  local ret=0   # return code, 0 - the repo is syncronized
+  local childRet # child return code
+  local initialized="${4:-1}"
+  local managed="${5:-1}"
+
+  module_porcelain_status update "${modulePath}"
+
+  local applied=1
+
+  if [ -f .gitmodules ]; then
+    while read -a module; do
+      childRet=0
+      moduleName="${module[0]}"
+      localPath="${module[1]}"
+      subRepoPath="${levelPath}"/"${localPath}"
+      local modulePath="$3"
+      if [[ ${modulePath:(-1)} != "/" ]]; then
+        modulePath+="/"
+      fi
+      modulePath+="$moduleName"
+
+      read initialized managed < <(module_info ${modulePath} initialized managed)
+
+      if (( $managed )) || (( $doForce )); then
+
+
+        git submodule update --init -- "${moduleName}"
+
+        if (( $managed )) ; then
+          local managedBranch=$(git config --file .gitmodules --get submodule."${moduleName}".branch)
+          if [[ -z "${managedBranch}" ]] ; then
+            local managedBranch=$(git config --file .gitmodules --get submodule."${moduleName}".pinned)
+          fi
+          if [[ -n "${managedBranch}" ]] ; then
+            git -C "${moduleName}" checkout ${managedBranch}
+          fi
+        fi
+
+        pushd "${subRepoPath}" &> /dev/null
+
+        update_level "${subRepoPath}" "${moduleName}" "${modulePath}" "${initialized}" "${managed}"
+        childRet=$?
+
+        (( $childRet > $ret )) && ret = ${childRet}
+        popd  &> /dev/null
+      fi
+    done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+  fi
+}
+
+
+################################ MAIN SCRIPT LOGIC ################################
+#
+# callback to detect what command should be called
+#
+#dispatch_subaction() {
+#  echo update
+#}
+
+cmd_default() {
+  typeset modulePath=$(resolve_module_path "${initialPath}" /)
+  read moduleName moduleFilePath < <(module_info "${modulePath}" "name" "path")
+
+  typeset affected=0
+  typeset onEmptyMessage
+  typeset skippedModules=()
+  [[ -z ${updateMessage} ]] && onEmptyMessage="update for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
+
+  pushd ${moduleFilePath} &>/dev/null
+  update_level "${moduleFilePath}" "${moduleName}" "${modulePath}"
+
+  popd &>/dev/null
+  umbrella_finalize
+}

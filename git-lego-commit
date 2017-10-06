@@ -16,9 +16,6 @@ args=()
 ################################ STANDARD BOOTSTRAP CALL ################################
 umbrella_bootstrap
 
-cwRoot="${globals[$G_ROOT_DIR]}"
-gitDir="${globals[$G_MODULE_GIT_DIR]}"
-
 
 ################################ BRANCH-SPECIFIC HELP ################################
 function show_help() {
@@ -237,5 +234,5 @@ cmd_default() {
   popd &>/dev/null
   umbrella_finalize
 
-  exit $ret
+#  exit $ret
 }

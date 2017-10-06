@@ -209,8 +209,6 @@ umbrella_bootstrap
 
 (( $doAutoCommit && ! $doSync )) && die "--auto-commit should be set only with --sync option"
 
-cwRoot="${globals[$G_ROOT_DIR]}"
-gitDir="${globals[$G_MODULE_GIT_DIR]}"
 needMessageToPush=0
 
 ################################ SCRIPT SPECIFIC METHODS ################################
@@ -219,6 +217,7 @@ needMessageToPush=0
 
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
+  local cwRoot="${globals[$G_ROOT_DIR]}"
   cd "${cwRoot}"
     ##
     ## Current state of umbrella branch

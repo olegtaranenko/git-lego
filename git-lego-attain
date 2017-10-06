@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
 set +o posix
+################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
+
+  #
+  ## Exit code of the script
+  ## 0 - success
+  ## 1 - un-success (bad options/... etc)
+  ## 2 - unexpected error (wrong code)
+  #
+declare ret=0
+
+args=()
 
 ################################ STANDARD BOOTSTRAP CALL ################################
 umbrella_bootstrap
+
 
 
 ################################ BRANCH-SPECIFIC HELP ################################
@@ -10,13 +22,19 @@ function show_help() {
 cat << EOF
 
 NAME:
-    ${FLAGS_PREFIX} status in git umbrella-managed modules
+    ${FLAGS_PREFIX} in git umbrella-managed modules
 
 SYNOPSIS:
     '${FLAGS_PREFIX} [options] [-v|--verbose]'
-    '${FLAGS_PREFIX} [--local|--global|--system] --lego-mode[[=| [versioned|solo] [--force|-f]' # view or set lego mode
+    '${FLAGS_PREFIX} [--local|--global|--system] --lego-mode[[=| [versioned|solo]] [--force|-f]' # view or set lego mode
 
 DESCRIPTION:
+    Initializes the git-lego workflow after the root repository is cloned. If the repository is git-lego-less,
+    it make some assumption and configures different settings are been used further.
+    Basically git-lego tries to be non-intrusive, ie. don''t pollute modules history. It will explore
+     using some common conventions, and can working without this step.
+    Be non-intrusive means not
+    But such working is very restrictive, ie. it defaulting to origin remote, and at the some time will block working
 
 EXAMPLES:
     '${FLAGS_PREFIX} -v .' -> show verbose status for current module only
@@ -30,6 +48,7 @@ EOF
 }
 
 typeset currentLegoMode
+
 typeset verbose=0
 typeset force=0
 # solo (1) or global (0)
@@ -231,27 +250,24 @@ reconcile_level() {
     local moduleInnerPath="${innerModule[1]}"
     local innerFilePath="${outerFilePath}/${moduleInnerPath}"
     local reference
-    local referenceKey referenceKeyRe
+    local referenceKey
 
 
     if (( ! $doModeUnset )); then
-      referenceKey="submodule.${moduleName}."
-      referenceKeyRe="submodule.${moduleName}.(branch|pinned)"
+      referenceKey="submodule.${moduleName}.branch"
       if (( $copyFrom )); then
         if (( ${toVersioned} )) ; then
-          reference=$(git config --get-regexp ${referenceKey}) &>/dev/null
+          reference=$(git config --get ${referenceKey})
         elif (( ${toSolo} )); then
-          reference=$( git config -f .gitlego --get-regexp ${referenceKey} ) &>/dev/null
+          reference=$( git config -f .gitlego --get ${referenceKey} )
         fi
       fi
 
       if (( $doReconcile )) || [[ -z ${reference} ]] ; then
         reference=$( git -C "${moduleInnerPath}" rev-parse --symbolic-full-name HEAD )
         if [[ -z ${reference} ]] ; then
-          reference=$( git -C "${moduleInnerPath}" rev-parse --short HEAD )
-          referenceKey+="pinned";
+          reference=$( git -C "${moduleInnerPath}" rev-parse HEAD )
         else
-          referenceKey+="branch";
           reference=${reference#refs/heads/}
         fi
       fi
