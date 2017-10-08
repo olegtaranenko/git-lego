@@ -69,6 +69,7 @@ typeset parameterKey parameterValue unsetParameter=0
 typeset autoAttach=$(get_lego_setting "autoAttach")
 autoAttach=$(READ_boolean ${autoAttach} 1) # 1 === true
 #typeset doRecursive=0
+typeset initialPath doRecursive=1  doForce=1
 
 ################################ PARAMETERS PARSING ################################
 #      set -x
@@ -83,81 +84,42 @@ while [[ -n $1 ]]; do
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
       ;;
 
-		-f | --force)
-			force=$1
-			;;
-
-		--lego-mode)
-			case $2 in
-        '')
-          showLegoMode=1
-          ;;
-        --unset)
-          doModeUnset=1
-          ;;
-        --*)
-			    nextLegoMode=current
-          ;;
-        *)
-			    nextLegoMode=$2
-          shift
-          ;;
-			esac
-			;;
-		--lego-mode=*)
-			nextLegoMode="${1#--lego-mode=}"
-			;;
-
-    --local|--global|--system)
-      scope="$1"
+    --)
+      stopOptions=1
       ;;
 
-
-    --auto-attach|-A)
-      autoAttach=1
+    --recursive|-r)
+      doRecursive=1
       ;;
-    --no-auto-attach)
-      autoAttach=0
-      ;;
-    --attach|-a)
-      case "$2" in '') echo usage ;; esac
-      attachHints+=("$2")
-      shift
+    --no-recursive|-R)
+      doRecursive=0
       ;;
 
-#    --recursive|-r)
-#      doRecursive=1
-#      ;;
-#    --no-recursive|-R)
-#      doRecursive=0
-#      ;;
-    *=)
-      parameterKey=${1:%%=*}
-      parameterValue=${1:#*=}
+    --force|-f)
+      doForce=1
       ;;
+    --no-force)
+      doForce=0
+      ;;
+
     *)
-      parameterKey="${1}"
-      case "$2" in
-        '')
-          showParameter=1
-        ;;
-        --unset)
-          unsetParameter=1
-          shift
-        ;;
-        --*)
-          showParameter=1
-          shift
-        ;;
-        *)
-          parameterValue="$2"
-          shift
-      esac
+      if (( $stopOptions )); then
+        if [[ -z ${1%%-*} ]]; then
+          die "after '--' additional options ($1) are not allowed "
+        else
+          afterDash+=($1)
+        fi
+      elif [[ -z ${1%%-*} ]]; then
+        args+=($1)
+      elif [[ -z ${initialPath} ]]; then
+        initialPath=$1
+      else
+        die "error in parameters [$1]"
+      fi
       ;;
   esac
   shift
 done
-#set +x
 
 if [[ -n $nextLegoMode ]] && [[ $nextLegoMode != versioned ]] && [[ $nextLegoMode != solo ]] && [[ $nextLegoMode != current ]]; then
   die "Unrecognized option for --lego-mode options, 'solo' and 'versioned' are allowed for now"
@@ -228,7 +190,7 @@ migrate_lego_mode() {
 
   pushd ${filePath} &>/dev/null
 
-  reconcile_level "${filePath}"
+  attain_level "${filePath}"
 
   popd &>/dev/null
 
@@ -238,64 +200,60 @@ migrate_lego_mode() {
 }
 
 
-reconcile_level() {
-  local outerFilePath="$1"
-  local outerPath="${2:-/}"
-#
-#set -x
-  read -a outerModule < <(module_descriptor ${outerFilePath})
+attain_level() {
+#echo "$FUNCNAME()" $@ >&2
+  local levelPath="$1"
+  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+  local moduleName="$2"
+  local modulePath="$3"
+  local repoBranch
+  local ret=0   # return code, 0 - the repo is syncronized
+  local childRet # child return code
+  local initialized="${4:-1}"
+  local managed="${5:-1}"
 
-  while read -a innerModule; do
-    local moduleName="${innerModule[0]}"
-    local moduleInnerPath="${innerModule[1]}"
-    local innerFilePath="${outerFilePath}/${moduleInnerPath}"
-    local reference
-    local referenceKey
+  module_porcelain_status update "${modulePath}"
 
+  local applied=1
 
-    if (( ! $doModeUnset )); then
-      referenceKey="submodule.${moduleName}.branch"
-      if (( $copyFrom )); then
-        if (( ${toVersioned} )) ; then
-          reference=$(git config --get ${referenceKey})
-        elif (( ${toSolo} )); then
-          reference=$( git config -f .gitlego --get ${referenceKey} )
+  if [ -f .gitmodules ]; then
+    while read -a module; do
+      childRet=0
+      moduleName="${module[0]}"
+      localPath="${module[1]}"
+      subRepoPath="${levelPath}"/"${localPath}"
+      local modulePath="$3"
+      if [[ ${modulePath:(-1)} != "/" ]]; then
+        modulePath+="/"
+      fi
+      modulePath+="$moduleName"
+
+      read initialized managed < <(module_info ${modulePath} initialized managed)
+
+      if [[ $initialized == 1 && ( $managed == 0 || $doForce == 1 ) ]]; then
+
+        local heads=$( git -C "${moduleName}" rev-parse --symbolic-full-name HEAD )
+
+        if (( $managed )) ; then
+          local managedBranch=$(git config --file .gitmodules --get submodule."${moduleName}".branch)
+          if [[ -z "${managedBranch}" ]] ; then
+            local managedBranch=$(git config --file .gitmodules --get submodule."${moduleName}".pinned)
+          fi
+          if [[ -n "${managedBranch}" ]] ; then
+            git -C "${moduleName}" checkout ${managedBranch}
+          fi
         fi
+
+        pushd "${subRepoPath}" &> /dev/null
+
+        attain_level "${subRepoPath}" "${moduleName}" "${modulePath}" "${initialized}" "${managed}"
+        childRet=$?
+
+        (( $childRet > $ret )) && ret = ${childRet}
+        popd  &> /dev/null
       fi
-
-      if (( $doReconcile )) || [[ -z ${reference} ]] ; then
-        reference=$( git -C "${moduleInnerPath}" rev-parse --symbolic-full-name HEAD )
-        if [[ -z ${reference} ]] ; then
-          reference=$( git -C "${moduleInnerPath}" rev-parse HEAD )
-        else
-          reference=${reference#refs/heads/}
-        fi
-      fi
-
-      if (( $toSolo )) ; then
-        git config --local --replace-all ${referenceKey} ${reference}
-      elif (( $toVersioned )) ; then
-        git config -f .gitlego --replace-all ${referenceKey} ${reference}
-      fi
-    fi
-
-    if (( $clearVersioned )) ; then
-      git config -f .gitlego  --unset-all ${referenceKey}
-    fi
-    if (( $clearSolo )); then
-      git config --local --unset-all ${referenceKey}
-    fi
-
-    local modulePath="${outerPath}"
-    if [[ ${modulePath:(-1)} != "/" ]]; then
-      modulePath+="/"
-    fi
-    modulePath+="$moduleName"
-
-    pushd ${innerFilePath} &>/dev/null
-    reconcile_level "${innerFilePath}" "${modulePath}"
-    popd &>/dev/null
-  done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+    done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+  fi
 }
 
 
@@ -303,122 +261,31 @@ reconcile_level() {
 #
 # callback to detect what command should be called
 #
-dispatch_subaction() {
-  if (( $showLegoMode )) || [[ -n ${nextLegoMode} ]] || (( $doModeUnset )); then
-    echo legomode
-  else
-    if [[ -n ${parameterKey} ]]; then
-      echo parameter
-    fi
-  fi
-}
+#dispatch_subaction() {
+#  if (( $showLegoMode )) || [[ -n ${nextLegoMode} ]] || (( $doModeUnset )); then
+#    echo legomode
+#  else
+#    if [[ -n ${parameterKey} ]]; then
+#      echo parameter
+#    fi
+#  fi
+#}
 
-cmd_parameter() {
-  echo "$FUNCNAME() key=$parameterKey val=$parameterValue unset=$unsetParameter mode=$currentLegoMode"
-  local value=${parameterValue}
-}
-
-## Just show current
-cmd_legomode() {
-  echo $FUNCNAME setLegoMode=$nextLegoMode
-  local currentMode
-  local investigated
-  local hint
-
-  local doEcho=$1
-#
-#set -x
-  if (( $showLegoMode )) ; then
-    local currentMode=$( get_lego_setting "mode")
-    if [[ -z "$currentMode" ]] ; then
-      investigated=$( investigate_lego_mode )
-      if [[ $investigated == empty ]]; then
-        unset investigated
-      fi
-    fi
-
-
-    cw_echo "${currentMode:+Mode is explicit set to }${currentMode:-Mode not set}, guessing: ${investigated:-no idea}."
-    if [[ -n ${investigated} ]]; then
-      if [[ $investigated == ambiguous ]] || [[ $investigated == empty ]]; then
-        hint="[versioned|solo]"
-      else
-        hint="${investigated}"
-      fi
-      cw_echo "You are advised to make this settings explicitly via 'git lego config --lego-mode=$hint'"
-    fi
-
-    # for caller from code, not from command line
-    (( $doEcho )) && echo ${nextLegoMode}
-
-  else
-    case ${nextLegoMode} in
-      current)
-        #do nothing
-        ;;
-      *)
-###################    SET & UNSET LEGO MODE ##################
-        (( $doModeUnset )) && nextLegoMode=empty
-        currentMode=$( get_lego_setting "mode")
-
-        if [[ ${currentMode} != ${nextLegoMode} ]] || (( $doModeUnset )); then
-          git config ${scope:---local} "lego.mode" ${nextLegoMode} true
-          local afterScopeRemove=$( get_lego_setting "mode")
-
-          if [[ ${afterScopeRemove} == ${currentMode} && (( ! $doModeUnset )) ]] ; then
-            cw_warn "Lego mode changing was not successful, maybe because of global or system settings"
-          else
-            migrate_lego_mode ${nextLegoMode} ${currentMode}
-            if (( $doModeUnset )) ; then
-              cw_echo "Lego mode unset for ${scope:---local} scope"
-            else
-              cw_echo "Lego mode set to '$nextLegoMode' for ${scope:---local} scope"
-            fi
-          fi
-        else
-          if (( $doModeUnset )) ; then
-            cw_echo "Lego mode is already not set."
-          else
-            cw_echo "Lego mode is already set to $nextLegoMode."
-          fi
-        fi
-        ;;
-    esac
-  fi
-}
 
 
 #set -x
 cmd_default() {
-  typeset modulePath=$(resolve_module_path "${initialPath}" "/")
-  read moduleName filePath < <(module_info "${modulePath}" "name" "path")
-  typeset dieMsg
-  typeset skippedModules=()
+  typeset modulePath=$(resolve_module_path "${initialPath}" /)
+  read moduleName moduleFilePath < <(module_info "${modulePath}" "name" "path")
+
   typeset affected=0
-  typeset vetoed=0
-  typeset affected_module=0
+  typeset onEmptyMessage
+  typeset skippedModules=()
+#  [[ -z ${updateMessage} ]] && onEmptyMessage="update for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
 
-#  pushd ${filePath} &>/dev/null
-#  cd ${filePath}
+  pushd ${moduleFilePath} &>/dev/null
+  attain_level "${moduleFilePath}" "${moduleName}" "${modulePath}"
 
-
-
-#  if (( $affected )); then
-#
-#    while read -a module; do
-#      cd ${module[$MFS_FULL_PATH]}
-#      level_verbose_about_to ${module[@]}
-#
-#      git reset "${args[@]}"
-#    done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
-#  fi
-#
-#  if (( ${#skippedModules} )); then
-#    cw_echo "Not affected modules: ${skippedModules[*]}"
-#  fi
-
-#  popd &>/dev/null
+  popd &>/dev/null
   umbrella_finalize
-
-#  exit $ret
 }

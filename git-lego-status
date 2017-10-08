@@ -178,22 +178,26 @@ function show_current_module_status {
     if (( ${MODULE_STATUS[$MS_DETACHED]} )); then
       oneLine+=", detached"
       verboseMsg+=("You need to run either 'git-lego checkout <branch-name>' or 'git-lego init [--reconcile|--pin]' to make those consent.")
-    fi
-#    set -x
-    if (( ${MODULE_STATUS[$MS_INCONSISTENT]} )) ; then
-      oneLine+=", not matched"
-      if [[ -n ${MODULE_STATUS[$MS_INNER_REV_HINT]} ]] ; then
-        verboseMsg+=("Module has inconsistent state, outer module expects ${MODULE_STATUS[$MS_INNER_REV_HINT]}, which the module")
-      else
-        verboseMsg+=("Module has inconsistent state, outer module expects  ")
+      if [[ -n $MODULE_STATUS[$MS_GUESSED_SHA] ]]; then
+        oneLine+=" @${MODULE_STATUS[$MS_GUESSED_SHA]}"
+        # TODO verboseMsg+=
       fi
     fi
-#    set +x
+#    set -x
+#    if (( ${MODULE_STATUS[$MS_MISMATCHED]} )) ; then
+#      oneLine+=", not matched"
+#      if [[ -n ${MODULE_STATUS[$MS_MANAGED_LINK]} ]] ; then
+#        verboseMsg+=("Module has inconsistent state, outer module expects ${MODULE_STATUS[$MS_MANAGED_LINK]}, which the module")
+#      else
+#        verboseMsg+=("Module has inconsistent state, outer module expects  ")
+#      fi
+#    fi
     print_managed_status ${managed}
     if [[ -n ${MODULE_STATUS[$MS_GUESSED_BRANCHES]} ]] && (( ${MODULE_STATUS[$MS_DETACHED]} )) ; then
-      oneLine+=", possible: ${MODULE_STATUS[$MS_GUESSED_BRANCHES]}"
+      oneLine+=", attainable to: ${MODULE_STATUS[$MS_GUESSED_BRANCHES]}"
 #        verboseMsg+=("Module has discrepancy between its current state and revision, which outer module expected")
     fi
+
     if (( ${#infoIssues} )) ; then
       verboseIssues="issues: "$verboseIssues" paths"
       verboseMsg+=("${verboseIssues}")
@@ -209,26 +213,28 @@ function show_current_module_status {
   fi
 }
 
+
 print_managed_status() {
-  local inconsistent=${MODULE_STATUS[$MS_INCONSISTENT]}
+  local mismatched=${MODULE_STATUS[$MS_MISMATCHED]}
   local detached=${MODULE_STATUS[$MS_DETACHED]}
   local managed=${1}
   local isOK=1
-  if (( ${detached:-0} )) || (( ${inconsistent:-0} )) || (( ! ${managed} )) ; then
+  if (( ${detached:-0} )) || (( ${mismatched:-0} )) || (( ! ${managed} )) ; then
     isOK=0
   fi
 
   if (( ! $managed )) ; then
     oneLine+=", unmanaged"
-  elif (( ! $isOK )); then
-    oneLine+="${MODULE_STATUS[$MS_INNER_REV_HINT]:+, expected:${MODULE_STATUS[$MS_INNER_REV_HINT]}}"
   else
     oneLine+=", OK"
   fi
-  if (( ! $isOK )) && [[ -n ${MODULE_STATUS[$MS_INNER_REV_HINT]} ]]; then
-    verboseMsg+=("Expected, that module should be initialized to ${MODULE_STATUS[$MS_INNER_REV_HINT]}")
+
+  if (( ! $isOK )) && [[ -n ${MODULE_STATUS[$MS_MANAGED_LINK]} ]]; then
+    oneLine+="${MODULE_STATUS[$MS_MANAGED_LINK]:+, expected:${MODULE_STATUS[$MS_MANAGED_LINK]}}"
+    verboseMsg+=("Expected, that module should be initialized to ${MODULE_STATUS[$MS_MANAGED_LINK]}")
   fi
 }
+
 
 function status_level() {
   local levelPath="$1"
@@ -247,6 +253,9 @@ function status_level() {
       childRet=0
       subModule="${module[0]}"
       managedBranch=$(git config --file .gitmodules --get submodule."${subModule}".branch)
+      if [[ -z $managedBranch ]]; then
+        managedBranch=$(git config --file .gitmodules --get submodule."${subModule}".pinned)
+      fi
       localPath="${module[1]}"
 #      set -x
       subRepoPath=${levelPath}/${localPath}
@@ -271,7 +280,6 @@ function status_level() {
   fi
   return $ret
 }
-
 
 
 ################################ MAIN SCRIPT LOGIC ################################

@@ -86,7 +86,7 @@ done
 
 
 ################################ SCRIPT SPECIFIC METHODS ################################
-function update_level() {
+update_level() {
 #echo "$FUNCNAME()" $@ >&2
   local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
@@ -159,7 +159,7 @@ cmd_default() {
   typeset affected=0
   typeset onEmptyMessage
   typeset skippedModules=()
-  [[ -z ${updateMessage} ]] && onEmptyMessage="update for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
+#  [[ -z ${updateMessage} ]] && onEmptyMessage="update for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
 
   pushd ${moduleFilePath} &>/dev/null
   update_level "${moduleFilePath}" "${moduleName}" "${modulePath}"

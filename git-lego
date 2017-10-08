@@ -19,8 +19,10 @@ g_module_inited=()
 g_module_shas=()
 g_module_managed=()
 
-g_lego_aware_tokens=("branch" "pinned")
+declare -a g_lego_aware_tokens_gitmodules=("branch"  "pinned")
 
+# keeps some global settings during git-lego script execution
+# initialized at startup
 globals=()
   ################################## CONSTANTS FOR globals array ##########################################
   #
@@ -50,45 +52,78 @@ G_MODULES_FN=4
   #
 G_AFFECTED_MODULES=5
 
+  # Remote reference used in git-lego. By default, of course, 'origin'
 G_LEGO_REMOTE=6
 
 
 #################### CONSTANTS for MODULE STATUS (see function module_porcelain_status() ####################
 #
 MS_BRANCH_INFO=0   # String
-MS_DETACHED=1      # 0 is clean, 1 is detached, 2 is not synced
-MS_COMMITABLE=2    # 1/0
-MS_UNTRACKED=3     # ?
-MS_MODIFIED=4      # M
-MS_DELETED=5       # D
-MS_ADDED=6         # A
-MS_RENAMED=7       # R
-MS_COPIED=8        # C
-MS_UNMERGED=9      # U
-MS_PUSHABLE=10     # 1/0
-MS_PULLABLE=11     # 1/0
-MS_SUBMODULES=12   # S
-
-# To make module orchestration convenient for clone/merge/etc, in outer module we keep hint, which symbolic reference
-# (tag or branch) the inner module should be checked out.
-# This hint is maintained in .gitmodules branch
-MS_INNER_REV_HINT=13
-
-# Inner module is initialized, but can be detached or not.
-# In case of it is attached, possible situation where outer repo has revision hint other than inner module is
-# In case of module is detached, we looking into possible branches/tags and looking what are points to the
-# sha, currently inner module stick on. If there is the only one, we are assuming module is consent.
-# otherwise module reconciliation is required.
-MS_INCONSISTENT=14
-
-# One or more branches referencing on the inner:HEAD, which can be synchronized to the branch
-# after attaching without getting outer repo dirty
-MS_GUESSED_BRANCHES=15 # strings' array
-
+MS_UNTRACKED=1     # N
+MS_MODIFIED=2      # M
+MS_DELETED=3       # D
+MS_ADDED=4         # A
+MS_RENAMED=5       # R
+MS_COPIED=6        # C
+MS_UNMERGED=7      # U
+MS_PUSHABLE=8      # 1/0
+MS_PULLABLE=9      # 1/0
+MS_COMMITABLE=10   # 1/0
+MS_SUBMODULES=11   # S
+#
+# After clone/update submodules are in the *detached* state. That means, no symbolic reference points to inner module's HEAD.
+# At the same time, outer module can have (or not) a hint, which symlink inner module should have, branch or tag.
+# If outer module specifies the hint, branch or tag or just sha1 for inner module, let we say module is "managed" by outer one.
+# Otherwise inner module is *unmanaged* by outer module.
+#
+# If inner module is managed, but points to other sha1, than expected, let say inner module state is *mismatched*.
+# Git-lego warns, if inner module is unmanaged or mismatched, and enumerates, to which symlinks inner module can be *attained* to outer.
+#
+# Attain process means change hint for inner module, so that it can match to the inner module state. Worktree of inner module is not changed,
+# but worktree of outer module can be changed, if git-lego mode is *versioned*. If git-lego mode is set to *solo*, no worktree changes happens as well.
+#
+# Git-lego has an *auto-attain* setting, in which allow it can attains unmanaged or mismatched modules if no ambiguous symlinks inner module has.
+#
+# In case of mismatched state, there are possible either "attain" inner to outer, or update inner module to the state, referenced in outer hint.
+# There are situation though, if outer hint is stale, and inner branch has no such ref. Let say the inner module is not *updateable*
+# In this case only attaining will be advised
+#
 # Module is not initialized yet or git submodule deinit was applied
-MS_UNINITIALIZED=16  # 1/0
+MS_UNINITIALIZED=14   # 1/0
+#
+# Unmanaged mean, git-lego has no idea what inner module should be stick on.
+MS_UNMANAGED=15       # 1 - inner module is unmanaged, 0 - managed
+#
+# In case the module is managed
+# 0 - inner module not detached (attached to any refs/heads/branch), 1 is detached to tag, 2 is detached to bare sha1
+MS_DETACHED=16
+#
+# Hint of outer
+# 0 - managed with a branch symlink, 1 - pinned to tag, 2 - pinned to bare sha1
+MS_MANAGED=17
+#
+# 0 - Inner module both outer hint and inner state are matched (branch -> branch or tag -> tag), but references are different
+# ie, hint is branch develop, but inner state is master. In this case either git-lego update or git-lego attain are required
+#
+MS_MISMATCHED=18
 
+# In case the module has managed, but mismatched state, whether or not it is updateable, to be syncronized with outer hint.
+# Does not matter as branch or tag or ever sha1 situation.
+MS_UPDATEABLE=19
 
+# Outer module hint for inner one, symbolic reference (tag or branch) or just bare sha1, the inner module expected to be.
+MS_MANAGED_LINK=20
+
+# One or more branches referencing on the inner:HEAD, which can be synchronized to the branch after attaining without getting outer repo dirty
+# strings' array
+MS_GUESSED_BRANCHES=22
+
+# One or more tags referencing to the inner module:HEAD, which can be synchronized with outer hint without making outer submodule reference dirty
+# strings' array
+MS_GUESSED_TAGS=23
+#
+# SHA1 of module HEAD. Useful for detached state
+MS_GUESSED_SHA=24
 
 ########################### CONSTANTS FOR MODULE FILE SYSTEM  ###############################################
 ## Array is filled up in function umbrella_bootstrap () and serves for path resolution
@@ -212,7 +247,7 @@ function module_startup_investigate() {
     module+=(${is_initialized})               #MFS_MODULE_INITIALIZED=5
     local statusLine=("${moduleStatus}")
     local sha=${statusLine[0]}
-    if [[ ${sha:0:1} == - ]]; then
+    if [[ ${sha:0:1} == - || ${sha:0:1} == + ]]; then
       sha=${sha:1}
     fi
     module+=(${sha})                          # MFS_MODULE_SHA 6
@@ -234,14 +269,14 @@ warn() { echo "$@" >&2; }
 
 function die() {
   local msg="$1"
-  [ -z "${msg}" ] && "You are not in one of ConsistentWork repositories. Look in "$(dirname $0)"/Readme.MD for more information"
+  [ -z "${msg}" ] && "Something goes wrong."
   cw_echo "${msg}"
   exit 1
 }
 
 function panic() {
   local msg="$1"
-  [ -z "${msg}" ] && "Unexpected error. Please check the code or call to support"
+  [ -z "${msg}" ] && "Unexpected error. Please check the code or file bug to the forum/github/etc"
   echo "panic: ${msg}"
   exit 2
 }
@@ -301,7 +336,7 @@ function splash() {
 
 function get_repo_url() {
   [[ -n $1 && $1 != "." ]] && pushd $1  &> /dev/null
-  local url=$(git remote get-url origin &> /dev/null)
+  local url=$(git remote get-url ${globals[$G_LEGO_REMOTE]} &> /dev/null)
   [[ -n $1 && $1 != "." ]] && popd  &> /dev/null
   echo ${url}
 }
@@ -438,12 +473,12 @@ function module_descriptor() {
 
 function get_module_path_down() {
   local path
-  local origin="$1"
+  local originPath="$1"
   local reminder="$2"
-  if [[ ${origin:(-1)} == "/" ]]; then
-    path="$origin$reminder"
+  if [[ ${originPath:(-1)} == "/" ]]; then
+    path="$originPath$reminder"
   else
-    path="$origin/$reminder"
+    path="$originPath/$reminder"
   fi
 
   local ret=1
@@ -605,7 +640,7 @@ function is_branch_exists() {
   [[ -z $1 ]] && (panic "'branch' argument for is_branch_exists() should be given")
   local branchName=$1
   local where=$2
-  local checkedSites=("", "origin")
+  local checkedSites=("", "${globals[$G_LEGO_REMOTE]}")
   local ret=0
   if [[ -n $where ]]; then
     # TODO
@@ -655,44 +690,47 @@ function module_porcelain_status() {
   #########
   ######## TODO migrate to --porcelain=2
   #########
-  local remoteInteraction=0 stickOnBranch guessedBranched=()
+  local remoteInteraction=0 managedBranch guessedBranched=()
 
   [[ $1 == "push" || $1 == "pull" ]] && remoteInteraction=1
 
 #set -x
   unset MODULE_STATUS
   local modulePath="$2"
-  local stickOnBranch="$3"
-#  local moduleName="$5"
-  read initialized managed < <(module_info ${modulePath} initialized managed )
+  local managedBranch="$3"
+
+  read initialized managed sha < <(module_info ${modulePath} initialized managed sha )
 #set +x
-  # TODO take care about ambiguous references like master & tags/master
-  test -n ${stickOnBranch} && MODULE_STATUS[$MS_INNER_REV_HINT]=${stickOnBranch}
+  # TODO take care about ambiguous references like heads/master & tags/master
+  test -n ${managedBranch} && MODULE_STATUS[$MS_MANAGED_LINK]=${managedBranch}
 
 #  set -x
-  if [[ ${initialized} == 1 || ${modulePath} == / ]] ; then
+  declare -a output
+  if (( ! $initialized )) ; then
+    MODULE_STATUS[$MS_UNINITIALIZED]=1
+  else
     while read line; do
       # parse line into array or words
-      local output=(${line})
+      output=(${line})
 
       case ${output[0]} in
         # first line in the output
         \#\#)
           if [[ -n ${output[1]} ]]; then
-            guessedBranched=($(guess_branch_from_hash HEAD "$modulePath"))
+
             if [[ ${output[1]} == HEAD ]]; then
               MODULE_STATUS[$MS_DETACHED]=1
+              ## TODO make correctly via git config --get abbrev-short-length
+              MODULE_STATUS[$MS_GUESSED_SHA]=${sha:0:7}
+            else
+              MODULE_STATUS[$MS_BRANCH_INFO]="${output[1]}"
             fi
-            if [[ ${guessedBranched} != ${stickOnBranch} ]]; then
-              MODULE_STATUS[$MS_INCONSISTENT]=1
-              MODULE_STATUS[$MS_GUESSED_BRANCHES]="${guessedBranched}"
-            fi
-            MODULE_STATUS[$MS_BRANCH_INFO]="${output[1]}"
           fi
+
           # TODO will not working in locale differs form en_US (or en_XX)
-          # TODO git rev-list --count can help?
+          # TODO porcelain=2 will help!
           if (( $remoteInteraction )); then
-  #          local remoteRef="origin/"
+  #          local remoteRef="${globals[$G_LEGO_REMOTE]}/"
             local ahead=$(echo $line | grep -Eo "ahead [[:digit:]]" | grep -Eo "[[:digit:]]")
             (( ! $? )) && (( $ahead )) && MODULE_STATUS[$MS_PUSHABLE]=1
           fi
@@ -703,65 +741,136 @@ function module_porcelain_status() {
 #          fi
           local fChar=${line:0:1} sChar=${line:1:1}
           [[ ${fChar} == "?" ]] && MODULE_STATUS[$MS_UNTRACKED]=$(( MODULE_STATUS[$MS_UNTRACKED] + 1 ))
-          [[ ${fChar} == M || ${sChar} == M ]] && MODULE_STATUS[$MS_MODIFIED]=$(( MODULE_STATUS[$MS_MODIFIED] + 1 )) ; MODULE_STATUS[$MS_COMMITABLE]=1
-          [[ ${fChar} == A || ${sChar} == A ]] && MODULE_STATUS[$MS_ADDED]=$(( MODULE_STATUS[$MS_ADDED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1
-          [[ ${fChar} == D || ${sChar} == D ]] && MODULE_STATUS[$MS_DELETED]=$(( MODULE_STATUS[$MS_DELETED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1
-          [[ ${fChar} == R || ${sChar} == R ]] && MODULE_STATUS[$MS_RENAMED]=$(( MODULE_STATUS[$MS_RENAMED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1
-          [[ ${fChar} == C || ${sChar} == C ]] && MODULE_STATUS[$MS_COPIED]=$(( MODULE_STATUS[$MS_COPIED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1
-          [[ ${fChar} == U || ${sChar} == U ]] && MODULE_STATUS[$MS_UNMERGED]=$(( MODULE_STATUS[$MS_UNMERGED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1
+          if [[ ${fChar} == M || ${sChar} == M ]] ; then MODULE_STATUS[$MS_MODIFIED]=$(( MODULE_STATUS[$MS_MODIFIED] + 1 )) ; MODULE_STATUS[$MS_COMMITABLE]=1; fi
+          if [[ ${fChar} == A || ${sChar} == A ]] ; then MODULE_STATUS[$MS_ADDED]=$(( MODULE_STATUS[$MS_ADDED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1; fi
+          if [[ ${fChar} == D || ${sChar} == D ]] ; then MODULE_STATUS[$MS_DELETED]=$(( MODULE_STATUS[$MS_DELETED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1; fi
+          if [[ ${fChar} == R || ${sChar} == R ]] ; then MODULE_STATUS[$MS_RENAMED]=$(( MODULE_STATUS[$MS_RENAMED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1; fi
+          if [[ ${fChar} == C || ${sChar} == C ]] ; then MODULE_STATUS[$MS_COPIED]=$(( MODULE_STATUS[$MS_COPIED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1; fi
+          if [[ ${fChar} == U || ${sChar} == U ]] ; then MODULE_STATUS[$MS_UNMERGED]=$(( MODULE_STATUS[$MS_UNMERGED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1; fi
         ;;
       esac
     done < <(git status -u --porcelain -b)
-  elif (( ! $initialized )) ; then
-    MODULE_STATUS[$MS_UNINITIALIZED]=1
+
+    guess_branch_from_hash HEAD "$modulePath"
+
+    ## git status --porcelain does not shows get tag version
+    if (( MODULE_STATUS[$MS_DETACHED] )); then
+      while read -a output; do
+        # find out tag or has
+        # format HEAD detached at 23a34b or
+#        set -x
+        local len=${#output[@]}
+        local tag=${output[$len-1]}
+#        set +x
+      done < <(git status --long -uno | grep "HEAD detached at")
+#    else
+
+    fi
+
+#    if [[ ${guessedBranched} != ${managedBranch} ]]; then
+#      MODULE_STATUS[$MS_MISMATCHED]=1
+#      MODULE_STATUS[$MS_GUESSED_BRANCHES]="${guessedBranched}"
+#    fi
+
   fi
 #  echo "$FUNCNAME(): ${MODULE_STATUS[@]}"
 }
+
 
 function module_up() {
   cd $(git rev-parse --show-toplevel)"/.."
   cd $(git rev-parse --show-toplevel)
 }
 
-function possible_branch_from_parent_config() {
-  local ret
-  local repoName=$(get_repo_name_from_path)
 
-  if [[ ${repoName} != / ]]; then
-    pushd . &> /dev/null
-    module_up
-    ret=$(git config -f .gitmodules --get "submodule.$repoName.branch")
-    popd &> /dev/null
-  else
-    ret=/
-  fi
-  echo ${ret}
-}
+#function possible_branch_from_parent_config() {
+#  local ret
+#  local repoName=$(get_repo_name_from_path)
+#
+#  if [[ ${repoName} != / ]]; then
+#    pushd . &> /dev/null
+#    module_up
+#    ret=$(git config -f .gitmodules --get "submodule.$repoName.branch")
+#    popd &> /dev/null
+#  else
+#    ret=/
+#  fi
+#  echo ${ret}
+#}
 
 function guess_branch_from_hash() {
+#      set -x
   local ret hash=${1:-HEAD}
   local branches=()
-  repoPath="$2"
+  local tags=()
+  local modulePath="$2"
   # const
-  local legoRemote=origin
+  local legoRemote=${globals[$G_LEGO_REMOTE]}
 
-  if [[ ${repoPath} != / ]]; then
+  if [[ ${modulePath} != / ]]; then
     while read sha commit ref; do
-      refParsed=$(git rev-parse --abbrev-ref=strict ${ref})
+#      echo $ref >&2
+      refParsed=$(git rev-parse --abbrev-ref=loose ${ref})
       found=0
-      for branch in ${branches[@]}; do
-        if [[ "${branch}" = ${refParsed#${legoRemote}/} ]] || [[ ${refParsed%%/*} != ${legoRemote} ]] ; then
-          found=1
-          break
-        fi
-      done
 
-      if [[ ${found} == 0 ]]; then
-        branches+=("${refParsed#${legoRemote}/}")
+      if [[ ${ref#refs/tags/}  == ${refParsed} ]] ; then
+        for tag in ${tags[@]}; do
+          if [[ "${tag}" = ${refParsed} ]]; then
+            found=1
+            break
+          fi
+        done
+
+        if [[ ${found} == 0 ]]; then
+#          echo ${refParsed} >&2
+          tags+=("${refParsed}")
+        fi
+      else
+        if [[ ${refParsed#heads/} != $refParsed ]]; then
+          # filter out heads/master
+          refParsed=${refParsed#heads/}
+
+
+        elif [[ ${refParsed#${legoRemote}/} != $refParsed ]]; then
+
+          # filter out origin/master
+          refParsed=${refParsed#${legoRemote}/}
+
+
+        elif [[ ${ref#refs/remotes/} == ${refParsed} ]]; then
+
+          # filter out heads/remotes/other_remote/master
+          local otherRemote=${ref#refs/remotes/} # other_remote/master
+          if [[ ${otherRemote#${legoRemote}/} == ${otherRemote} ]]; then
+            found=1
+          fi
+        fi
+
+        if (( ! $found )); then
+          for branch in ${branches[@]}; do
+            if [[ "${branch}" == ${refParsed} ]]; then
+              found=1
+              break
+            fi
+          done
+
+          if (( ! $found )) ; then
+#            echo ${refParsed#${legoRemote}/} >&2
+            branches+=("${refParsed#${legoRemote}/}")
+          fi
+
+        fi
+
       fi
+
     done < <(git for-each-ref --points-at=${hash})
+#      set +x
+
+    MODULE_STATUS[$MS_GUESSED_BRANCHES]="${branches[@]}"
+    MODULE_STATUS[$MS_GUESSED_TAGS]="${tags[@]}"
   fi
-  echo ${branches[@]}
+#  echo ${branches[@]} >&2
+#  echo "${branches[@]}"
 }
 
 
@@ -1300,11 +1409,15 @@ resolve_module_managed() {
   local module_path=$2
   local mode="${3:-$g_lego_mode}"
   local ret=0
-  for token in "${g_lego_aware_tokens[@]}" ; do
+  for token in "${g_lego_aware_tokens_gitmodules[@]}" ; do
     local key="${module_name}.${token}"
     local value=$(get_lego_setting_at_mode "${key}" "submodule" "${mode}")
 
-    [[ -n ${value} ]] && ret=1 ; break
+    if (( ${#value} )) ; then
+      ret=1
+      [[ ${token} == pinned ]] && ret=2
+      break
+    fi
   done
   echo ${ret}
 }
@@ -1321,7 +1434,7 @@ get_lego_setting_at_mode() {
   else
     value=$( get_lego_setting_concrete "$1" "${section}" "-f .gitmodules" )
   fi
-  echo "$value"
+  echo ${value}
 }
 
 
