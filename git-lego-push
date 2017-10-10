@@ -109,6 +109,7 @@ function prepare_push_level() {
   local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local moduleName="$2"
+  local modulePath="$3"
   local ret=0
   local childRet # child modules return code
 
@@ -122,7 +123,7 @@ function prepare_push_level() {
     (( $? )) && panic "Something wrong with git fetch"
   fi
 
-  module_porcelain_status push
+  module_porcelain_status "${modulePath}" push
 
   local applied=1
 #  echo "$MODULE_STATUS[@]"
@@ -130,7 +131,7 @@ function prepare_push_level() {
     die "Push is peeled rejected as module '$moduleName' is detached."
   elif [[ 1 == ${MODULE_STATUS[$MS_PUSHABLE]}  && -z ${MODULE_STATUS[$MS_PULLABLE]}  &&  -z ${MODULE_STATUS[$MS_DETACHED]} ]]; then
     currentPushable=1
-    drop_to_affected ${levelPath}
+    drop_to_affected ${modulePath}
     applied=$?
     # 0 means applied, 1 - not
     # if applied == 1, the module is pushable but not applied - dangerous for upper modules,
@@ -151,7 +152,7 @@ function prepare_push_level() {
       subModule="${module[0]}"
       checkBranch=$(git config --file .gitmodules --get submodule."${subModule}".branch)
       localPath="${module[1]}"
-      subRepoPath="${levelPath}"/"${localPath}"
+      subRepoPath="${modulePath}"/"${localPath}"
 
       pushd "${subRepoPath}" &> /dev/null
       local modulePath="$3" #/$subModule"
@@ -175,15 +176,15 @@ function prepare_push_level() {
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
   typeset modulePath=$(resolve_module_path "${initialPath}" /)
-  read moduleName resolvedPath < <(module_info "${modulePath}" "name" "path")
+  read moduleName modulePath < <(module_info "${modulePath}" "name" "path")
   typeset skippedModules=()
   typeset affected=0
   typeset vetoed=0
 
-  pushd ${resolvedPath} &>/dev/null
+  pushd ${modulePath} &>/dev/null
   baseModulePath=$(pmd)
   #set -x
-  prepare_push_level "${resolvedPath}" "${moduleName}" "${baseModulePath}" "0"
+  prepare_push_level "${modulePath}" "${moduleName}" "${baseModulePath}" "0"
   ret=$?
 
   if (( $ret )); then

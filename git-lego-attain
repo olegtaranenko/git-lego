@@ -212,7 +212,7 @@ attain_level() {
   local initialized="${4:-1}"
   local managed="${5:-1}"
 
-  module_porcelain_status update "${modulePath}"
+  module_porcelain_status "${modulePath}" update
 
   local applied=1
 

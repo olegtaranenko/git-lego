@@ -19,7 +19,7 @@ g_module_inited=()
 g_module_shas=()
 g_module_managed=()
 
-declare -a g_lego_aware_tokens_gitmodules=("branch"  "pinned")
+declare -a g_lego_aware_tokens_gitmodules=("branch"  "pinned" "sha")
 
 # keeps some global settings during git-lego script execution
 # initialized at startup
@@ -71,18 +71,18 @@ MS_PULLABLE=9      # 1/0
 MS_COMMITABLE=10   # 1/0
 MS_SUBMODULES=11   # S
 #
-# After clone/update submodules are in the *detached* state. That means, no symbolic reference points to inner module's HEAD.
-# At the same time, outer module can have (or not) a hint, which symlink inner module should have, branch or tag.
-# If outer module specifies the hint, branch or tag or just sha1 for inner module, let we say module is "managed" by outer one.
-# Otherwise inner module is *unmanaged* by outer module.
+# After clone/update submodules always are in the *detached* state. That means, no symbolic reference points to inner module's HEAD.
+# At the same time, outer module can have (or not) is't own expectation, which inner module should have, branch or tag.
+# If outer module specifies the hint, *managed link*, branch or tag or just sha1 for inner module, let we say the inner module is "managed".
+# Otherwise the inner module is *unmanaged* by outer module.
 #
-# If inner module is managed, but points to other sha1, than expected, let say inner module state is *mismatched*.
-# Git-lego warns, if inner module is unmanaged or mismatched, and enumerates, to which symlinks inner module can be *attained* to outer.
+# If module is managed, but points to other sha1, than expected, the module's state is *mismatched*.
+# Git-lego warns, if inner module is unmanaged or mismatched, and enumerates, to which symbolic links the inner module can be *attained*.
 #
-# Attain process means change hint for inner module, so that it can match to the inner module state. Worktree of inner module is not changed,
+# Attain process means change hint in the scope of outer module, so that inner can match to the inner module state. Worktree of inner module is not changed,
 # but worktree of outer module can be changed, if git-lego mode is *versioned*. If git-lego mode is set to *solo*, no worktree changes happens as well.
 #
-# Git-lego has an *auto-attain* setting, in which allow it can attains unmanaged or mismatched modules if no ambiguous symlinks inner module has.
+# Git-lego has an *auto-attain* setting, in which allow it can attains unmanaged or mismatched modules if no ambiguous symbolic links the inner module has.
 #
 # In case of mismatched state, there are possible either "attain" inner to outer, or update inner module to the state, referenced in outer hint.
 # There are situation though, if outer hint is stale, and inner branch has no such ref. Let say the inner module is not *updateable*
@@ -99,21 +99,21 @@ MS_UNMANAGED=15       # 1 - inner module is unmanaged, 0 - managed
 MS_DETACHED=16
 #
 # Hint of outer
-# 0 - managed with a branch symlink, 1 - pinned to tag, 2 - pinned to bare sha1
+# 0 - managed with a branch head, 1 - pinned to tag, 2 - pinned to bare sha1
 MS_MANAGED=17
 #
 # 0 - Inner module both outer hint and inner state are matched (branch -> branch or tag -> tag), but references are different
 # ie, hint is branch develop, but inner state is master. In this case either git-lego update or git-lego attain are required
 #
 MS_MISMATCHED=18
-
+#
 # In case the module has managed, but mismatched state, whether or not it is updateable, to be syncronized with outer hint.
 # Does not matter as branch or tag or ever sha1 situation.
 MS_UPDATEABLE=19
-
+#
 # Outer module hint for inner one, symbolic reference (tag or branch) or just bare sha1, the inner module expected to be.
 MS_MANAGED_LINK=20
-
+#
 # One or more branches referencing on the inner:HEAD, which can be synchronized to the branch after attaining without getting outer repo dirty
 # strings' array
 MS_GUESSED_BRANCHES=22
@@ -122,8 +122,18 @@ MS_GUESSED_BRANCHES=22
 # strings' array
 MS_GUESSED_TAGS=23
 #
-# SHA1 of module HEAD. Useful for detached state
-MS_GUESSED_SHA=24
+# Modules symbolic name, or sha, if module HEAD is detached.
+# For getting this info the 'git status --long' command is used. git status takes this information from git reflog,
+# then this is not 100% reliable. For example in some cases it can show wrong last 'git tag'
+MS_MODULE_LINK=24
+
+# Module's upstream branch
+MS_UPSTREAM=25
+
+# How many revisions ahead & behind to the module's upstream
+MS_UPSTREAM_AHEAD=26
+MS_UPSTREAM_BEHIND=27
+
 
 ########################### CONSTANTS FOR MODULE FILE SYSTEM  ###############################################
 ## Array is filled up in function umbrella_bootstrap () and serves for path resolution
@@ -136,7 +146,7 @@ MFS_MODULE_PATH=4
 MFS_MODULE_INITIALIZED=5
 MFS_MODULE_SHA=6
 MFS_MODULE_MANAGED=7
-
+MFS_MANAGED_LINK=8
 
 # set this to workaround expr problems in shFlags on freebsd
 #if uname -s | egrep -iq 'bsd'; then export EXPR_COMPAT=1; fi
@@ -199,7 +209,7 @@ umbrella_bootstrap (){
 #  echo $g_lego_mode ${implicit:-2}
 
   module_startup_investigate "${umbrellaRepoName}" "/" ".git" "${umbrellaRepoDir}" "/" 1 "${sha}" 1
-#  cat ${globals[$G_MODULES_FN]} >&2
+  cat ${globals[$G_MODULES_FN]} >&2
 #  echo ${g_module_name[@]} >&2
 #  echo ${g_module_inited[@]} >&2
 #  echo ${g_module_managed[@]} >&2
@@ -230,7 +240,9 @@ function module_startup_investigate() {
     local localPath="${module[MFS_RELATIVE_PATH]}"
     local is_initialized=1
     local moduleStatus=($(git submodule status -- ${subModule}))
-    local managed=$(resolve_module_managed "${localPath}" "${subModule}") #get_lego_setting_at_mode
+    set -x
+    local managed=($(resolve_module_managed "${localPath}" "${subModule}"))
+    set +x
 
     pushd ${localPath} &> /dev/null
     module+=($(get_repo_git_dir))             # MFS_GIT_DIR=2
@@ -251,7 +263,8 @@ function module_startup_investigate() {
       sha=${sha:1}
     fi
     module+=(${sha})                          # MFS_MODULE_SHA 6
-    module+=("${managed}")                    # MFS_MODULE_MANAGED 7
+    module+=("${managed[0]}")                 # MFS_MODULE_MANAGED 7
+    module+=("${managed[1]}")                 # MFS_MANAGED_LINK 8
 
     module_startup_investigate ${module[@]}
     popd &> /dev/null
@@ -412,19 +425,18 @@ function level_verbose_about_to {
 # TODO take into account --recursive flag
 #
 function drop_to_affected() {
-  local levelPath=$1
+  local path=$1
   local found=0
   local ret=1
 
 #  affected=0
 
-  [[ -z ${levelPath} ]] && panic "$FUNCNAME() missed parameter 'path'"
+  [[ -z ${path} ]] && panic "$FUNCNAME() missed parameter 'path'"
 
   while read -a module; do
     found=0
     local moduleName=${module[$MFS_MODULE_NAME]}
-    local fullPath=${module[MFS_FULL_PATH]}
-    if [ "$levelPath" == "$fullPath" ]; then
+    if [[ "$path" == "${module[$MFS_FULL_PATH]}" || "$path" == "${module[$MFS_MODULE_PATH]}" ]]; then
       found=1
       if (( ${#afterDash[@]} )); then
         found=0
@@ -510,12 +522,12 @@ function resolve_module_path() {
       reminder=${reminder:1}
     elif [[ -z ${reminder%%../*} || $reminder == ".." ]]; then
       reminder=${reminder:3}
-      originPath=$(pmd)
+      originPath=$(_m_pmd)
       originPath=$(get_module_path_up ${originPath})
       (( $? )) && die "${cantResolve}"
     elif [[ -z ${reminder%%./*} || $reminder == "." ]]; then
       reminder=${reminder:2}
-      originPath=$(pmd)
+      originPath=$(_m_pmd)
     fi
 
     if (( ${#reminder} )); then
@@ -599,43 +611,6 @@ function module_info () {
 }
 
 
-
-function is_module_managed() {
-  local levelPath=$1
-  local ret=0
-  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
-
-  while read -a module; do
-    local fullPath=${module[${MFS_FULL_PATH}]}
-    if [[ ${levelPath} == ${fullPath} && ${module[7]} == 1 ]]; then
-      ret=1
-      break
-    fi
-  done < <(cat ${globals[${G_MODULES_FN}]})
-
-  echo ${ret};
-  return ${ret}
-}
-
-
-function is_module_initialized() {
-  local levelPath=$1
-  local ret=0
-  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
-
-  while read -a module; do
-    local fullPath=${module[${MFS_FULL_PATH}]}
-    if [[ ${levelPath} == ${fullPath} && ${module[${MFS_MODULE_INITIALIZED}]} == 1 ]]; then
-      ret=1
-      break
-    fi
-  done < <(cat ${globals[${G_MODULES_FN}]})
-
-  echo ${ret};
-  return ${ret}
-}
-
-
 function is_branch_exists() {
   [[ -z $1 ]] && (panic "'branch' argument for is_branch_exists() should be given")
   local branchName=$1
@@ -675,8 +650,8 @@ typeset MODULE_STATUS=()
 #     Directory of module should be set outside this function.
 #
 ## Parameters
-#     $1  - mode, which indicated the caller script, ie. "status"/"commit"/..
-#     $2  - file path of current module
+#     $1  - file path of current module
+#     $2  - caller, which indicated the caller script, ie. "status"/"commit"/..
 #     ... - other parameters relevant to its caller
 #       For 'status' mode
 #           $3 - stick-on-branches, branch which outer module expects inner module to be
@@ -685,95 +660,126 @@ typeset MODULE_STATUS=()
 #     $MODULE_STATUS array
 #
 function module_porcelain_status() {
-#echo "$FUNCNAME() mode: $1, modulePath: $2, stickOnBranch: $3"
+#echo "$FUNCNAME() mode: $1, modulePath: $2
 
-  #########
-  ######## TODO migrate to --porcelain=2
-  #########
   local remoteInteraction=0 managedBranch guessedBranched=()
-
-  [[ $1 == "push" || $1 == "pull" ]] && remoteInteraction=1
-
-#set -x
   unset MODULE_STATUS
-  local modulePath="$2"
-  local managedBranch="$3"
 
-  read initialized managed sha < <(module_info ${modulePath} initialized managed sha )
-#set +x
-  # TODO take care about ambiguous references like heads/master & tags/master
-  test -n ${managedBranch} && MODULE_STATUS[$MS_MANAGED_LINK]=${managedBranch}
+  local modulePath="$1"
+  local moduleSha
 
-#  set -x
+  [[ -z ${modulePath} ]] && panic "$FUNCNAME() missed parameter 'path'"
+
+  local caller=$2
+  [[ $caller == push || $caller == pull ]] && remoteInteraction=1
+
+  read initialized managedAlias < <(module_info ${modulePath} initialized managed )
+  if [[ $managedAlias == unmanaged ]]; then
+    MODULE_STATUS[$MS_UNMANAGED]=1
+  else
+    local i=0
+    for alias in g_lego_aware_tokens_gitmodules ; do
+      local value=$(get_lego_setting_at_mode "${key}" "submodule" "${mode}")
+    done
+
+    MODULE_STATUS[$MS_MANAGED]=${managedAlias}
+  fi
+
+
   declare -a output
   if (( ! $initialized )) ; then
     MODULE_STATUS[$MS_UNINITIALIZED]=1
   else
-    while read line; do
+    MODULE_STATUS[$MS_UNINITIALIZED]=0
+
+    while read switch line; do
+#      echo $switch >&2
+#      echo $line >&2
       # parse line into array or words
       output=(${line})
 
-      case ${output[0]} in
-        # first line in the output
-        \#\#)
-          if [[ -n ${output[1]} ]]; then
+      case $switch in
+        \#)
+          case ${output[0]} in
+            branch\.oid)
+              moduleSha=${output[1]}
+              MODULE_STATUS[$MS_MODULE_LINK]=${moduleSha:0:7}
+              ;;
+            branch\.head)
 
-            if [[ ${output[1]} == HEAD ]]; then
-              MODULE_STATUS[$MS_DETACHED]=1
-              ## TODO make correctly via git config --get abbrev-short-length
-              MODULE_STATUS[$MS_GUESSED_SHA]=${sha:0:7}
-            else
-              MODULE_STATUS[$MS_BRANCH_INFO]="${output[1]}"
-            fi
-          fi
+              if [[ ${output[1]} == \(detached\) ]]; then
+                MODULE_STATUS[$MS_DETACHED]=1
+                ## git status --porcelain does not shows get tag version
+                ## so we need to use 'old good' git status --long for that
+                local moduleLink
+                while read -a output; do
+                  # find out tag or has
+                  # format HEAD detached at 23a34b or HEAD detached at refs/heads/master
+                  local len=${#output[@]}
+                  moduleLink=${output[$len-1]}
+                done < <(git status --long -uno | grep "HEAD detached at")
 
-          # TODO will not working in locale differs form en_US (or en_XX)
-          # TODO porcelain=2 will help!
-          if (( $remoteInteraction )); then
-  #          local remoteRef="${globals[$G_LEGO_REMOTE]}/"
-            local ahead=$(echo $line | grep -Eo "ahead [[:digit:]]" | grep -Eo "[[:digit:]]")
-            (( ! $? )) && (( $ahead )) && MODULE_STATUS[$MS_PUSHABLE]=1
-          fi
+                if [[ -n ${moduleLink} ]] ; then
+                  MODULE_STATUS[$MS_MODULE_LINK]="${moduleLink}"
+                  if [[ "$moduleLink" == "$moduleSha" ]] ; then
+                    # specifies it's plain sha, not tag or detached head
+                    MODULE_STATUS[$MS_DETACHED]=2
+                  fi
+                fi
+              else
+                MODULE_STATUS[$MS_MODULE_LINK]=${output[1]}
+              fi
+              ;;
+            branch\.upstream)
+              MODULE_STATUS[$MS_UPSTREAM]=${output[1]}
+              ;;
+            branch\.ab)
+              MODULE_STATUS[$MS_UPSTREAM_AHEAD]=${output[1]:1}
+              MODULE_STATUS[$MS_UPSTREAM_BEHIND]=${output[2]:1}
+              ;;
+          esac
           ;;
-        *)
-#          if [[ "${output[1]}" == "${moduleName}" ]]; then
-#            #instead of file add
-#          fi
-          local fChar=${line:0:1} sChar=${line:1:1}
-          [[ ${fChar} == "?" ]] && MODULE_STATUS[$MS_UNTRACKED]=$(( MODULE_STATUS[$MS_UNTRACKED] + 1 ))
-          if [[ ${fChar} == M || ${sChar} == M ]] ; then MODULE_STATUS[$MS_MODIFIED]=$(( MODULE_STATUS[$MS_MODIFIED] + 1 )) ; MODULE_STATUS[$MS_COMMITABLE]=1; fi
-          if [[ ${fChar} == A || ${sChar} == A ]] ; then MODULE_STATUS[$MS_ADDED]=$(( MODULE_STATUS[$MS_ADDED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1; fi
-          if [[ ${fChar} == D || ${sChar} == D ]] ; then MODULE_STATUS[$MS_DELETED]=$(( MODULE_STATUS[$MS_DELETED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1; fi
-          if [[ ${fChar} == R || ${sChar} == R ]] ; then MODULE_STATUS[$MS_RENAMED]=$(( MODULE_STATUS[$MS_RENAMED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1; fi
-          if [[ ${fChar} == C || ${sChar} == C ]] ; then MODULE_STATUS[$MS_COPIED]=$(( MODULE_STATUS[$MS_COPIED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1; fi
-          if [[ ${fChar} == U || ${sChar} == U ]] ; then MODULE_STATUS[$MS_UNMERGED]=$(( MODULE_STATUS[$MS_UNMERGED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1; fi
-        ;;
+
+        \?)
+          MODULE_STATUS[$MS_UNTRACKED]=$(( MODULE_STATUS[$MS_UNTRACKED] + 1 ))
+          ;;
+
+        1|2)
+          local fileState=${output[0]}
+          local fChar=${fileState:0:1} sChar=${fileState:1:1}
+          if [[ ${fChar} == M || ${sChar} == M ]] ; then MODULE_STATUS[$MS_MODIFIED]=$(( MODULE_STATUS[$MS_MODIFIED] + 1 )) ; MODULE_STATUS[$MS_COMMITABLE]=1;
+          elif [[ ${fChar} == A || ${sChar} == A ]] ; then MODULE_STATUS[$MS_ADDED]=$(( MODULE_STATUS[$MS_ADDED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1;
+          elif [[ ${fChar} == D || ${sChar} == D ]] ; then MODULE_STATUS[$MS_DELETED]=$(( MODULE_STATUS[$MS_DELETED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1;
+          elif [[ ${fChar} == R || ${sChar} == R ]] ; then MODULE_STATUS[$MS_RENAMED]=$(( MODULE_STATUS[$MS_RENAMED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1;
+          elif [[ ${fChar} == C || ${sChar} == C ]] ; then MODULE_STATUS[$MS_COPIED]=$(( MODULE_STATUS[$MS_COPIED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1;
+          elif [[ ${fChar} == U || ${sChar} == U ]] ; then MODULE_STATUS[$MS_UNMERGED]=$(( MODULE_STATUS[$MS_UNMERGED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1; fi
+          ;;
+
       esac
-    done < <(git status -u --porcelain -b)
 
-    guess_branch_from_hash HEAD "$modulePath"
+    done < <(git status -u --porcelain=2 -b)
 
-    ## git status --porcelain does not shows get tag version
-    if (( MODULE_STATUS[$MS_DETACHED] )); then
-      while read -a output; do
-        # find out tag or has
-        # format HEAD detached at 23a34b or
-#        set -x
-        local len=${#output[@]}
-        local tag=${output[$len-1]}
-#        set +x
-      done < <(git status --long -uno | grep "HEAD detached at")
-#    else
-
-    fi
-
-#    if [[ ${guessedBranched} != ${managedBranch} ]]; then
-#      MODULE_STATUS[$MS_MISMATCHED]=1
-#      MODULE_STATUS[$MS_GUESSED_BRANCHES]="${guessedBranched}"
-#    fi
+    guess_branch_from_hash "$modulePath" HEAD
 
   fi
 #  echo "$FUNCNAME(): ${MODULE_STATUS[@]}"
+}
+
+
+populate_managed_status() {
+  local subModule="$1"
+  local managed=0
+  local unmanaged=1
+
+  local managedLink=$(git config --file .gitmodules --get submodule."${subModule}".branch)
+  if [[ -z $managedLink ]]; then
+    managedLink=$(git config --file .gitmodules --get submodule."${subModule}".pinned)
+  else
+    managed=1 # branch
+  fi
+
+  MODULE_STATUS[$MS_MANAGED]=${managed}
+  MODULE_STATUS[$MS_MANAGED_LINK]=${managedLink}
 }
 
 
@@ -783,32 +789,16 @@ function module_up() {
 }
 
 
-#function possible_branch_from_parent_config() {
-#  local ret
-#  local repoName=$(get_repo_name_from_path)
-#
-#  if [[ ${repoName} != / ]]; then
-#    pushd . &> /dev/null
-#    module_up
-#    ret=$(git config -f .gitmodules --get "submodule.$repoName.branch")
-#    popd &> /dev/null
-#  else
-#    ret=/
-#  fi
-#  echo ${ret}
-#}
-
 function guess_branch_from_hash() {
-#      set -x
-  local ret hash=${1:-HEAD}
+  local modulePath="$1"
+  local ret hash=${2:-HEAD}
   local branches=()
   local tags=()
-  local modulePath="$2"
   # const
   local legoRemote=${globals[$G_LEGO_REMOTE]}
 
   if [[ ${modulePath} != / ]]; then
-    while read sha commit ref; do
+    while read moduleSha commit ref; do
 #      echo $ref >&2
       refParsed=$(git rev-parse --abbrev-ref=loose ${ref})
       found=0
@@ -943,7 +933,7 @@ function prepare_checkout_level() {
 
   if (( $toBeDeleted )); then
 
-    module_porcelain_status checkout
+    module_porcelain_status "${modulePath}" checkout
 
     if [[ 0 == ${force} &&  (1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[MS_PUSHABLE]}) ]]; then
       dieMsg+="Module '$moduleName' has not committed or not pushed changes, but intended to be deleted as it does not exists in revision '$revision'"
@@ -1175,20 +1165,19 @@ function _m_finalize() {
 
 function _m_mls() {
   local ret=0
-#  set -x
   while read -a module; do
     subModule="${module[0]}"
     localPath="${module[1]}"
     pushd "$localPath" &> /dev/null
     _m_pmd
 
+# TODO recursive is not defined. should be parameter?
     if (( $recursive )); then
       _m_mls && ret=1
     fi
 
     popd &> /dev/null
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
-#  set +x
   return ${ret}
 }
 
@@ -1289,7 +1278,6 @@ function _m_up() {
 }
 
 
-
 function _m_down() {
   local path="$1"
   local doCd="$2"
@@ -1334,10 +1322,12 @@ function _m_pwd() {
   fi
 }
 
+
 function _m_git_dir() {
   local url=$(git rev-parse --git-dir)
   echo ${url}
 }
+
 
 function _m_root() {
   local doCd="$1"
@@ -1357,6 +1347,7 @@ function _m_root() {
     echo "${root}"
   fi
 }
+
 
 #
 # Boolean treated as it does in Java/javascript where true == 1|false == 0,
@@ -1378,6 +1369,7 @@ READ_boolean() {
   esac
   echo ${input}
 }
+
 
 #
 # Print a submodule configuration setting
@@ -1408,18 +1400,26 @@ resolve_module_managed() {
   local module_name=$1
   local module_path=$2
   local mode="${3:-$g_lego_mode}"
-  local ret=0
+  local ret=()
+  local found=0
+
   for token in "${g_lego_aware_tokens_gitmodules[@]}" ; do
     local key="${module_name}.${token}"
     local value=$(get_lego_setting_at_mode "${key}" "submodule" "${mode}")
 
     if (( ${#value} )) ; then
-      ret=1
-      [[ ${token} == pinned ]] && ret=2
+      ret+=("${token}")
+      ret+=("${value}")
+      found=1
       break
     fi
   done
-  echo ${ret}
+
+  if (( ! $found )); then
+      ret+=("unmanaged")
+      ret+=("n/a")
+  fi
+  echo "${ret[@]}"
 }
 
 
@@ -1485,6 +1485,7 @@ get_lego_mode() {
   echo ${results[@]}
 }
 
+
 investigate_lego_mode() {
   local mode
   local ambiguous
@@ -1528,6 +1529,7 @@ investigate_lego_mode() {
   popd > /dev/null
   echo "${mode:-empty}"
 }
+
 
 check_ambiguous_lego_mode() {
   local val=$1

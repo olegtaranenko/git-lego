@@ -154,8 +154,10 @@ function prepare_commit_level() {
   local repoBranch
   local ret=0   # return code, 0 - the repo is syncronized
   local childRet # child return code
+  local modulePath=$3
 
-  module_porcelain_status commit
+  ## TODO changed params order
+  module_porcelain_status "${modulePath}" commit
 
   local applied=1
   if (( ${MODULE_STATUS[$MS_COMMITABLE]} )); then
@@ -180,14 +182,14 @@ function prepare_commit_level() {
       subRepoPath="${levelPath}"/"${localPath}"
 
       pushd "${subRepoPath}" &> /dev/null
-      local modulePath="$3" #/$subModule"
-      if [[ ${modulePath:(-1)} != "/" ]]; then
-        modulePath+="/"
+      local subModulePath="$3" #/$subModule"
+      if [[ ${subModulePath:(-1)} != "/" ]]; then
+        subModulePath+="/"
       fi
-      modulePath+="$subModule"
+      subModulePath+="$subModule"
 #      stopMachine=$(( $stopMachine + 1 ))
 #      (( $stopMachine > 2 )) && exit 3
-      prepare_commit_level "${subRepoPath}" "${subModule}" "${modulePath}"
+      prepare_commit_level "${subRepoPath}" "${subModule}" "${subModulePath}"
       childRet=$?
       (( $childRet > $ret )) && ret = ${childRet}
       popd  &> /dev/null
@@ -206,6 +208,7 @@ cmd_default() {
   [[ -z ${commitMessage} ]] && onEmptyMessage="commit for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
 
   pushd ${resolvedPath} &>/dev/null
+  # TODO is it not than $modulePath
   baseModulePath=$(pmd)
   prepare_commit_level "${resolvedPath}" "${moduleName}" "${baseModulePath}"
 
