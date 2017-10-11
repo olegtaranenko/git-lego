@@ -18,8 +18,10 @@ g_module_paths=()
 g_module_inited=()
 g_module_shas=()
 g_module_managed=()
+g_managed_refnames=()
 
 declare -a g_lego_aware_tokens_gitmodules=("branch"  "pinned" "sha")
+declare NA="n/a"
 
 # keeps some global settings during git-lego script execution
 # initialized at startup
@@ -112,7 +114,7 @@ MS_MISMATCHED=18
 MS_UPDATEABLE=19
 #
 # Outer module hint for inner one, symbolic reference (tag or branch) or just bare sha1, the inner module expected to be.
-MS_MANAGED_LINK=20
+MS_MANAGED_REFNAME=20
 #
 # One or more branches referencing on the inner:HEAD, which can be synchronized to the branch after attaining without getting outer repo dirty
 # strings' array
@@ -125,7 +127,7 @@ MS_GUESSED_TAGS=23
 # Modules symbolic name, or sha, if module HEAD is detached.
 # For getting this info the 'git status --long' command is used. git status takes this information from git reflog,
 # then this is not 100% reliable. For example in some cases it can show wrong last 'git tag'
-MS_MODULE_LINK=24
+MS_MODULE_REFNAME=24
 
 # Module's upstream branch
 MS_UPSTREAM=25
@@ -146,7 +148,7 @@ MFS_MODULE_PATH=4
 MFS_MODULE_INITIALIZED=5
 MFS_MODULE_SHA=6
 MFS_MODULE_MANAGED=7
-MFS_MANAGED_LINK=8
+MFS_MANAGED_REFNAME=8
 
 # set this to workaround expr problems in shFlags on freebsd
 #if uname -s | egrep -iq 'bsd'; then export EXPR_COMPAT=1; fi
@@ -208,8 +210,8 @@ umbrella_bootstrap (){
   read g_lego_mode implicit < <(get_lego_mode 1)
 #  echo $g_lego_mode ${implicit:-2}
 
-  module_startup_investigate "${umbrellaRepoName}" "/" ".git" "${umbrellaRepoDir}" "/" 1 "${sha}" 1
-  cat ${globals[$G_MODULES_FN]} >&2
+  module_startup_investigate "${umbrellaRepoName}" "/" ".git" "${umbrellaRepoDir}" "/" 1 "${sha}" 1 "$NA"
+#  cat ${globals[$G_MODULES_FN]} >&2
 #  echo ${g_module_name[@]} >&2
 #  echo ${g_module_inited[@]} >&2
 #  echo ${g_module_managed[@]} >&2
@@ -233,16 +235,15 @@ function module_startup_investigate() {
   g_module_inited+=($6)
   g_module_shas+=($7)
   g_module_managed+=($8)
+  g_managed_refnames+=($9)
 
   while read -a module
   do
-    local subModule="${module[MFS_MODULE_NAME]}"
+    local subModule=${module[$MFS_MODULE_NAME]}
     local localPath="${module[MFS_RELATIVE_PATH]}"
     local is_initialized=1
     local moduleStatus=($(git submodule status -- ${subModule}))
-    set -x
     local managed=($(resolve_module_managed "${localPath}" "${subModule}"))
-    set +x
 
     pushd ${localPath} &> /dev/null
     module+=($(get_repo_git_dir))             # MFS_GIT_DIR=2
@@ -264,7 +265,7 @@ function module_startup_investigate() {
     fi
     module+=(${sha})                          # MFS_MODULE_SHA 6
     module+=("${managed[0]}")                 # MFS_MODULE_MANAGED 7
-    module+=("${managed[1]}")                 # MFS_MANAGED_LINK 8
+    module+=("${managed[1]}")                 # MFS_MANAGED_REFNAME 8
 
     module_startup_investigate ${module[@]}
     popd &> /dev/null
@@ -599,6 +600,9 @@ function module_info () {
       managed)
         results+=(${g_module_managed[$index]})
         ;;
+      refname)
+        results+=(${g_managed_refnames[$index]})
+        ;;
       *)
         ret=2
         break
@@ -667,25 +671,36 @@ function module_porcelain_status() {
 
   local modulePath="$1"
   local moduleSha
+  local managed
 
   [[ -z ${modulePath} ]] && panic "$FUNCNAME() missed parameter 'path'"
 
   local caller=$2
   [[ $caller == push || $caller == pull ]] && remoteInteraction=1
 
-  read initialized managedAlias < <(module_info ${modulePath} initialized managed )
+  read initialized managedAlias managedRefname < <(module_info ${modulePath} initialized managed refname)
   if [[ $managedAlias == unmanaged ]]; then
     MODULE_STATUS[$MS_UNMANAGED]=1
   else
-    local i=0
-    for alias in g_lego_aware_tokens_gitmodules ; do
-      local value=$(get_lego_setting_at_mode "${key}" "submodule" "${mode}")
+    local index=0
+    for alias in "${g_lego_aware_tokens_gitmodules[@]}" ; do
+      if [[ $alias == $managedAlias ]]; then
+        break
+      fi
+      index=$(( $index + 1 ))
     done
 
-    MODULE_STATUS[$MS_MANAGED]=${managedAlias}
+    MODULE_STATUS[$MS_UNMANAGED]=0
+    MODULE_STATUS[$MS_MANAGED]=$index
+
+    if [[ -n $managedRefname && $managedRefname != "$NA" ]]; then
+      MODULE_STATUS[$MS_MANAGED_REFNAME]=${managedRefname}
+    fi
+
   fi
 
 
+  local moduleRefname
   declare -a output
   if (( ! $initialized )) ; then
     MODULE_STATUS[$MS_UNINITIALIZED]=1
@@ -703,7 +718,8 @@ function module_porcelain_status() {
           case ${output[0]} in
             branch\.oid)
               moduleSha=${output[1]}
-              MODULE_STATUS[$MS_MODULE_LINK]=${moduleSha:0:7}
+              # TODO do this at bootstrap
+              MODULE_STATUS[$MS_MODULE_REFNAME]=${moduleSha:0:7}
               ;;
             branch\.head)
 
@@ -711,23 +727,34 @@ function module_porcelain_status() {
                 MODULE_STATUS[$MS_DETACHED]=1
                 ## git status --porcelain does not shows get tag version
                 ## so we need to use 'old good' git status --long for that
-                local moduleLink
                 while read -a output; do
                   # find out tag or has
                   # format HEAD detached at 23a34b or HEAD detached at refs/heads/master
-                  local len=${#output[@]}
-                  moduleLink=${output[$len-1]}
+                  local parsedLength=${#output[@]}
+                  moduleRefname=${output[$parsedLength-1]}
                 done < <(git status --long -uno | grep "HEAD detached at")
 
-                if [[ -n ${moduleLink} ]] ; then
-                  MODULE_STATUS[$MS_MODULE_LINK]="${moduleLink}"
-                  if [[ "$moduleLink" == "$moduleSha" ]] ; then
+                if [[ -n ${moduleRefname} ]] ; then
+                  MODULE_STATUS[$MS_MODULE_REFNAME]="${moduleRefname}"
+
+                  local plainSha=$( git rev-parse "$moduleRefname" )
+                  if [[ "$moduleRefname" == "$plainSha" ]] ; then
                     # specifies it's plain sha, not tag or detached head
                     MODULE_STATUS[$MS_DETACHED]=2
                   fi
                 fi
               else
-                MODULE_STATUS[$MS_MODULE_LINK]=${output[1]}
+                MODULE_STATUS[$MS_DETACHED]=0
+                MODULE_STATUS[$MS_MODULE_REFNAME]=${output[1]}
+              fi
+
+              if [[ ${MODULE_STATUS[$MS_DETACHED]} == ${MODULE_STATUS[$MS_MANAGED]}  &&  ${MODULE_STATUS[$MS_MANAGED_REFNAME]} != ${MODULE_STATUS[$MS_MODULE_REFNAME]} ]]; then
+                MODULE_STATUS[$MS_MISMATCHED]=1
+                if (( ${MODULE_STATUS[$MS_DETACHED]} > 0 )) && [[ -n ${managedRefname} ]]; then
+                  calculate_ab_for_tags "${managedRefname}"
+                fi
+              else
+                MODULE_STATUS[$MS_MISMATCHED]=0
               fi
               ;;
             branch\.upstream)
@@ -759,27 +786,10 @@ function module_porcelain_status() {
 
     done < <(git status -u --porcelain=2 -b)
 
-    guess_branch_from_hash "$modulePath" HEAD
+    guess_refnames_of_commit "$modulePath" HEAD
 
   fi
 #  echo "$FUNCNAME(): ${MODULE_STATUS[@]}"
-}
-
-
-populate_managed_status() {
-  local subModule="$1"
-  local managed=0
-  local unmanaged=1
-
-  local managedLink=$(git config --file .gitmodules --get submodule."${subModule}".branch)
-  if [[ -z $managedLink ]]; then
-    managedLink=$(git config --file .gitmodules --get submodule."${subModule}".pinned)
-  else
-    managed=1 # branch
-  fi
-
-  MODULE_STATUS[$MS_MANAGED]=${managed}
-  MODULE_STATUS[$MS_MANAGED_LINK]=${managedLink}
 }
 
 
@@ -789,7 +799,26 @@ function module_up() {
 }
 
 
-function guess_branch_from_hash() {
+calculate_ab_for_tags() {
+#  echo "$FUNCNAME()" >&2
+  local rev=$1
+  local against=${2:-HEAD}
+  local ret=()
+  local reachable=$( git merge-base "$rev" "$against" | wc -l 2>/dev/null )
+  if (( $reachable )); then
+    local out=$( git rev-list "$against".."$rev" | wc -l 2>/dev/null )
+    local a=$(( $out + 0 ))
+    if (( $a )); then
+      MODULE_STATUS[$MS_UPSTREAM_AHEAD]=$a
+    else
+      out=$( git rev-list "$rev".."$against" | wc -l 2>/dev/null )
+      MODULE_STATUS[$MS_UPSTREAM_BEHIND]=$(( $out + 0 ))
+    fi
+  fi
+}
+
+
+function guess_refnames_of_commit() {
   local modulePath="$1"
   local ret hash=${2:-HEAD}
   local branches=()
@@ -803,7 +832,7 @@ function guess_branch_from_hash() {
       refParsed=$(git rev-parse --abbrev-ref=loose ${ref})
       found=0
 
-      if [[ ${ref#refs/tags/}  == ${refParsed} ]] ; then
+      if [[ ${ref#refs/tags/} == ${refParsed} ]] ; then
         for tag in ${tags[@]}; do
           if [[ "${tag}" = ${refParsed} ]]; then
             found=1
@@ -827,7 +856,7 @@ function guess_branch_from_hash() {
           refParsed=${refParsed#${legoRemote}/}
 
 
-        elif [[ ${ref#refs/remotes/} == ${refParsed} ]]; then
+        elif [[ ${ref#refs/remotes/} == $refParsed ]]; then
 
           # filter out heads/remotes/other_remote/master
           local otherRemote=${ref#refs/remotes/} # other_remote/master
@@ -854,13 +883,10 @@ function guess_branch_from_hash() {
       fi
 
     done < <(git for-each-ref --points-at=${hash})
-#      set +x
 
     MODULE_STATUS[$MS_GUESSED_BRANCHES]="${branches[@]}"
     MODULE_STATUS[$MS_GUESSED_TAGS]="${tags[@]}"
   fi
-#  echo ${branches[@]} >&2
-#  echo "${branches[@]}"
 }
 
 
@@ -1417,7 +1443,7 @@ resolve_module_managed() {
 
   if (( ! $found )); then
       ret+=("unmanaged")
-      ret+=("n/a")
+      ret+=("$NA")
   fi
   echo "${ret[@]}"
 }
@@ -1464,7 +1490,7 @@ get_lego_setting_concrete() {
     unset file_option
   fi
 
-  echo $(git config ${file_option} --get "${section}.$key") 2>/dev/null
+  echo $(git config ${file_option} --get "${section}.$key" 2>/dev/null)
 }
 
 
