@@ -14,12 +14,11 @@ NAME:
 
 SYNOPSIS:
     '${FLAGS_PREFIX} [options] [-v|--verbose]'
-    '${FLAGS_PREFIX} [--local|--global|--system] --lego-mode[[=| [versioned|solo] [--force|-f]' # view or set lego mode
+    '${FLAGS_PREFIX} [--force|-f] [--all|-a|--solo|--versioned] [--[no-]recursive|-R|-r] [<module-path>]'
 
 DESCRIPTION:
 
 EXAMPLES:
-    '${FLAGS_PREFIX} -v .' -> show verbose status for current module only
 
 
 OPTIONS:
@@ -32,7 +31,7 @@ EOF
 typeset verbose=0
 typeset afterDash=()
 typeset stopOptions=0
-typeset initialPath updateMessage updateTemplate doRecursive=1  doForce=1 
+typeset initialPath doRecursive=1 doForce=1 cleanSolo=0 cleanVersioned=0
 
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
@@ -64,6 +63,17 @@ while [[ -n $1 ]]; do
       doForce=0
       ;;
 
+    --all|-a)
+      cleanSolo=1
+      cleanVersioned=1
+      ;;
+    --solo)
+      cleanSolo=1
+      ;;
+    --versioned)
+      cleanVersioned=1
+      ;;
+
     *)
       if (( $stopOptions )); then
         if [[ -z ${1%%-*} ]]; then
@@ -84,67 +94,74 @@ while [[ -n $1 ]]; do
 done
 #set +x
 
+declare modesMask=0
+
+#set -x
+if (( ! $cleanSolo )) && (( ! $cleanVersioned )); then
+  currentMode="${g_lego_mode}"
+  case $currentMode in
+    solo)
+      cleanSolo=1
+      ;;
+    versioned)
+      cleanVersioned=1
+      ;;
+    *)
+      die "Looks like the repositories already cleaned. '${FLAGS_PREFIX} --help' for other options"
+  esac
+fi
+
+if (( $cleanSolo )) || (( $cleanVersioned )); then
+  (( $cleanSolo )) && modesMask=$(( $modesMask | $G_MODE_MASK_SOLO ))
+  (( $cleanVersioned )) && modesMask=$(( $modesMask | $G_MODE_MASK_VERSIONED ))
+fi
 
 ################################ SCRIPT SPECIFIC METHODS ################################
-update_level() {
+
+
+clean_level() {
 #echo "$FUNCNAME()" $@ >&2
-  local levelFilePath="$1"
-  [[ -z ${levelFilePath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
-  local moduleName="$2"
-  local modulePath="$3"
-  local parentFullPath=$4
-  local repoBranch
-  local ret=0   # return code
+  local levelPath="$1"
+  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+  local ret=0   # return code, 0 - the repo is syncronized
   local childRet # child return code
 
-  if [[ $modulePath != / ]]; then
-    module_porcelain_status "${modulePath}" update
-    local uninitialized=${MODULE_STATUS[$MS_UNINITIALIZED]}
-    local unmanaged=${MODULE_STATUS[$MS_UNMANAGED]}
-    local applied=0
-
-    drop_to_affected "$levelFilePath"
-    if (( ! $? )) ; then
-      applied=1
-      if (( ! $unmanaged )) || (( $doForce )); then
-        pushd "${parentFullPath}" >/dev/null
-        if (( $uninitialized )); then
-          cw_echo "About to upddate module $moduleName..."
-          git submodule update --init -- "${moduleName}"
-          (( ! $? )) && cw_echo "...OK!"
-        fi
-        popd >/dev/null
-        if (( ! $unmanaged )) ; then
-          local managedRefname=${MODULE_STATUS[$MS_MANAGED_REFNAME]}
-          if [[ -n "${managedRefname}" ]] ; then
-            cw_echo "About to checkout module $managedRefname for $moduleName..."
-            git checkout "${managedRefname}"
-            (( ! $? )) && cw_echo "...OK!"
-          fi
-        fi
-      fi
+#  set -x
+#  pwd >&2
+  if (( $cleanVersioned )); then
+    if [[ -e .gitlego ]]; then
+      rm -f .gitlego
     fi
   fi
-
 
   if [ -f .gitmodules ]; then
     while read -a module; do
       childRet=0
-      moduleName="${module[0]}"
-      localPath="${module[1]}"
-      subRepoPath="${levelFilePath}"/"${localPath}"
-
-      local modulePath="$3"
+      local moduleName="${module[0]}"
+      local localPath="${module[1]}"
+      local subRepoPath="${levelPath}"/"${localPath}"
+      local modulePath="$2"
       if [[ ${modulePath:(-1)} != "/" ]]; then
         modulePath+="/"
       fi
+
       modulePath+="$moduleName"
+      read initialized < <( module_info ${modulePath} initialized )
 
-      pushd "${subRepoPath}" &> /dev/null
-      update_level "${subRepoPath}" "${moduleName}" "${modulePath}" "$levelFilePath"
-      childRet=$?
+      if (( $cleanSolo )); then
+        clean_git_config_section ${G_MODE_MASK_SOLO} lego
+      fi
 
-      (( $childRet > $ret )) && ret = ${childRet}
+      if (( $initialized )) ; then
+
+        clean_module_meta "${moduleName}" "${modesMask}"
+
+        pushd "${subRepoPath}" &> /dev/null
+        clean_level "${subRepoPath}" "${modulePath}"
+        childRet=$?
+
+        (( $childRet > $ret )) && ret = ${childRet}
+      fi
       popd  &> /dev/null
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
@@ -156,21 +173,15 @@ update_level() {
 # callback to detect what command should be called
 #
 #dispatch_subaction() {
-#  echo update
+#  echo clean
 #}
-
 cmd_default() {
-  typeset modulePath=$(resolve_module_path "${initialPath}" ".")
+  typeset modulePath=$(resolve_module_path "${initialPath}" /)
   read moduleName moduleFilePath < <(module_info "${modulePath}" "name" "path")
 
-  typeset affected=0
-  typeset onEmptyMessage
-  typeset skippedModules=()
-#  [[ -z ${updateMessage} ]] && onEmptyMessage="update for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
-
   pushd ${moduleFilePath} &>/dev/null
-  update_level "${moduleFilePath}" "${moduleName}" "${modulePath}"
-
+  clean_level "${moduleFilePath}" "${modulePath}"
   popd &>/dev/null
+
   umbrella_finalize
 }

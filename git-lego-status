@@ -116,6 +116,8 @@ function show_current_module_status {
   local modulePath="$3"
   local verboseMsg=([1]="path: $filePath")
 
+#  [[ $moduleName == macosx ]] && set -x
+
   oneLine="$modulePath"
   verboseMsg+=("url: "$(get_repo_url))
 
@@ -135,17 +137,17 @@ function show_current_module_status {
   local branchInfo=${MODULE_STATUS[$MS_BRANCH_INFO]}
   [[ -n ${branchInfo} ]] && [[ $branchInfo != HEAD ]] && oneLine+=", ${branchInfo}"
 
-  if (( ${MODULE_STATUS[$MS_UNTRACKED]} )); then
-    verboseIssues+="${verboseIssues:+ ,}untracked (${MODULE_STATUS[$MS_UNTRACKED]} files)"
-    infoIssues+="Nx${MODULE_STATUS[$MS_UNTRACKED]}"
-  fi
-  if (( ${MODULE_STATUS[$MS_ADDED]} )); then
-    verboseIssues+="${verboseIssues:+ ,}added (${MODULE_STATUS[$MS_ADDED]} files)"
-    infoIssues+="${infoIssues:+, }Ax${MODULE_STATUS[$MS_ADDED]}"
+  if (( ${MODULE_STATUS[$MS_MODIFIED_SUBMODULE]} )); then
+    verboseIssues+="${verboseIssues:+ ,}modified (${MODULE_STATUS[$MS_MODIFIED_SUBMODULE]} files)"
+    infoIssues+="${infoIssues:+, }Sx${MODULE_STATUS[$MS_MODIFIED_SUBMODULE]}"
   fi
   if (( ${MODULE_STATUS[$MS_MODIFIED]} )); then
     verboseIssues+="${verboseIssues:+ ,}modified (${MODULE_STATUS[$MS_MODIFIED]} files)"
     infoIssues+="${infoIssues:+, }Mx${MODULE_STATUS[$MS_MODIFIED]}"
+  fi
+  if (( ${MODULE_STATUS[$MS_ADDED]} )); then
+    verboseIssues+="${verboseIssues:+ ,}added (${MODULE_STATUS[$MS_ADDED]} files)"
+    infoIssues+="${infoIssues:+, }Ax${MODULE_STATUS[$MS_ADDED]}"
   fi
   if (( ${MODULE_STATUS[$MS_DELETED]} )); then
     verboseIssues+="${verboseIssues:+ ,}deleted (${MODULE_STATUS[$MS_DELETED]} files)"
@@ -162,6 +164,10 @@ function show_current_module_status {
   if (( ${MODULE_STATUS[$MS_UNMERGED]} )); then
     verboseIssues+="${verboseIssues:+ ,}unmerged (${MODULE_STATUS[$MS_UNMERGED]} files)"
     infoIssues+="${infoIssues:+, }Ux${MODULE_STATUS[$MS_UNMERGED]}"
+  fi
+  if (( ${MODULE_STATUS[$MS_UNTRACKED]} )); then
+    verboseIssues+="${verboseIssues:+ ,}untracked (${MODULE_STATUS[$MS_UNTRACKED]} files)"
+    infoIssues+="${infoIssues:+, }Nx${MODULE_STATUS[$MS_UNTRACKED]}"
   fi
 
   local uninitialized=${MODULE_STATUS[$MS_UNINITIALIZED]}
@@ -268,6 +274,7 @@ function show_current_module_status {
   if (( $verbose > 1 )) && [ -n ${args} ]; then
     git status ${args}
   fi
+#  set +x
 }
 
 
