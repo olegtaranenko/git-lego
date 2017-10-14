@@ -112,7 +112,6 @@ if [ -f ${COMPLETION_SH} ]; then
 
 # added by ${0##*/}
 . ${COMPLETION_SH}
-
 EOT
 
   fi
@@ -120,24 +119,24 @@ EOT
 fi
 
 exit
-
-CW_PROFILE=~/.consistentwork/.profile
+SCRIPT_DIR=$( dirname $0 )
+GL_PROFILE=~/$SCRIPT_DIR/.profile
 
 (( $verbose )) && echo "profile='${PROFILE}'"
 if [[ -e ${PROFILE} ]] || (( $force )); then
-  env | grep -s CWORK_HOME > /dev/null
+  env | grep -s GLORK_HOME > /dev/null
   if (( ! $? )); then
-    echo "CWORK_HOME environment is already installed to '$CWORK_HOME'" >&2
+    echo "GLORK_HOME environment is already installed to '$GLORK_HOME'" >&2
   else
-    echo "CWORK_HOME environment is not installed, by default will be used ~/consistentwork" >&2
-    echo "export CWORK_HOME=~/consistentwork" >> ${PROFILE}
+    echo "GLORK_HOME environment is not installed" >&2
+    echo "export GLORK_HOME=~/consistentwork" >> ${PROFILE}
   fi
-  echo $PATH | grep -E -o -q "\.consistentwork\/bin" > /dev/null
+  echo $PATH | grep -E -o -q "$SCRIPT_DIR" > /dev/null
   if (( $? )); then
     cat << EOF >> ${PROFILE}
 
-if [[ -d ~/.consistentwork && -f ${CW_PROFILE} ]]; then
-  . ${CW_PROFILE}
+if [[ -d ~/$SCRIPT_DIR && -f ${GL_PROFILE} ]]; then
+  . ${GL_PROFILE}
 fi
 EOF
 

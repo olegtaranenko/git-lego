@@ -316,7 +316,7 @@ cmd_legomode() {
       cw_echo "You are advised to make this settings explicitly via 'git lego config --lego-mode=$hint'"
     fi
 
-    # for caller from code, not from command line
+    # get feedback if necessary
     (( $doEcho )) && echo ${nextLegoMode}
   else
     case ${nextLegoMode} in
@@ -326,15 +326,17 @@ cmd_legomode() {
       *)
 ###################    SET & UNSET LEGO MODE ##################
         (( $doModeUnset )) && nextLegoMode=empty
-        currentMode=$( get_lego_setting "mode")
+        currentMode=${g_lego_mode}
 
-        if [[ ${currentMode} != ${nextLegoMode} ]] || (( $doModeUnset )); then
+set -x
+        if [[ ${currentMode} != ${nextLegoMode} ]] || (( $doModeUnset )) || (( $doForce )); then
 #          git config ${scope:---local} "lego.mode" ${nextLegoMode} true
 
           wipe_lego_setting_at_mode mode lego "${currentMode}"
 
 #          set_module_meta_mode "mode" "$nextLegoMode" "lego" 0 "$currentMode"
           set_module_meta_mode "mode" "$nextLegoMode" "lego" "." "$nextLegoMode"
+          set +x
 #          local afterScopeRemove=$( get_lego_setting "mode")
 #          if [[ ${afterScopeRemove} == ${currentMode} && ${doModeUnset} == 0 && $doForce ]] ; then
 #            cw_echo "Lego mode changing was not successful, maybe because of global or system settings"

@@ -1692,7 +1692,7 @@ set_module_meta_mode() {
 
 
 set_lego_setting_concrete() {
-#echo "$FUNCNAME()" $@ >&2
+echo "$FUNCNAME()" $@ >&2
   local key="$1"
   [[ -z $key ]] && panic "$FUNCNAME() missing parameter 'key'"
   local value="$2"
@@ -1722,9 +1722,7 @@ set_lego_setting_concrete() {
 #  pwd >&2
 #  echo "git config "$fileOption" "$section.$key" "$value"" >&2
 
-  if [[ $fileOption != '-f .gitlego' || -e .gitlego ]]; then
-    git config ${fileOption} --replace-all "$section.$key" $value
-  fi
+  git config ${fileOption} --replace-all "$section.$key" $value
   ret=$?
 
   if [[ -n ${worktree} ]]; then
