@@ -130,9 +130,9 @@ done
 
 
 if [[ -z $revision ]]; then
-  die "Parameter revision/branch required"
+  revision=HEAD
+#  die "Parameter revision/branch required"
 fi
-#set -x
 
 
 ################################ SCRIPT SPECIFIC METHODS ################################

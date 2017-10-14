@@ -199,35 +199,40 @@ function prepare_commit_level() {
 
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
-  typeset modulePath=$(resolve_module_path "${initialPath}" /)
-  read moduleName resolvedPath < <(module_info "${modulePath}" "name" "path")
+  typeset modulePath=$(resolve_module_path "${initialPath}" ".")
+
+set -x
+  read moduleName moduleFilePath initialized managed < <(module_info "${modulePath}" "name" "path" "initialized" "managed")
+set +x
 
   typeset affected=0
   typeset onEmptyMessage
   typeset skippedModules=()
-  [[ -z ${commitMessage} ]] && onEmptyMessage="commit for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
+  [[ -z ${commitMessage} ]] && onEmptyMessage="commit for ${globals[$G_ROOT_NAME]}, affected modules: "
 
-  pushd ${resolvedPath} &>/dev/null
-  # TODO is it not than $modulePath
-  baseModulePath=$(pmd)
-  prepare_commit_level "${resolvedPath}" "${moduleName}" "${baseModulePath}"
+  if (( $initialized )) && (( $managed )); then
 
-  if (( $affected )); then
-    if [[ -z ${commitMessage} && -n ${onEmptyMessage} ]]; then
-     args+=('--message' )
-     args+=(" \"${onEmptyMessage:0:(${#onEmptyMessage}-2)})\"")
+    pushd ${moduleFilePath} &>/dev/null
+    prepare_commit_level "${moduleFilePath}" "${moduleName}" "${modulePath}"
+
+    if (( $affected )); then
+      if [[ -z ${commitMessage} && -n ${onEmptyMessage} ]]; then
+       args+=('--message' )
+       args+=(" \"${onEmptyMessage:0:(${#onEmptyMessage}-2)})\"")
+      fi
+
+    #cat ${globals[$G_AFFECTED_MODULES]}
+
+      while read -a module; do
+        cd ${module[$MFS_FULL_PATH]}
+        level_verbose_about_to ${module[@]}
+    #    echo "git commit ${args[@]} ${#args[@]}"
+
+        (( $doAppendUntracked )) && git add . -A
+echo "${args[@]}" >&2
+        git commit "${args[@]}"
+      done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
     fi
-
-  #cat ${globals[$G_AFFECTED_MODULES]}
-
-    while read -a module; do
-      cd ${module[$MFS_FULL_PATH]}
-      level_verbose_about_to ${module[@]}
-  #    echo "git commit ${args[@]} ${#args[@]}"
-
-      (( $doAppendUntracked )) && git add . -A
-      git commit "${args[@]}"
-    done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
   fi
 
   if (( ${#skippedModules} )); then

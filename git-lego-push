@@ -104,9 +104,10 @@ done
 #
 
 function prepare_push_level() {
+echo "$FUNCNAME() $@" >&2
+  local levelPath="$1"
   local parentPushable=$4
   local currentPushable=0
-  local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local moduleName="$2"
   local modulePath="$3"
@@ -176,15 +177,14 @@ function prepare_push_level() {
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
   typeset modulePath=$(resolve_module_path "${initialPath}" /)
-  read moduleName modulePath < <(module_info "${modulePath}" "name" "path")
+  read moduleName moduleFilePath < <(module_info "${modulePath}" "name" "path")
   typeset skippedModules=()
   typeset affected=0
   typeset vetoed=0
 
-  pushd ${modulePath} &>/dev/null
-  baseModulePath=$(pmd)
+  pushd ${moduleFilePath} &>/dev/null
   #set -x
-  prepare_push_level "${modulePath}" "${moduleName}" "${baseModulePath}" "0"
+  prepare_push_level "${moduleFilePath}" "${moduleName}" "${modulePath}" "0"
   ret=$?
 
   if (( $ret )); then

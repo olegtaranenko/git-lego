@@ -292,7 +292,7 @@ warn() { echo "$@" >&2; }
 
 function die() {
   local msg="$1"
-  [ -z "${msg}" ] && "Something goes wrong."
+  [ -z "${msg}" ] && msg="Something goes wrong."
   cw_echo "${msg}"
   exit 1
 }
@@ -444,7 +444,7 @@ function get_module_path_up() {
 function level_verbose_about_to {
 
   local path=$4
-  local info="about to ${0##*/} module '${1}'"
+  local info="about to ${SUBCOMMAND} module '${1}'"
   # global
   verboseMsg=([1]="path: $path")
   verboseMsg+=("url: "$(get_repo_url))
@@ -832,9 +832,10 @@ function module_porcelain_status() {
         \?)
           local entryName="${output[0]}" #.gitmodule or .gitlego
           if [[ ${entryName} == \.gitmodules  || ${entryName} == \.gitlego ]]; then
-            MODULE_STATUS[$MS_MODIFIED_SUBMODULE]=$(( MODULE_STATUS[$MS_MODIFIED_SUBMODULE] + 1 ));
+            MODULE_STATUS[$MS_MODIFIED_SUBMODULE]=$(( MODULE_STATUS[$MS_MODIFIED_SUBMODULE] + 1 ))
+            MODULE_STATUS[$MS_COMMITABLE]=1
           else
-            MODULE_STATUS[$MS_UNTRACKED]=$(( MODULE_STATUS[$MS_UNTRACKED] + 1 ));
+            MODULE_STATUS[$MS_UNTRACKED]=$(( MODULE_STATUS[$MS_UNTRACKED] + 1 ))
           fi
           ;;
 
@@ -843,7 +844,7 @@ function module_porcelain_status() {
           local fChar=${fileState:0:1} sChar=${fileState:1:1}
           local submoduleToken=${output[1]}
           local entryName=${output[7]} #.gitmodule or .gitlego or submodule name
-          if [[ ${entryName} == \.gitmodules  || ${entryName} == \.gitlego  || ${submoduleToken:0:1} == S ]]; then MODULE_STATUS[$MS_MODIFIED_SUBMODULE]=$(( MODULE_STATUS[$MS_MODIFIED_SUBMODULE] + 1 ));
+          if [[ ${entryName} == \.gitmodules  || ${entryName} == \.gitlego  || ${submoduleToken:0:1} == S ]]; then MODULE_STATUS[$MS_MODIFIED_SUBMODULE]=$(( MODULE_STATUS[$MS_MODIFIED_SUBMODULE] + 1 )) ; MODULE_STATUS[$MS_COMMITABLE]=1;
           elif [[ ${fChar} == M || ${sChar} == M ]] ; then MODULE_STATUS[$MS_MODIFIED]=$(( MODULE_STATUS[$MS_MODIFIED] + 1 )) ; MODULE_STATUS[$MS_COMMITABLE]=1;
           elif [[ ${fChar} == A || ${sChar} == A ]] ; then MODULE_STATUS[$MS_ADDED]=$(( MODULE_STATUS[$MS_ADDED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1;
           elif [[ ${fChar} == D || ${sChar} == D ]] ; then MODULE_STATUS[$MS_DELETED]=$(( MODULE_STATUS[$MS_DELETED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1;
