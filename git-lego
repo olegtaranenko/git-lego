@@ -160,9 +160,9 @@ MFS_MANAGED_REFNAME=8
 #if uname -s | egrep -iq 'bsd'; then export EXPR_COMPAT=1; fi
 
 typeset g_lego_mode
-
+#set -x
 umbrella_bootstrap (){
-  legoRemote=$(get_submodule_config "lego.remote")
+  legoRemote=$(get_lego_setting "remote")
   local gitDir
   local umbrellaRepoDir
   local tmpDir=$(mktemp -q -d -t "$(basename "$0")" 2>/dev/null || mktemp -q -d)
@@ -737,11 +737,6 @@ function module_porcelain_status() {
 
 #  set -x
   read initialized managedAlias managedRefname < <(module_info ${modulePath} initialized managed refname)
-  if [[ -z $initialized ]]; then
-    set -x
-    echo ${g_module_inited[@]}
-    echo "$FUNCNAME(), modulePath: $1, caller: $2" >&2
-  fi
 
   if [[ $managedAlias == unmanaged ]]; then
     MODULE_STATUS[$MS_UNMANAGED]=1
@@ -1505,8 +1500,8 @@ resolve_module_managed() {
   local found=0
 
   for token in "${g_lego_aware_tokens_gitmodules[@]}" ; do
-    local key="${module_name}.${token}"
-    local value=$(get_lego_setting_at_mode "${key}" "${mode}" "submodule")
+    local section="submodule.${module_name}"
+    local value=$(get_lego_setting_mode "${token}" "$section" "${mode}")
 
     if (( ${#value} )) ; then
       ret+=("${token}")
@@ -1526,26 +1521,29 @@ resolve_module_managed() {
 ################################################### DELETING #################################################
 
 clean_git_config_section() {
-echo "$FUNCNAME()" $@ >&2
+#echo "$FUNCNAME()" $@ >&2
   local legoModesMask=$1
   [[ -z ${legoModesMask} ]] && panic "$FUNCNAME()... parameter 'modesMask' is required"
   local section=$2
   [[ -z ${section} ]] && panic "$FUNCNAME()... parameter 'section' is required"
-  local fileOptions
+  local fileOption
 
   local index=0
   for mode in ${g_lego_modes[@]}; do
     local bitIndex=$((1 << $index))
     if (( $bitIndex & $legoModesMask )); then
       if [[ ${mode} == versioned ]]; then
-        fileOptions="-f .gitlego"
+        fileOption="-f .gitlego"
         if [[ ${section} == lego ]]; then
           section=core
         fi
       elif [[ ${mode} == solo && ${section} == core ]]; then
         section=lego
       fi
-      git config ${fileOptions} --remove-section "${section}" 2>/dev/null
+
+      if [[ $fileOption != '-f .gitlego' || -e .gitlego ]]; then
+        git config ${fileOption} --remove-section "${section}" 2>/dev/null
+      fi
     fi
     index=$(( $index + 1 ))
   done
@@ -1558,25 +1556,26 @@ clean_module_meta_mode() {
 #pwd >&2
   local mode=$1
   local moduleName=$2
+  local worktree=$3
 
+  local section="submodule.${moduleName}"
   for token in ${g_lego_aware_tokens_gitmodules[@]}; do
-    local key="${moduleName}.${token}"
-
-    wipe_lego_setting_at_mode "${key}" "${mode}" "submodule"
+    wipe_lego_setting_at_mode "${token}" "${section}" "${mode}" "${worktree}"
   done
 }
 
 
-clean_module_meta() {
+clean_module_meta_mask() {
 #echo "$FUNCNAME()" $@ >&2
   local moduleName=$1     # required
   local legoModesMask=${2:-0} # required as well, by default - nothing wiped
+  local worktree=$3
 
   local index=0
   for mode in ${g_lego_modes[@]}; do
     local bitIndex=$((1 << $index))
     if (( $bitIndex & $legoModesMask )); then
-      clean_module_meta_mode "$mode" "$moduleName"
+      clean_module_meta_mode "$mode" "$moduleName" "$worktree"
     fi
     index=$(( $index + 1))
   done
@@ -1586,130 +1585,225 @@ clean_module_meta() {
 wipe_lego_setting_at_mode() {
 #echo "$FUNCNAME()" $@ >&2
   local key=$1
-  local mode=${2:-${g_lego_mode}}
-  local section=$3
+  local section=$2
+  local mode=${3:-${g_lego_mode}}
+  local worktree=${4:-.}
   local value
 
   if [[ ${mode} == solo ]] ; then
-    value=$( wipe_lego_setting_concrete "$1" "${section}" )
+    wipe_lego_setting_concrete "$1" "${section}" "$worktree" "--local"
   elif [[ ${mode} == versioned ]] ; then
-    value=$( wipe_lego_setting_concrete "$1" "${section}" "-f .gitlego" )
-    value=$( wipe_lego_setting_concrete "$1" "${section}" "-f .gitmodules" )
+    wipe_lego_setting_concrete "$1" "${section}" "$worktree" "-f .gitlego"
+    if [[ -z ${section##submodule.*} ]] ; then
+      wipe_lego_setting_concrete "$1" "${section}" "$worktree" "-f .gitmodules"
+    fi
   fi
 }
+
 
 wipe_lego_setting_concrete() {
 #echo "$FUNCNAME()" $@ >&2
   local key="$1"
   [[ -z $key ]] && panic "$FUNCNAME() missing parameter 'key'"
-  local file_option="${3---}"
   local section="${2:-core}"
-  if [[ -z "${file_option##--*}" ]] && [[ ${section} == core ]] ; then
+  local worktree="${3:-.}"
+  local fileOption="${4---}"
+
+  if [[ $worktree == . ]]; then
+    unset worktree
+  fi
+
+  if [[ -z "${fileOption##--*}" &&  ${section} == core ]] ; then
     section=lego
+  elif [[ -n "${fileOption##--*}" &&  ${section} == lego ]] ; then
+    section=core
   fi
 
-  if [[ ${file_option} == -- ]]; then
-    unset file_option
+  if [[ ${fileOption} == -- ]]; then
+    unset fileOption
   fi
 
-  git config ${file_option} --unset "${section}.$key"  2>/dev/null
+
+  if [[ -n ${worktree} ]]; then
+    pushd "$worktree" >/dev/null
+  fi
+
+  if [[ $fileOption != '-f .gitlego' || -e .gitlego ]]; then
+    git config ${fileOption} --unset-all "${section}.$key"  2>/dev/null
+  fi
+  ret=$?
+
+  wipe_section_if_empty "$section" "$fileOption"
+
+  if [[ -n ${worktree} ]]; then
+    popd >/dev/null
+  fi
+
 }
+
+
+wipe_section_if_empty () {
+#echo "$FUNCNAME()" $@ >&2
+  local section=$1
+  local fileOption=${2:---}
+
+  if [[ -z "${fileOption##--*}" &&  ${section} == core ]] ; then
+    section=lego
+  elif [[ -n "${fileOption##--*}" &&  ${section} == lego ]] ; then
+    section=core
+  fi
+
+  if [[ ${fileOption} == -- ]]; then
+    unset fileOption
+  fi
+
+  local keyRe="${section}.*"
+
+  local notEmpty=$( git config $fileOption --get-regexp "$section" 2>/dev/null | wc -l )
+
+  if (( ! $notEmpty )); then
+    if [[ $fileOption != '-f .gitlego' || -e .gitlego ]]; then
+      git config ${fileOption} --remove-section "${section}" 2>/dev/null
+    fi
+  fi
+}
+
 
 ##################################################### SETTING #################################################
 set_module_meta_mode() {
-echo "$FUNCNAME()" $@ >&2
+#echo "$FUNCNAME()" $@ >&2
   local key="$1"
   local value="$2"
   local section="$3"
-  local worktree="$4"
+  local worktree="${4:-.}"
   local mode="${5:-${g_lego_mode}}"
+  local ret=0
 
   if [[ ${mode} == solo ]] ; then
-    value=$( set_lego_setting_concrete "$key" "$value" "$section" "$mode" ..)
+    value=$( set_lego_setting_concrete "$key" "$value" "$section" "$mode" "$worktree")
+    ret=$? || $ret
   elif [[ ${mode} == versioned ]] ; then
-    value=$( set_lego_setting_concrete "$key" "$value" "$section" "$mode" .. "-f .gitlego" )
+    value=$( set_lego_setting_concrete "$key" "$value" "$section" "$mode" "$worktree" "-f .gitlego" )
+    ret=$? || $ret
   fi
+  return $ret
 }
 
 
 set_lego_setting_concrete() {
-echo "$FUNCNAME()" $@ >&2
+#echo "$FUNCNAME()" $@ >&2
   local key="$1"
   [[ -z $key ]] && panic "$FUNCNAME() missing parameter 'key'"
   local value="$2"
-  local section="${3:-core}"
-  local mode=$4
+  local section="$3"
+  local mode="$4"
   local worktree="$5"
-  local file_option="${6---}"
+  local fileOption="${6---}"
 
-  if [[ -z "${file_option##--*}" && ${section} == core ]] ; then
-    section=lego
+  if [[ $worktree == . ]]; then
+    unset worktree
   fi
 
-  if [[ $file_option == -- ]]; then
-    file_option=--local
+  if [[ -z "${fileOption##--*}" && ${section} == core ]] ; then
+    section=lego
+  elif [[ -n "${fileOption##--*}" &&  ${section} == lego ]] ; then
+    section=core
+  fi
+
+
+  if [[ $fileOption == -- ]]; then
+    fileOption=--local
   fi
 
   if [[ -n ${worktree} ]]; then
     pushd "$worktree" >/dev/null
   fi
-  pwd >&2
-  echo "git config "$file_option" "$section.$key" "$value"" >&2
-  git config "$file_option" "$section.$key" "$value"
+#  pwd >&2
+#  echo "git config "$fileOption" "$section.$key" "$value"" >&2
+
+  if [[ $fileOption != '-f .gitlego' || -e .gitlego ]]; then
+    git config ${fileOption} --replace-all "$section.$key" $value
+  fi
+  ret=$?
+
   if [[ -n ${worktree} ]]; then
     popd >/dev/null
   fi
+
+  return $ret
 }
 
 
 ##################################################### GETTING #################################################
-get_lego_setting_at_mode() {
+get_lego_setting_mode() {
+#echo "$FUNCNAME()" $@ >&2
   local key=$1
-  local mode=${2:-${g_lego_mode}}
-  local section=$3
+  local section=$2
+  local mode=${3}
+  local worktree=${4:-.}
   local value
 
   if [[ ${mode} == solo ]] ; then
-    value=$( get_lego_setting_concrete "$1" "${section}" )
+    value=$( get_lego_setting_concrete "$1" "${section}" "$worktree")
   elif [[ ${mode} == versioned ]] ; then
-    value=$( get_lego_setting_concrete "$1" "${section}" "-f .gitlego" )
-    if [[ -z "$value" && ${section} == submodule ]]; then
-      value=$( get_lego_setting_concrete "$1" "${section}" "-f .gitmodules" )
+    value=$( get_lego_setting_concrete "$1" "${section}" "$worktree" "-f .gitlego" )
+    if [[ -z "$value" && -z ${section##submodule.*} ]]; then
+      value=$( get_lego_setting_concrete "$1" "${section}" "$worktree" "-f .gitmodules" )
     fi
   fi
-  echo ${value}
+#  echo "$value" >&2
+  echo "$value"
 }
 
 
 get_lego_setting() {
+#echo "$FUNCNAME()" $@ >&2
+  local key=${1}
   local section=${2:-core}
-  local value=$( get_lego_setting_concrete "$1" "${section}" "-f .gitlego" )
-
-  [[ -z "$value" && ${section} == submodule ]] && value=$( get_lego_setting_concrete "$1" "${section}" "-f .gitmodules")
-  [[ -z "$value" ]] && value=$( get_lego_setting_concrete "$1" "${section}" )
-#  [[ -z value ]] || value=$( get_lego_setting_concrete $1 ${section} "--local" } )
-#  [[ -z value ]] && value=$( get_lego_setting_concrete $1 ${section} "--global"} )
-#  [[ -z value ]] && value=$( get_lego_setting_concrete $1 ${section} "--system"} )
+  local worktree=${3:-.}
+  local value=$( get_lego_setting_concrete "$key" "${section}" "$worktree" "-f .gitlego" )
+  [[ -z "$value" && -z ${section##submodule*} ]] && value=$( get_lego_setting_concrete "$1" "${section}" "$worktree" "-f .gitmodules")
+  [[ -z "$value" ]] && value=$( get_lego_setting_concrete "$1" "${section}" "$worktree" )
+#  [[ -z value ]] || value=$( get_lego_setting_concrete $1 ${section} "$worktree" "--local" } )
+#  [[ -z value ]] && value=$( get_lego_setting_concrete $1 ${section} "$worktree" "--global"} )
+#  [[ -z value ]] && value=$( get_lego_setting_concrete $1 ${section} "$worktree" "--system"} )
   echo "$value"
 }
 
 
 ##
 get_lego_setting_concrete() {
+#echo "$FUNCNAME()" $@ >&2
 #pwd >&2
   local key="$1"
   [[ -z $key ]] && panic "$FUNCNAME() missing setting name"
-  local file_option="${3---}"
   local section="${2:-core}"
-  if [[ -z "${file_option##--*}" ]] && [[ ${section} == core ]] ; then
+  local worktree="${3:-.}"
+  local fileOption="${4---}"
+
+  if [[ $worktree == . ]]; then
+    unset worktree
+  fi
+
+  if [[ -z "${fileOption##--*}" && ${section} == core ]] ; then
     section=lego
+  elif [[ -n "${fileOption##--*}" &&  ${section} == lego ]] ; then
+    section=core
   fi
 
-  if [[ $file_option == -- ]]; then
-    unset file_option
+  if [[ $fileOption == -- ]]; then
+    unset fileOption
   fi
 
-  echo $(git config ${file_option} --get "${section}.$key" 2>/dev/null)
+  if [[ -n ${worktree} ]]; then
+    pushd "$worktree" >/dev/null
+  fi
+
+  echo $(git config ${fileOption} --get "${section}.$key" 2>/dev/null)
+
+  if [[ -n ${worktree} ]]; then
+    popd >/dev/null
+  fi
 }
 
 
@@ -1745,7 +1839,7 @@ investigate_lego_mode() {
   if [[  -e "${cwRoot}/.gitmodules" ]] ; then
 
     while read module path; do
-      if [[ $(get_lego_setting_concrete "${module}.branch" "submodule" "-f .gitmodules") ]]; then
+      if [[ $(get_lego_setting_concrete "${module}.branch" "submodule" "." "-f .gitmodules") ]]; then
         if (( $( check_ambiguous_lego_mode versioned ${mode} ) )) ; then
           mode=ambiguous
         else
@@ -1756,7 +1850,7 @@ investigate_lego_mode() {
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
 
     while read module value; do
-      if [[ $value == true ]] && [[ $(get_lego_setting_concrete "${module}.branch" "submodule" "--local") ]]; then
+      if [[ $value == true ]] && [[ $(get_lego_setting_concrete "${module}.branch" "submodule" "." "--local") ]]; then
         if (( $( check_ambiguous_lego_mode solo ${mode} ) )) ; then
           mode=ambiguous
         else

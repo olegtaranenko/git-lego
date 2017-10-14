@@ -167,13 +167,13 @@ typeset clearSolo=0
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 attain_module_mode() {
-echo "$FUNCNAME()" $@ >&2
+#echo "$FUNCNAME()" $@ >&2
 #set -x
   local moduleName=$1
   local mode=${2:-${g_lego_mode}}
   local parentRefname=$3
   local parentRefType=$4
-  local parentRepo=$5
+  local parentRepoFilePath=$5
 
   local initRequired=1
 
@@ -233,7 +233,7 @@ echo "$FUNCNAME()" $@ >&2
 
       if (( ! $initRequired )) || (( $doUpdate )); then
         cw_echo "Module '$moduleName' is attained to ${guessedRefname} [${guessedType}]"
-        set_module_meta_mode "${key}" "${guessedRefname}" "submodule" "$parentRepo"
+        set_module_meta_mode "${key}" "${guessedRefname}" "submodule" ".."
         cw_echo "About to update $moduleName to $guessedRefname..."
         git checkout "$guessedRefname"
 

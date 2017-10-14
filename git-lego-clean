@@ -123,15 +123,24 @@ clean_level() {
 #echo "$FUNCNAME()" $@ >&2
   local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
-  local ret=0   # return code, 0 - the repo is syncronized
+
+  local moduleName="$2"
+  local modulePath="$3"
+
+  local ret=0   # return code
   local childRet # child return code
 
 #  set -x
 #  pwd >&2
+
   if (( $cleanVersioned )); then
     if [[ -e .gitlego ]]; then
       rm -f .gitlego
     fi
+  fi
+
+  if (( $cleanSolo )); then
+    clean_git_config_section ${G_MODE_MASK_SOLO} lego
   fi
 
   if [ -f .gitmodules ]; then
@@ -140,24 +149,20 @@ clean_level() {
       local moduleName="${module[0]}"
       local localPath="${module[1]}"
       local subRepoPath="${levelPath}"/"${localPath}"
-      local modulePath="$2"
       if [[ ${modulePath:(-1)} != "/" ]]; then
         modulePath+="/"
       fi
 
       modulePath+="$moduleName"
-      read initialized < <( module_info ${modulePath} initialized )
 
-      if (( $cleanSolo )); then
-        clean_git_config_section ${G_MODE_MASK_SOLO} lego
-      fi
+      clean_module_meta_mask "${moduleName}" "${modesMask}"
+
+      read initialized < <( module_info ${modulePath} initialized )
 
       if (( $initialized )) ; then
 
-        clean_module_meta "${moduleName}" "${modesMask}"
-
         pushd "${subRepoPath}" &> /dev/null
-        clean_level "${subRepoPath}" "${modulePath}"
+        clean_level "$subRepoPath" "$moduleName" "$modulePath"
         childRet=$?
 
         (( $childRet > $ret )) && ret = ${childRet}

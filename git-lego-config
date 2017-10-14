@@ -31,7 +31,7 @@ EOF
 
 typeset currentLegoMode
 typeset verbose=0
-typeset force=0
+typeset doForce=0
 # solo (1) or global (0)
 # lego solo mode means that no any additional settings are stored to versioned files like .gitmodules or .gitrepo
 # That no git lego don''t pollute modules' history at all.
@@ -65,7 +65,7 @@ while [[ -n $1 ]]; do
       ;;
 
 		-f | --force)
-			force=$1
+			doForce=1
 			;;
 
 		--lego-mode)
@@ -156,7 +156,7 @@ fi
 
 typeset modeTo
 typeset modeFrom
-typeset doReconcile=${force}
+typeset doReconcile=${doForce}
 (( doModeUnset )) && doReconcile=0
 typeset clearVersioned=0
 typeset clearSolo=0
@@ -165,10 +165,8 @@ typeset toVersioned=0
 typeset toSolo=0
 
 migrate_lego_mode() {
-#set -x
   modeTo=$1
   modeFrom=$2
-
   case ${modeFrom} in
     empty|'')
       (( ! doModeUnset )) && doReconcile=1
@@ -209,7 +207,7 @@ migrate_lego_mode() {
 
   pushd ${filePath} &>/dev/null
 
-  reconcile_level "${filePath}"
+  reconcile_level "${filePath}" "/"
 
   popd &>/dev/null
 
@@ -224,50 +222,37 @@ reconcile_level() {
   local outerPath="${2:-/}"
 #
 #set -x
+#echo "modeFrom $modeFrom modeTo $modeTo"
   read -a outerModule < <(module_descriptor ${outerFilePath})
+  local reference
+  local key
 
   while read -a innerModule; do
     local moduleName="${innerModule[0]}"
     local moduleInnerPath="${innerModule[1]}"
     local innerFilePath="${outerFilePath}/${moduleInnerPath}"
-    local reference
-    local referenceKey referenceKeyRe
+    local section="submodule.${moduleName}"
 
+    unset reference
+    unset key
 
-    if (( ! $doModeUnset )); then
-      referenceKey="submodule.${moduleName}."
-      referenceKeyRe="submodule.${moduleName}.(branch|pinned)"
+    for token in "${g_lego_aware_tokens_gitmodules[@]}" ; do
+      reference=$(get_lego_setting_mode "${token}" "$section" "${modeFrom}" )
+      if (( ${#reference} )); then
+        key="$token"
+        break
+      fi
+    done
+
+    if (( ${#key} )); then
+      wipe_lego_setting_at_mode "$key" "$section" "$modeFrom"
       if (( $copyFrom )); then
-        if (( ${toVersioned} )) ; then
-          reference=$(git config --get-regexp ${referenceKey}) &>/dev/null
-        elif (( ${toSolo} )); then
-          reference=$( git config -f .gitlego --get-regexp ${referenceKey} ) &>/dev/null
-        fi
+        set_module_meta_mode "$key" "$reference" "$section" "." "$modeTo"
       fi
 
-      if (( $doReconcile )) || [[ -z ${reference} ]] ; then
-        reference=$( git -C "${moduleInnerPath}" rev-parse --symbolic-full-name HEAD )
-        if [[ -z ${reference} ]] ; then
-          reference=$( git -C "${moduleInnerPath}" rev-parse --short HEAD )
-          referenceKey+="pinned";
-        else
-          referenceKey+="branch";
-          reference=${reference#refs/heads/}
-        fi
+      if (( $doModeUnset )); then
+        wipe_lego_setting_at_mode "$key" "$section" "$modeTo"
       fi
-
-      if (( $toSolo )) ; then
-        git config --local --replace-all ${referenceKey} ${reference}
-      elif (( $toVersioned )) ; then
-        git config -f .gitlego --replace-all ${referenceKey} ${reference}
-      fi
-    fi
-
-    if (( $clearVersioned )) ; then
-      git config -f .gitlego  --unset-all ${referenceKey}
-    fi
-    if (( $clearSolo )); then
-      git config --local --unset-all ${referenceKey}
     fi
 
     local modulePath="${outerPath}"
@@ -304,7 +289,7 @@ cmd_parameter() {
 
 ## Just show current
 cmd_legomode() {
-  echo $FUNCNAME setLegoMode=$nextLegoMode
+#  echo "$FUNCNAME setLegoMode=$nextLegoMode"
   local currentMode
   local investigated
   local hint
@@ -321,8 +306,7 @@ cmd_legomode() {
       fi
     fi
 
-
-    cw_echo "${currentMode:+Mode is explicit set to }${currentMode:-Mode not set}, guessing: ${investigated:-no idea}."
+    cw_echo "${currentMode:+Mode is explicit set to }${currentMode:-Mode not set}${investigated:+, guessing: ${investigated}}."
     if [[ -n ${investigated} ]]; then
       if [[ $investigated == ambiguous ]] || [[ $investigated == empty ]]; then
         hint="[versioned|solo]"
@@ -334,7 +318,6 @@ cmd_legomode() {
 
     # for caller from code, not from command line
     (( $doEcho )) && echo ${nextLegoMode}
-
   else
     case ${nextLegoMode} in
       current)
@@ -346,19 +329,23 @@ cmd_legomode() {
         currentMode=$( get_lego_setting "mode")
 
         if [[ ${currentMode} != ${nextLegoMode} ]] || (( $doModeUnset )); then
-          git config ${scope:---local} "lego.mode" ${nextLegoMode} true
-          local afterScopeRemove=$( get_lego_setting "mode")
+#          git config ${scope:---local} "lego.mode" ${nextLegoMode} true
 
-          if [[ ${afterScopeRemove} == ${currentMode} && (( ! $doModeUnset )) ]] ; then
-            cw_warn "Lego mode changing was not successful, maybe because of global or system settings"
-          else
+          wipe_lego_setting_at_mode mode lego "${currentMode}"
+
+#          set_module_meta_mode "mode" "$nextLegoMode" "lego" 0 "$currentMode"
+          set_module_meta_mode "mode" "$nextLegoMode" "lego" "." "$nextLegoMode"
+#          local afterScopeRemove=$( get_lego_setting "mode")
+#          if [[ ${afterScopeRemove} == ${currentMode} && ${doModeUnset} == 0 && $doForce ]] ; then
+#            cw_echo "Lego mode changing was not successful, maybe because of global or system settings"
+#          else
             migrate_lego_mode ${nextLegoMode} ${currentMode}
             if (( $doModeUnset )) ; then
               cw_echo "Lego mode unset for ${scope:---local} scope"
             else
               cw_echo "Lego mode set to '$nextLegoMode' for ${scope:---local} scope"
             fi
-          fi
+#          fi
         else
           if (( $doModeUnset )) ; then
             cw_echo "Lego mode is already not set."
