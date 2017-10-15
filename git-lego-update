@@ -88,8 +88,8 @@ done
 ################################ SCRIPT SPECIFIC METHODS ################################
 update_level() {
 #echo "$FUNCNAME()" $@ >&2
-  local levelFilePath="$1"
-  [[ -z ${levelFilePath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+  local levelPath="$1"
+  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local moduleName="$2"
   local modulePath="$3"
   local parentFullPath=$4
@@ -103,13 +103,13 @@ update_level() {
     local unmanaged=${MODULE_STATUS[$MS_UNMANAGED]}
     local applied=0
 
-    drop_to_affected "$levelFilePath"
+    drop_to_affected "$levelPath"
     if (( ! $? )) ; then
       applied=1
       if (( ! $unmanaged )) || (( $doForce )); then
         pushd "${parentFullPath}" >/dev/null
         if (( $uninitialized )); then
-          cw_echo "About to upddate module $moduleName..."
+          cw_echo "About to update module $moduleName..."
           git submodule update --init -- "${moduleName}"
           (( ! $? )) && cw_echo "...OK!"
         fi
@@ -132,7 +132,7 @@ update_level() {
       childRet=0
       moduleName="${module[0]}"
       localPath="${module[1]}"
-      subRepoPath="${levelFilePath}"/"${localPath}"
+      subRepoPath="${levelPath}"/"${localPath}"
 
       local modulePath="$3"
       if [[ ${modulePath:(-1)} != "/" ]]; then
@@ -141,7 +141,7 @@ update_level() {
       modulePath+="$moduleName"
 
       pushd "${subRepoPath}" &> /dev/null
-      update_level "${subRepoPath}" "${moduleName}" "${modulePath}" "$levelFilePath"
+      update_level "${subRepoPath}" "${moduleName}" "${modulePath}" "$levelPath"
       childRet=$?
 
       (( $childRet > $ret )) && ret = ${childRet}

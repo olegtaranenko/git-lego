@@ -105,12 +105,14 @@ done
 
 function prepare_push_level() {
 echo "$FUNCNAME() $@" >&2
+
   local levelPath="$1"
-  local parentPushable=$4
-  local currentPushable=0
-  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local moduleName="$2"
   local modulePath="$3"
+  local parentPushable=$4
+
+  local currentPushable=0
+  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local ret=0
   local childRet # child modules return code
 
@@ -130,9 +132,9 @@ echo "$FUNCNAME() $@" >&2
 #  echo "$MODULE_STATUS[@]"
   if (( ${MODULE_STATUS[$MS_DETACHED]} )); then
     die "Push is peeled rejected as module '$moduleName' is detached."
-  elif [[ 1 == ${MODULE_STATUS[$MS_PUSHABLE]}  && -z ${MODULE_STATUS[$MS_PULLABLE]}  &&  -z ${MODULE_STATUS[$MS_DETACHED]} ]]; then
+  elif [[ 1 == ${MODULE_STATUS[$MS_PUSHABLE]}  &&  ${MODULE_STATUS[$MS_DETACHED]} == 0 ]]; then
     currentPushable=1
-    drop_to_affected ${modulePath}
+    drop_to_affected ${levelPath}
     applied=$?
     # 0 means applied, 1 - not
     # if applied == 1, the module is pushable but not applied - dangerous for upper modules,
@@ -153,10 +155,10 @@ echo "$FUNCNAME() $@" >&2
       subModule="${module[0]}"
       checkBranch=$(git config --file .gitmodules --get submodule."${subModule}".branch)
       localPath="${module[1]}"
-      subRepoPath="${modulePath}"/"${localPath}"
+      subRepoPath="${levelPath}"/"${localPath}"
 
       pushd "${subRepoPath}" &> /dev/null
-      local modulePath="$3" #/$subModule"
+      modulePath="$3" #/$subModule"
       if [[ ${modulePath:(-1)} != "/" ]]; then
         modulePath+="/"
       fi
@@ -187,9 +189,7 @@ cmd_default() {
   prepare_push_level "${moduleFilePath}" "${moduleName}" "${modulePath}" "0"
   ret=$?
 
-  if (( $ret )); then
-    vetoed=1
-  fi
+  (( $ret )) && vetoed=1
 
   wasPushed=0
   if (( ! $vetoed )); then

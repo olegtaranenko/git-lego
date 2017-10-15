@@ -825,10 +825,15 @@ function module_porcelain_status() {
             branch\.ab)
               MODULE_STATUS[$MS_UPSTREAM_AHEAD]=${output[1]:1}
               MODULE_STATUS[$MS_UPSTREAM_BEHIND]=${output[2]:1}
+              if (( ${MODULE_STATUS[$MS_UPSTREAM_AHEAD]} )); then
+                MODULE_STATUS[$MS_PUSHABLE]=1
+              fi
+              if (( ${MODULE_STATUS[$MS_UPSTREAM_BEHIND]} )); then
+                MODULE_STATUS[$MS_PULLABLE]=1
+              fi
               ;;
           esac
           ;;
-
         \?)
           local entryName="${output[0]}" #.gitmodule or .gitlego
           if [[ ${entryName} == \.gitmodules  || ${entryName} == \.gitlego ]]; then
@@ -852,9 +857,7 @@ function module_porcelain_status() {
           elif [[ ${fChar} == C || ${sChar} == C ]] ; then MODULE_STATUS[$MS_COPIED]=$(( MODULE_STATUS[$MS_COPIED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1;
           elif [[ ${fChar} == U || ${sChar} == U ]] ; then MODULE_STATUS[$MS_UNMERGED]=$(( MODULE_STATUS[$MS_UNMERGED] + 1 )); MODULE_STATUS[$MS_COMMITABLE]=1; fi
           ;;
-
       esac
-
     done < <(git status -u --porcelain=2 -b)
 
     guess_refnames_of_commit "$modulePath" HEAD
@@ -1032,7 +1035,7 @@ function prepare_checkout_level() {
 
     module_porcelain_status "${modulePath}" checkout
 
-    if [[ 0 == ${force} &&  (1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[MS_PUSHABLE]}) ]]; then
+    if [[ 0 == ${force} &&  (1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[$MS_PUSHABLE]}) ]]; then
       dieMsg+="Module '$moduleName' has not committed or not pushed changes, but intended to be deleted as it does not exists in revision '$revision'"
       ret=1
     fi

@@ -22,7 +22,6 @@ typeset force=0
 typeset verbose=0
 typeset doInit=0
 typeset branchName wrongBranch branch=0
-
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
   noAppendArg=0
@@ -106,10 +105,12 @@ if [[ -z ${repoUrl} ]]; then
   die "Repo paramenter not recognized"
 fi
 
-if (( $branch )) && (( $wrongBranch )) || [[ -z $branchName ]] ; then
-  die "Wrong branch name"
-else
-  args+=("--branch $branchName")
+if (( $branch )); then
+  if (( $wrongBranch )) || [[ -z $branchName ]] ; then
+    die "Wrong branch name"
+  else
+    args+=(--branch $branchName)
+  fi
 fi
 
 
@@ -135,43 +136,57 @@ cmd_default() {
     exit 0
   fi
 
-  cw_echo "Redirect to 'git clone'"
+  #set -x
   echo ${args[@]} >&2
+
+  # no explicit destination repository given
+  # take from last created directory
+  local lsBefore=()
+  if [[ -z "$repoPath" ]]; then
+    lsBefore=($(ls -1))
+  fi
+
+  cw_echo "Redirect to 'git clone'"
   git clone "${args[@]}"
   ret=$?
   #echo $ret
-
-
 
   if (( $ret )); then
        die "Unrecoverable error by cloning"
   fi
 
+  if [[ -z "$repoPath" ]]; then
+    while read after ; do
+      local found=0
+      for before in "${lsBefore[@]}"; do
+        if [[ "$before" == "$after" ]]; then
+          found=1
+          break
+        fi
+      done
 
-  #set -x
-  if [[ ! -d "${repoPath}" ]]; then
-    # no explicit destination repository given
-    # take from last created directory
-    for i in `ls -t1 | grep -v ^.$`; do
-      repoPath=${i};
-      break;
-    done
+      if (( !found )); then
+        repoPath="$after"
+        break
+      fi
+
+    done < <(ls -1)
   fi
-
 
   cd "$repoPath"
 
   #pushd . &> /dev/null
-  git submodule update --recursive --init
+  #git submodule update --recursive --init
 
   #set -x
   umbrella_bootstrap
+
 
   cwRoot="${globals[$G_ROOT_DIR]}"
   #popd &> /dev/null
 
   doSync=1
-  check_branch_sync "${cwRoot}" 1
+#  check_branch_sync "${cwRoot}" 1
   ret=$?
 
   umbrella_finalize
