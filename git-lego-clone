@@ -143,8 +143,12 @@ cmd_default() {
   # take from last created directory
   local lsBefore=()
   if [[ -z "$repoPath" ]]; then
-    lsBefore=($(ls -1))
+    while read -d $'\0' fn; do
+      lsBefore+=("$fn")
+      echo "'$fn'" >&2
+    done < <( find . -type d -maxdepth 1 -print0 )
   fi
+  echo "${lsBefore[@]}"
 
   cw_echo "Redirect to 'git clone'"
   git clone "${args[@]}"
@@ -156,8 +160,10 @@ cmd_default() {
   fi
 
   if [[ -z "$repoPath" ]]; then
-    while read after ; do
+    while read -d $'\0' after; do
+      echo "[$after]" >&2
       local found=0
+
       for before in "${lsBefore[@]}"; do
         if [[ "$before" == "$after" ]]; then
           found=1
@@ -165,14 +171,13 @@ cmd_default() {
         fi
       done
 
-      if (( !found )); then
+      if (( ! $found )); then
         repoPath="$after"
         break
       fi
 
-    done < <(ls -1)
+    done < <(find . -type d -maxdepth 1 -print0 )
   fi
-
   cd "$repoPath"
 
   #pushd . &> /dev/null
