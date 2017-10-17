@@ -86,7 +86,7 @@ mcd() {
     pathResolution=$(_m_path_resolution "${scope}")
     [[ -z $pathResolution ]] && scopeNotFound=1
     if (( ! $scopeNotFound )); then
-      pushd $pathResolution &> /dev/null
+      pushd $pathResolution &>/dev/null
       pathNotFound=${#paths[@]}
       for path in ${paths[@]}; do
         pathNotFound=0
@@ -96,7 +96,7 @@ mcd() {
           break
         fi
       done
-      popd &> /dev/null
+      popd &>/dev/null
     fi
 
     if (( ! $scopeNotFound )) && (( ! $pathNotFound )); then
@@ -235,7 +235,7 @@ mls() {
 
   _m_not_git_repository; (( $? )) && return 1
 
-  pushd . &> /dev/null
+  pushd . &>/dev/null
   path=$(_m_path_resolution "$path")
   if [[ -z $path ]]; then
     local dieMsg="wrong path resolution"
@@ -248,7 +248,7 @@ mls() {
     cd "${path}"
     _m_mls
   fi
-  popd &> /dev/null
+  popd &>/dev/null
   _m_finalize
   return ${ret}
 }

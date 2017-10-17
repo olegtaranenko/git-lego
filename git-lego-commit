@@ -181,7 +181,7 @@ function prepare_commit_level() {
       localPath="${module[1]}"
       subRepoPath="${levelPath}"/"${localPath}"
 
-      pushd "${subRepoPath}" &> /dev/null
+      pushd "${subRepoPath}" &>/dev/null
       local subModulePath="$3" #/$subModule"
       if [[ ${subModulePath:(-1)} != "/" ]]; then
         subModulePath+="/"
@@ -192,7 +192,7 @@ function prepare_commit_level() {
       prepare_commit_level "${subRepoPath}" "${subModule}" "${subModulePath}"
       childRet=$?
       (( $childRet > $ret )) && ret = ${childRet}
-      popd  &> /dev/null
+      popd  &>/dev/null
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
 }

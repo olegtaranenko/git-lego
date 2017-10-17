@@ -18,7 +18,7 @@ EOF
 
 typeset autoAttach=0
 typeset attachHints=()
-typeset force=0
+typeset doForce=0
 typeset verbose=0
 typeset doInit=0
 typeset branchName wrongBranch branch=0
@@ -35,7 +35,7 @@ while [[ -n $1 ]]; do
       ;;
 
 		-f | --force)
-			force=$1
+			doForce=$1
 			;;
 
 		-b | --branch)
@@ -145,7 +145,6 @@ cmd_default() {
   if [[ -z "$repoPath" ]]; then
     while read -d $'\0' fn; do
       lsBefore+=("$fn")
-      echo "'$fn'" >&2
     done < <( find . -type d -maxdepth 1 -print0 )
   fi
   echo "${lsBefore[@]}"
@@ -161,7 +160,6 @@ cmd_default() {
 
   if [[ -z "$repoPath" ]]; then
     while read -d $'\0' after; do
-      echo "[$after]" >&2
       local found=0
 
       for before in "${lsBefore[@]}"; do
@@ -183,16 +181,17 @@ cmd_default() {
   #pushd . &> /dev/null
   #git submodule update --recursive --init
 
-  #set -x
   umbrella_bootstrap
 
+  local moduleFilePath="${globals[$G_ROOT_DIR]}"
+  local moduleName="${globals[$G_ROOT_NAME]}"
+  local modulePath="/"
 
-  cwRoot="${globals[$G_ROOT_DIR]}"
-  #popd &> /dev/null
+  if [[ -z "$branchName" ]]; then
+    branchName=$( get_refname_from_head )
+  fi
 
-  doSync=1
-#  check_branch_sync "${cwRoot}" 1
-  ret=$?
+  update_level "${moduleFilePath}" "${moduleName}" "${modulePath}" "." "$branchName"
 
   umbrella_finalize
   exit ${ret}

@@ -161,13 +161,13 @@ clean_level() {
 
       if (( $initialized )) ; then
 
-        pushd "${subRepoPath}" &> /dev/null
+        pushd "${subRepoPath}" &>/dev/null
         clean_level "$subRepoPath" "$moduleName" "$modulePath"
         childRet=$?
 
         (( $childRet > $ret )) && ret = ${childRet}
       fi
-      popd  &> /dev/null
+      popd  &>/dev/null
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
 }

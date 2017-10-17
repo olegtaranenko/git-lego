@@ -31,7 +31,7 @@ COMPLETION_SH=${COMPLETION_DIR}/git-completion.bash
 
 typeset verbose=0
 #typeset PROFILE=0
-typeset force=0
+typeset doForce=0
 
 show_help() {
   cat << EOF
@@ -57,10 +57,10 @@ while [[ -n $1 ]]; do
       ;;
 
     --force|-f)
-      force=1
+      doForce=1
       ;;
     --no-force|-F)
-      force=0
+      doForce=0
       ;;
 
     *)
@@ -123,7 +123,7 @@ SCRIPT_DIR=$( dirname $0 )
 GL_PROFILE=~/$SCRIPT_DIR/.profile
 
 (( $verbose )) && echo "profile='${PROFILE}'"
-if [[ -e ${PROFILE} ]] || (( $force )); then
+if [[ -e ${PROFILE} ]] || (( $doForce )); then
   env | grep -s GLORK_HOME > /dev/null
   if (( ! $? )); then
     echo "GLORK_HOME environment is already installed to '$GLORK_HOME'" >&2

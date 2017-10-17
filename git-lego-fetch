@@ -99,7 +99,7 @@ prepare_fetch_level () {
   local moduleName="$2"
   local levelPath="$3"
 
-  pushd "${levelPath}" &> /dev/null
+  pushd "${levelPath}" &>/dev/null
 
   drop_to_affected ${levelPath}
 
@@ -118,7 +118,7 @@ prepare_fetch_level () {
     prepare_fetch_level "${childModulePath}" "${subModule}" "${path}"
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
 
-  popd &> /dev/null
+  popd &>/dev/null
 
 }  ## of fetch_level
 

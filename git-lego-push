@@ -157,7 +157,7 @@ echo "$FUNCNAME() $@" >&2
       localPath="${module[1]}"
       subRepoPath="${levelPath}"/"${localPath}"
 
-      pushd "${subRepoPath}" &> /dev/null
+      pushd "${subRepoPath}" &>/dev/null
       modulePath="$3" #/$subModule"
       if [[ ${modulePath:(-1)} != "/" ]]; then
         modulePath+="/"
@@ -168,7 +168,7 @@ echo "$FUNCNAME() $@" >&2
       childRet=$?
 
       (( $childRet > $ret )) && ret=${childRet}
-      popd  &> /dev/null
+      popd  &>/dev/null
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
 

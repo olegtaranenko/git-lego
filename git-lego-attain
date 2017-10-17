@@ -50,7 +50,6 @@ EOF
 typeset currentLegoMode
 
 typeset verbose=0
-typeset force=0
 typeset doUpdate=0
 # solo (1) or global (0)
 # lego solo mode means that no any additional settings are stored to versioned files like .gitmodules or .gitrepo
@@ -164,111 +163,14 @@ fi
 typeset clearVersioned=0
 typeset clearSolo=0
 
-
-################################ SCRIPT SPECIFIC METHODS ################################
-attain_module_mode() {
-#echo "$FUNCNAME()" $@ >&2
-#set -x
-  local moduleName=$1
-  local mode=${2:-${g_lego_mode}}
-  local parentRefname=$3
-  local parentRefType=$4
-  local parentRepoFilePath=$5
-
-  local initRequired=1
-
-  local detached=${MODULE_STATUS[$MS_DETACHED]}
-  local moduleRefType=${g_lego_aware_tokens_gitmodules[$detached]}
-  if [[ $moduleRefType == $parentRefType ]]; then
-    initRequired=0
-  fi
-  local uninitialized=${MODULE_STATUS[$MS_UNINITIALIZED]}
-#  local managed=${MODULE_STATUS[$MS_MANAGED]}
-  local unmanaged=${MODULE_STATUS[$MS_UNMANAGED]}
-
-
-  if (( $unmanaged )) && (( ! $uninitialized )); then
-
-    local guessedRefname
-    local guessedType=${parentRefType}
-    local guessedRefnames=()
-
-    case ${parentRefType} in
-      branch)
-        guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_BRANCHES]})
-        if (( ! ${#guessedRefnames[@]} )); then
-          guessedType=pinned
-          guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_TAGS]})
-        fi
-        ;;
-      pinned)
-        guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_TAGS]})
-        if (( ! ${#guessedRefnames[@]} )); then
-          guessedType=branch
-          guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_BRANCHES]})
-        fi
-        ;;
-      sha)
-        guessedRefname=${MODULE_STATUS[$MS_MODULE_REFNAME]}
-        ;;
-    esac
-
-    if [[ ${#guessedRefnames[@]} == 1 ]]; then
-      guessedRefname=${guessedRefnames[0]}
-    elif [[ ${#guessedRefnames[@]} > 1 && -n ${parentRefname} ]]; then
-      for myRefname in ${guessedRefnames[@]}; do
-        if [[ "${myRefname}" == ${parentRefname} ]]; then
-          guessedRefname="${myRefname}"
-        fi
-      done
-    fi
-
-    if [[ -z ${guessedRefname} && ${#guessedRefnames[@]} ]]; then
-      guessedRefname=${guessedRefnames[0]}
-    fi
-
-    local token
-    if [[ -n $guessedRefname && -n $guessedType ]] ; then
-      local key="${moduleName}.$guessedType"
-
-      if (( ! $initRequired )) || (( $doUpdate )); then
-        cw_echo "Module '$moduleName' is attained to ${guessedRefname} [${guessedType}]"
-        set_module_meta_mode "${key}" "${guessedRefname}" "submodule" ".."
-        cw_echo "About to update $moduleName to $guessedRefname..."
-        git checkout "$guessedRefname"
-
-      else
-        local hint="Module $moduleName can be "
-        if [[ ${guessedType} == branch ]]; then
-          hint+="attained"
-        else
-          hint+="pinned"
-        fi
-        hint+=" to ${guessedRefname}, but --update option required"
-        ## exclude $guessedRefname
-        local asWellRefs=()
-        if [[ ${#guessedRefnames[@]} > 1 ]]; then
-          for asWell in ${guessedRefnames[@]} ; do
-            [[ ${asWell} != ${guessedRefname} ]] && asWellRefs+=("$asWell")
-          done
-          hint+=". Other possible attainable (or pinnable) options are: ${asWellRefs[@]}"
-        fi
-        hint+=". See '$FLAGS_PREFIX --help' for more information"
-        cw_echo "${hint}"
-      fi
-    fi
-  fi
-
-
-#set +x
-}
-
 attain_level() {
 #echo "$FUNCNAME()" $@ >&2
 
   local levelPath="$1"
   local parentRefname="$3"
   local parentRefType="$4"
+  local nextLegoMode="${5:-${g_lego_mode}}"
+  local ret=0
 
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local ret=0   # return code, 0 - the repo is syncronized
@@ -291,20 +193,25 @@ attain_level() {
 
       if (( $initialized )) ; then
 
-        pushd "${subRepoPath}" &> /dev/null
+        pushd "${subRepoPath}" &>/dev/null
         module_porcelain_status "${modulePath}" attain
 #        echo ${MODULE_STATUS[@]} >&2
-        attain_module_mode "${moduleName}" "${nextLegoMode}" "${parentRefname}" "${parentRefType}" "${levelPath}"
-        local detached=${MODULE_STATUS[$MS_DETACHED]}
-        
-        attain_level "${subRepoPath}" "${modulePath}" "${MODULE_STATUS[$MS_MODULE_REFNAME]}" "${g_lego_aware_tokens_gitmodules[$detached]}"
-        childRet=$?
 
-        (( $childRet > $ret )) && ret = ${childRet}
+        attain_module_mode "${moduleName}" "${nextLegoMode}" "${parentRefname}" "${parentRefType}" "${levelPath}" "$doUpdate"
+        local detached="${MODULE_STATUS[$MS_DETACHED]}"
+
+        attain_level "${subRepoPath}" "${modulePath}" "${MODULE_STATUS[$MS_MODULE_REFNAME]}" "${g_lego_aware_tokens_gitmodules[$detached]}" "$nextLegoMode"
+        local childRet=$?
+
+        (( $childRet > $ret )) && ret = "${childRet}"
+      else
+        ret=1
+        warnMsg="One or more modules are uninitialized!"
       fi
-      popd  &> /dev/null
+      popd  &>/dev/null
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
+  return "$ret"
 }
 
 
@@ -317,14 +224,24 @@ cmd_default() {
   typeset affected=0
   typeset onEmptyMessage
   typeset skippedModules=()
+  typeset warnMsg
 #  pwd >&2
+  local ret
   read refType refname < <( get_refname_from_head )
 #  echo refType $refType refname $refname >&2
 #  [[ -z ${updateMessage} ]] && onEmptyMessage="update for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
 
-  pushd ${moduleFilePath} &>/dev/null
-  attain_level "${moduleFilePath}" "${modulePath}" "${refname}" "${refType}"
+  pushd "${moduleFilePath}" &>/dev/null
+  attain_level "$moduleFilePath" "$modulePath" "$refname" "$refType" "$nextLegoMode"
+  ret=$?
+
+  if (( $verbose )); then
+    if [[ -n $warnMsg ]]; then
+      cw_verbose "$warnMsg"
+    fi
+  fi
 
   popd &>/dev/null
   umbrella_finalize
+  return $ret
 }

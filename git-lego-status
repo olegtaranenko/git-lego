@@ -128,7 +128,9 @@ function show_current_module_status {
   local verboseIssues infoIssues
 
   # gather all additional fine information into $MODULE_STATUS global array
+#  [[ $modulePath == / ]] && set -x
   module_porcelain_status "${modulePath}" status
+#  [[ $modulePath == / ]] && set +x
 
   # two below variables are defined to cmd_default()
   (( ${MODULE_STATUS[$MS_DETACHED]} )) && detached=${MODULE_STATUS[$MS_DETACHED]}
@@ -195,7 +197,7 @@ function show_current_module_status {
       verboseMsg+=("Expected, that module should be initialized to $managedRefname")
     fi
 
-  else    ## (( $uninitialized ))
+  else    ## (( initialized ))
 
     local managedAlias
     if (( ! $detached )); then
@@ -206,21 +208,19 @@ function show_current_module_status {
       (( $commits )) && oneLine+=" commit(s)"
   #      (( $commits - 1 )) && oneLine+="s"
     else
-      if [[ $modulePath != / ]]; then
-        oneLine+=", detached: $moduleRefname"
-        if (( ! $unmanaged )); then
-          case $managed in
-            0)
-              managedAlias+='managed as'
-              ;;
-            1|2)
-              managedAlias+='pinned to'
-              ;;
-          esac
-        fi
+      oneLine+=", detached: $moduleRefname"
+      if (( ! $unmanaged )) && [[ $modulePath != "/" ]]; then
+        case $managed in
+          0)
+            managedAlias+='managed as'
+            ;;
+          1|2)
+            managedAlias+='pinned to'
+            ;;
+        esac
       fi
     fi
-    if (( ! $mismatched )) && (( ! $unmanaged )) && [[ $modulePath != / ]]; then
+    if (( ! ${mismatched:-0} )) && (( ! $unmanaged )) && [[ $modulePath != / ]]; then
       oneLine+=", OK"
     elif (( ${mismatched:-0} )); then
       oneLine+=", mismatched, expected: $managedAlias $managedRefname"
@@ -228,8 +228,8 @@ function show_current_module_status {
         local ahead=${MODULE_STATUS[$MS_UPSTREAM_AHEAD]}
         local behind=${MODULE_STATUS[$MS_UPSTREAM_BEHIND]}
 
-        if (( $ahead )) ; then oneLine+=", $ahead commit"; (( $ahead > 1 )) && oneLine+="s"; oneLine+=" ahead HEAD";
-        elif (( $behind )) ; then oneLine+=", $behind commit"; (( $behind > 1 )) && oneLine+="s"; oneLine+=" behind HEAD"; fi
+        if (( $ahead )) ; then oneLine+=", $ahead commit"; (( $ahead > 1 )) && oneLine+="s"; oneLine+=" ahead";
+        elif (( $behind )) ; then oneLine+=", $behind commit"; (( $behind > 1 )) && oneLine+="s"; oneLine+=" behind"; fi
       fi
       # TODO verboseMsg
 
@@ -297,7 +297,7 @@ function status_level() {
       localPath="${module[1]}"
       subRepoPath=${levelPath}/${localPath}
 
-      pushd "${subRepoPath}" &> /dev/null
+      pushd "${subRepoPath}" &>/dev/null
       local modulePath="$3" #/$subModule"
       if [[ ${modulePath:(-1)} != "/" ]]; then
         modulePath+="/"
@@ -309,7 +309,7 @@ function status_level() {
       if [[ ${childRet} > ${ret} ]] ; then
         ret=${childRet}
       fi
-      popd  &> /dev/null
+      popd  &>/dev/null
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
 

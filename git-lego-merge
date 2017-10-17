@@ -104,10 +104,10 @@ while [[ -n $1 ]]; do
       ;;
 
     --force|-f)
-      force=1
+      doForce=1
       ;;
     --no-force|-F)
-      force=0
+      doForce=0
       ;;
 
     -b|-B|--orphan)
@@ -161,9 +161,9 @@ function merge_level () {
   local -a modulesBefore
   local -a modulesAfter
   local -a removedModules
-  local -a addedModules
+  local -a modulesAfter
 
-  pushd "${levelPath}" &> /dev/null
+  pushd "${levelPath}" &>/dev/null
 
 #  cd "${levelPath}"
 #  echo "---> merge_level ${levelPath}"
@@ -201,7 +201,7 @@ function merge_level () {
       fi
     done
     if (( ! $found )); then
-      addedModules[${#addedModules[@]}]="$a"
+      modulesAfter[${#modulesAfter[@]}]="$a"
     fi
   done
 
@@ -247,7 +247,7 @@ function merge_level () {
     fi
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
 
-  popd &> /dev/null
+  popd &>/dev/null
 }  ## of merge_level
 
 
