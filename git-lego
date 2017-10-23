@@ -8,8 +8,12 @@
   ## "${globals[$G_MODULE_GIT_DIR]}" [gitDir]       - current repository
   #
 
-
-
+##############################
+#
+# FOUND DEBUG OUTPUT TO STDERR
+# Occurrences of '^ *(cat|echo).[\w\"\$\{\}\[\]\@\#\*\/\\\:\.\d \'\(\)]*>&2' in Project
+#
+##############################
 EMPTY_TREE_HASH=$(git hash-object -t tree /dev/null)
 ## Global arrays for quick access of frequently used parameters
 ## There are basically a cache
@@ -230,7 +234,7 @@ umbrella_bootstrap (){
 #  echo $g_lego_mode ${implicit:-2}
 
   module_startup_investigate "${umbrellaRepoName}" "/" ".git" "${umbrellaRepoDir}" "/" 1 "${sha}" 1 "$NA"
-  cat ${globals[$G_MODULES_FN]} >&2
+#  cat ${globals[$G_MODULES_FN]} >&2
 #  echo ${g_module_name[@]} >&2
 #  echo ${g_module_inited[@]} >&2
 #  echo ${g_module_managed[@]} >&2
@@ -243,9 +247,9 @@ umbrella_bootstrap (){
 
 
 recreate_modules_cache() {
-echo "$FUNCNAME() $@" >&2
+#echo "$FUNCNAME() $@" >&2
   local modulePaths=("$@")
-echo "${modulePaths[@]}" >&2
+#echo "${modulePaths[@]}" >&2
   local tmpDir="${globals[$G_SCRIPT_TMP_DIRECTORY]}"
   local originalModules="${globals[$G_MODULES_FN]}"
   local backup="$tmpDir/modules.bak"
@@ -328,7 +332,7 @@ function module_startup_investigate() {
 # EXTERNAL: module :: array(2), prepared with moduleName & modulePath
 #
 investigate_module() {
-echo "$FUNCNAME() $@" >&2
+#echo "$FUNCNAME() $@" >&2
   local moduleName="$1"
   local localPath="$2"
 #    local parentFilePath="$4"
@@ -1123,7 +1127,7 @@ construct_section_name() {
 }
 
 function export_gitmodules_section {
-  echo ${FUNCNAME}": $@" >&2
+#  echo ${FUNCNAME}": $@" >&2
   local modulePath="$1"
   local moduleName="$2"
   local revision="$3"
@@ -1137,7 +1141,7 @@ function export_gitmodules_section {
 }
 
 function import_gitmodules_section {
-  echo ${FUNCNAME}": $@" >&2
+#  echo ${FUNCNAME}": $@" >&2
   local modulePath="$1"
   local moduleName="$2"
   local revision="$3"
@@ -1151,7 +1155,7 @@ function import_gitmodules_section {
 
 
 function prepare_checkout_level() {
-  echo ${FUNCNAME}": $@" >&2
+#  echo ${FUNCNAME}": $@" >&2
   pwd >&2
 
 #  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
@@ -1167,8 +1171,7 @@ function prepare_checkout_level() {
   local ret=0
 
   module_porcelain_status "${modulePath}" checkout
-  echo "parentRefname: $parentRefname  parentRefType: $parentRefType"
-set -x
+#  echo "parentRefname: $parentRefname  parentRefType: $parentRefType"
   if [[ "$revision" == "-" ]]; then
     local type
     local guessedRefnames=()
@@ -1178,7 +1181,6 @@ set -x
     MODULE_STATUS[$MS_UNMANAGED]=0
 
   fi
-set +x
   if (( $toBeDeleted )); then
 
     if [[ 0 == ${doForce} && (1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[$MS_PUSHABLE]}) ]]; then
@@ -1996,7 +1998,7 @@ set_module_meta_mode() {
 
 
 set_lego_setting_concrete() {
-echo "$FUNCNAME()" $@ >&2
+#echo "$FUNCNAME()" $@ >&2
   local key="$1"
   [[ -z $key ]] && panic "$FUNCNAME() missing parameter 'key'"
   local value="$2"

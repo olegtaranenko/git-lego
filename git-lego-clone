@@ -137,7 +137,7 @@ cmd_default() {
   fi
 
   #set -x
-  echo ${args[@]} >&2
+#  echo ${args[@]} >&2
 
   # no explicit destination repository given
   # take from last created directory

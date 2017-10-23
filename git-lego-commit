@@ -227,7 +227,7 @@ cmd_default() {
     #    echo "git commit ${args[@]} ${#args[@]}"
 
         (( $doAppendUntracked )) && git add . -A
-echo "${args[@]}" >&2
+#echo "${args[@]}" >&2
         git commit "${args[@]}"
       done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
     fi

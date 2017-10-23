@@ -104,7 +104,7 @@ done
 #
 
 function prepare_push_level() {
-echo "$FUNCNAME() $@" >&2
+#echo "$FUNCNAME() $@" >&2
 
   local levelPath="$1"
   local moduleName="$2"

@@ -178,10 +178,10 @@ fi
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 checkout_level () {
-echo "$FUNCNAME()" $@ >&2
+#echo "$FUNCNAME()" $@ >&2
 
   local moduleName="$3"
-  [[ "$moduleName" == "viatra" ]] && set -x
+#  [[ "$moduleName" == "viatra" ]] && set -x
   local revision="$1"
   local modulePath="$2"
   local levelPath="$4"
@@ -213,15 +213,13 @@ echo "$FUNCNAME()" $@ >&2
   prepare_checkout_level "$revision" "$modulePath" "$moduleName" "$levelPath" "$parentRefname" "$parentRefType"
   ret=$?
 
-  echo "before: ${modulesBefore[@]}" >&2
-  echo "paths before: ${modulePathsBefore[@]}" >&2
-  echo "after: ${modulesAfter[@]}" >&2
-  echo "paths after: ${modulePathsAfter[@]}" >&2
-  echo "to add: ${addedModules[@]}" >&2
-#  echo "hashes: ${hashesAfter[@]}" >&2
-  echo "to delete: ${deletedModules[@]}" >&2
-#  echo "vetoed: ${vetoed}" >&2
-  echo "ret: ${ret}" >&2
+#  echo "before: ${modulesBefore[@]}" >&2
+#  echo "paths before: ${modulePathsBefore[@]}" >&2
+#  echo "after: ${modulesAfter[@]}" >&2
+#  echo "paths after: ${modulePathsAfter[@]}" >&2
+#  echo "to add: ${addedModules[@]}" >&2
+#  echo "to delete: ${deletedModules[@]}" >&2
+#  echo "ret: ${ret}" >&2
 
   if (( ! $ret )); then
 
@@ -324,7 +322,7 @@ echo "$FUNCNAME()" $@ >&2
 
         if (( "${#doRecreateCache[@]}" )); then
           recreate_modules_cache "${doRecreateCache[@]}"
-cat ${globals[$G_MODULES_FN]} >&2
+#cat ${globals[$G_MODULES_FN]} >&2
         fi
 
         # remove folders of deleted modules
