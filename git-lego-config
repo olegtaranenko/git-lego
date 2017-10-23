@@ -328,7 +328,6 @@ cmd_legomode() {
         (( $doModeUnset )) && nextLegoMode=empty
         currentMode=${g_lego_mode}
 
-set -x
         if [[ ${currentMode} != ${nextLegoMode} ]] || (( $doModeUnset )) || (( $doForce )); then
 #          git config ${scope:---local} "lego.mode" ${nextLegoMode} true
 
@@ -336,7 +335,6 @@ set -x
 
 #          set_module_meta_mode "mode" "$nextLegoMode" "lego" 0 "$currentMode"
           set_module_meta_mode "mode" "$nextLegoMode" "lego" "." "$nextLegoMode"
-          set +x
 #          local afterScopeRemove=$( get_lego_setting "mode")
 #          if [[ ${afterScopeRemove} == ${currentMode} && ${doModeUnset} == 0 && $doForce ]] ; then
 #            cw_echo "Lego mode changing was not successful, maybe because of global or system settings"
@@ -350,7 +348,7 @@ set -x
 #          fi
         else
           if (( $doModeUnset )) ; then
-            cw_echo "Lego mode is already not set."
+            cw_echo "Lego mode not yet set."
           else
             cw_echo "Lego mode is already set to $nextLegoMode."
           fi

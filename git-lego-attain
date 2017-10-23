@@ -163,6 +163,67 @@ fi
 typeset clearVersioned=0
 typeset clearSolo=0
 
+
+attain_module_mode() {
+#echo "$FUNCNAME()" $@ >&2
+#pwd >&2
+#set -x
+  local moduleName=$1
+  local mode=${2:-${g_lego_mode}}
+  local parentRefname=$3
+  local parentRefType=$4
+  local parentRepoFilePath=$5
+  local doUpdate=$6
+
+  local initRequired=1
+  local ret=0
+
+  local detached="${MODULE_STATUS[$MS_DETACHED]}"
+  local moduleRefType="${g_lego_aware_tokens_gitmodules[$detached]}"
+
+  if [[ $moduleRefType == "$parentRefType" ]]; then
+    initRequired=0
+  fi
+  local uninitialized=${MODULE_STATUS[$MS_UNINITIALIZED]}
+#  local managed=${MODULE_STATUS[$MS_MANAGED]}
+  local unmanaged=${MODULE_STATUS[$MS_UNMANAGED]}
+
+  if (( $unmanaged )) && (( ! $uninitialized )); then
+    local guessedRefname
+    local guessedReftype
+
+    local guessedRefnames=()
+    read guessedRefname guessedReftype < <(evaluate_attain_hint "$parentRefname" "$parentRefType")
+
+    if [[ -n "$guessedRefname" && -n "$guessedReftype" ]] ; then
+
+      if (( ! $initRequired )) || (( $doUpdate )); then
+        persist_attain_hint "1" "$moduleName" "$guessedRefname" "$guessedReftype" "$mode"
+      else
+        local hint="Module $moduleName can be "
+        if [[ ${guessedReftype} == branch ]]; then
+          hint+="attained"
+        else
+          hint+="pinned"
+        fi
+        hint+=" to ${guessedRefname}, but --update option required"
+        ## exclude $guessedRefname
+        local asWellRefs=()
+        if [[ ${#guessedRefnames[@]} > 1 ]]; then
+          for asWell in ${guessedRefnames[@]} ; do
+            [[ ${asWell} != ${guessedRefname} ]] && asWellRefs+=("$asWell")
+          done
+          hint+=". Other possible attainable (or pinnable) options are: ${asWellRefs[@]}"
+        fi
+        cw_echo "$hint"
+        cw_echo "See '$FLAGS_PREFIX --help' for more information"
+      fi
+    fi
+  fi
+
+  return "$ret"
+}
+
 attain_level() {
 #echo "$FUNCNAME()" $@ >&2
 
@@ -181,7 +242,7 @@ attain_level() {
       childRet=0
       local moduleName="${module[0]}"
       local localPath="${module[1]}"
-      local subRepoPath="${levelPath}"/"${localPath}"
+      local subRepoPath="$levelPath"/"$localPath"
 
       local modulePath="$2"
       if [[ ${modulePath:(-1)} != "/" ]]; then
@@ -193,17 +254,17 @@ attain_level() {
 
       if (( $initialized )) ; then
 
-        pushd "${subRepoPath}" &>/dev/null
-        module_porcelain_status "${modulePath}" attain
+        pushd "$subRepoPath" &>/dev/null
+        module_porcelain_status "$modulePath" attain
 #        echo ${MODULE_STATUS[@]} >&2
 
-        attain_module_mode "${moduleName}" "${nextLegoMode}" "${parentRefname}" "${parentRefType}" "${levelPath}" "$doUpdate"
+        attain_module_mode "$moduleName" "$nextLegoMode" "$parentRefname" "$parentRefType" "$levelPath" "$doUpdate"
         local detached="${MODULE_STATUS[$MS_DETACHED]}"
 
-        attain_level "${subRepoPath}" "${modulePath}" "${MODULE_STATUS[$MS_MODULE_REFNAME]}" "${g_lego_aware_tokens_gitmodules[$detached]}" "$nextLegoMode"
+        attain_level "$subRepoPath" "$modulePath" "${MODULE_STATUS[$MS_MODULE_REFNAME]}" "${g_lego_aware_tokens_gitmodules[$detached]}" "$nextLegoMode"
         local childRet=$?
 
-        (( $childRet > $ret )) && ret = "${childRet}"
+        (( $childRet > $ret )) && ret = "$childRet"
       else
         ret=1
         warnMsg="One or more modules are uninitialized!"
@@ -219,8 +280,8 @@ attain_level() {
 
 #set -x
 cmd_default() {
-  typeset modulePath=$(resolve_module_path "${initialPath}" ".")
-  read moduleName moduleFilePath < <(module_info "${modulePath}" "name" "path")
+  typeset modulePath=$(resolve_module_path "$initialPath" ".")
+  read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
   typeset affected=0
   typeset onEmptyMessage
   typeset skippedModules=()
@@ -231,7 +292,7 @@ cmd_default() {
 #  echo refType $refType refname $refname >&2
 #  [[ -z ${updateMessage} ]] && onEmptyMessage="update for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
 
-  pushd "${moduleFilePath}" &>/dev/null
+  pushd "$moduleFilePath" &>/dev/null
   attain_level "$moduleFilePath" "$modulePath" "$refname" "$refType" "$nextLegoMode"
   ret=$?
 

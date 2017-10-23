@@ -243,6 +243,7 @@ function merge_level () {
       local branchAfter=$(git config --file .gitmodules --get "submodule.${subModule}.branch" &> /dev/null)
       local commitAfter=$(git config --file .gitmodules --get "submodule.${subModule}.commit" &> /dev/null)
 
+#TODO signature changed
       merge_level "-" "${childModulePath}" "${subModule}" "${path}" "${added}" "${branchAfter}" "${commitAfter}"
     fi
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
@@ -260,12 +261,13 @@ cmd_default() {
   typeset skippedModules=()
   typeset affected=0
   typeset vetoed=0
-  #pushd ${path} &>/dev/null
-  cd ${path}
+  pushd ${path} &>/dev/null
+#  cd ${path}
   git rev-parse "${revision}" &> /dev/null
   (( $? )) && die "Revision '$revision' not exists in the module '$moduleName'"
 
 
+  # TODO signature changed
   prepare_checkout_level "${revision}" "${modulePath}" "${moduleName}" "${path}" 0
   if (( $? )); then
     if [[ -n $dieMsg ]]; then

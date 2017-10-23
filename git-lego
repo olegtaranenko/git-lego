@@ -126,6 +126,7 @@ MS_UPDATEABLE=19
 #
 # Outer module hint for inner one, symbolic reference (tag or branch) or just bare sha1, the inner module expected to be.
 MS_MANAGED_REFNAME=20
+MS_MANAGED_REFTYPE=29
 #
 # One or more branches referencing on the inner:HEAD, which can be synchronized to the branch after attaining without getting outer repo dirty
 # strings' array
@@ -146,6 +147,10 @@ MS_UPSTREAM=25
 # How many revisions ahead & behind to the module's upstream
 MS_UPSTREAM_AHEAD=26
 MS_UPSTREAM_BEHIND=27
+
+###############
+# LAST MS_=29 #
+###############
 
 
 ########################### CONSTANTS FOR MODULE FILE SYSTEM  ###############################################
@@ -225,19 +230,64 @@ umbrella_bootstrap (){
 #  echo $g_lego_mode ${implicit:-2}
 
   module_startup_investigate "${umbrellaRepoName}" "/" ".git" "${umbrellaRepoDir}" "/" 1 "${sha}" 1 "$NA"
-#  cat ${globals[$G_MODULES_FN]} >&2
+  cat ${globals[$G_MODULES_FN]} >&2
 #  echo ${g_module_name[@]} >&2
 #  echo ${g_module_inited[@]} >&2
 #  echo ${g_module_managed[@]} >&2
   popd &>/dev/null
+
   splash ${umbrellaRepoName} ${implicit}
 
   return 0
 }
 
 
-function module_startup_investigate() {
-#echo "$FUNCNAME() $@" >&2
+recreate_modules_cache() {
+echo "$FUNCNAME() $@" >&2
+  local modulePaths=("$@")
+echo "${modulePaths[@]}" >&2
+  local tmpDir="${globals[$G_SCRIPT_TMP_DIRECTORY]}"
+  local originalModules="${globals[$G_MODULES_FN]}"
+  local backup="$tmpDir/modules.bak"
+  local newCache="$tmpDir/modules.new"
+
+  local index=0
+  while read -a module; do
+    found=0
+    local modulePath=${module[$MFS_MODULE_PATH]}
+    
+    for changedPath in "${modulePaths[@]}"; do
+      if [[ "$changedPath" == "$modulePath" ]]; then
+        found=1
+        break
+      fi
+    done
+    
+    if (( $found )); then
+      local l_module_name="${g_module_name[$index]}"
+      local l_relative_paths="${g_relative_paths[$index]}"
+      local l_git_dirs="${g_git_dirs[$index]}"
+      local l_full_paths="${g_full_paths[$index]}"
+      local l_module_paths="${g_module_paths[$index]}"
+      local l_module_inited="${g_module_inited[$index]}"
+      local l_module_shas="${g_module_shas[$index]}"
+      local l_module_managed="${g_module_managed[$index]}"
+      local l_managed_refnames="${g_managed_refnames[$index]}"
+
+
+      echo "$l_module_name" "$l_relative_paths" "$l_git_dirs" "$l_full_paths" "$l_module_paths" "$l_module_inited" "$l_module_shas" "$l_module_managed" "$l_managed_refnames">>$newCache
+    else
+      echo "${module[@]}">>$newCache
+    fi
+
+    index=$(( $index + 1 ))
+  done < <(cat $originalModules)
+
+  mv $originalModules $backup
+  mv $newCache $originalModules
+}
+
+cache_module_descriptor() {
   local tmpModules=${globals[$G_MODULES_FN]}
   echo "$@">>${tmpModules}
   # keep all module descriptors' values in the global arrays for cached access
@@ -251,40 +301,70 @@ function module_startup_investigate() {
   g_module_shas+=($7)
   g_module_managed+=($8)
   g_managed_refnames+=($9)
+}
+
+function module_startup_investigate() {
+#echo "$FUNCNAME() $@" >&2
+
+  cache_module_descriptor $@
+
+  local module=()
 
   while read -a module
   do
-    local subModule=${module[$MFS_MODULE_NAME]}
-    local localPath="${module[MFS_RELATIVE_PATH]}"
-    local is_initialized=1
-    local moduleStatus=($(git submodule status -- ${subModule}))
-    local managed=($(resolve_module_managed "${localPath}" "${subModule}"))
+    local subModule="${module[$MFS_MODULE_NAME]}"       #0
+    local localPath="${module[MFS_RELATIVE_PATH]}"      #1
+
+    investigate_module "$subModule" "$localPath"
 
     pushd ${localPath} &>/dev/null
-    module+=($(get_repo_git_dir))             # MFS_GIT_DIR=2
-    module+=($(pwd))                          # MFS_FULL_PATH=3
-
-    if [[ $5 == "/" ]]; then                  # MFS_MODULE_PATH = 4
-      module+=("/$subModule")
-    else
-      module+=("$5/$subModule")
-    fi
-    if [[ ${moduleStatus:0:1} == "-" ]]; then
-      is_initialized=0
-    fi
-    module+=(${is_initialized})               #MFS_MODULE_INITIALIZED=5
-    local statusLine=("${moduleStatus}")
-    local sha=${statusLine[0]}
-    if [[ ${sha:0:1} == - || ${sha:0:1} == + ]]; then
-      sha=${sha:1}
-    fi
-    module+=(${sha})                          # MFS_MODULE_SHA 6
-    module+=("${managed[0]}")                 # MFS_MODULE_MANAGED 7
-    module+=("${managed[1]}")                 # MFS_MANAGED_REFNAME 8
-
     module_startup_investigate ${module[@]}
     popd &>/dev/null
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+}
+
+
+#
+# EXTERNAL: module :: array(2), prepared with moduleName & modulePath
+#
+investigate_module() {
+echo "$FUNCNAME() $@" >&2
+  local moduleName="$1"
+  local localPath="$2"
+#    local parentFilePath="$4"
+#    local pushPath
+#
+#    [[ -n "$parentFilePath" ]] && pushPath="$parentFilePath"
+#    [[ ${pushPath:-1} != "/" && ${localPath:0:1} != "/" ]] && pushPath+="/"
+#    pushPath+="$localPath"
+
+  local is_initialized=1
+  local moduleStatus=($(git submodule status -- ${moduleName}))
+  local managed=($(resolve_module_managed "${moduleName}" "${localPath}"))
+
+
+  pushd ${localPath} &>/dev/null
+  module+=($(get_repo_git_dir))             # MFS_GIT_DIR=2
+  module+=($(pwd))                          # MFS_FULL_PATH=3
+
+  if [[ $5 == "/" ]]; then                  # MFS_MODULE_PATH = 4
+    module+=("/$moduleName")
+  else
+    module+=("$5/$moduleName")
+  fi
+  if [[ ${moduleStatus:0:1} == "-" ]]; then
+    is_initialized=0
+  fi
+  module+=(${is_initialized})               #MFS_MODULE_INITIALIZED=5
+  local statusLine=("${moduleStatus}")
+  local sha=${statusLine[0]}
+  if [[ ${sha:0:1} == - || ${sha:0:1} == + ]]; then
+    sha=${sha:1}
+  fi
+  module+=(${sha})                          # MFS_MODULE_SHA 6
+  module+=("${managed[0]}")                 # MFS_MODULE_MANAGED 7
+  module+=("${managed[1]}")                 # MFS_MANAGED_REFNAME 8
+  popd &>/dev/null
 }
 
 
@@ -369,6 +449,56 @@ function splash() {
   cw_echo "${msg}"
 }
 
+get_possible_tag_unsafe() {
+  local ret=0
+  local tag
+  ## git status --porcelain does not shows get tag version
+  ## so we need to use 'old good' git status --long for that
+  while read -a output; do
+    # find out tag or has
+    # format HEAD detached at 23a34b or HEAD detached at refs/heads/master
+    local parsedLength="${#output[@]}"
+    tag="${output[$parsedLength-1]}"
+  done < <(git status --long -uno | grep "HEAD detached at")
+
+  echo "$tag"
+  return "$ret"
+}
+
+
+get_reftype_of_refname() {
+  local ret=0
+  local refType
+  local refName=$1
+  local blobName=$( get_blob_revision "$refName" )
+  local fullRefname=$( git rev-parse --symbolic-full-name HEAD 2>/dev/null )
+  ret=$?
+  if (( ! $ret )); then
+    case "$fullRefname" in
+      HEAD|'')
+        local possibleTag=$( get_possible_tag_unsafe )
+        ret=$?
+        if (( ! "$ret" )); then
+
+          local possibleSha=$( git rev-parse --short HEAD)
+          ret=$?
+
+          if [[ "$possibleSha" == "$possibleTag" ]]; then
+            refType="sha"
+          else
+            refType="pinned"
+          fi
+        fi
+        ;;
+      *)
+        refType="branch"
+        ;;
+    esac
+    echo "$refType"
+  fi
+  return "$ret"
+}
+
 
 function get_refname_from_head() {
 #  local type=${1:-full}
@@ -378,30 +508,30 @@ function get_refname_from_head() {
   local fullRefname=$( git rev-parse --symbolic-full-name HEAD 2>/dev/null )
   local ret=()
   local abbrevRefCheck=0
-  local token=sha
+  local token="sha"
   case ${fullRefname} in
     refs/tags/*)
       abbrevRefCheck=1
       refname=${fullRefname#refs/tags/}
-      token=pinned
+      token="pinned"
       ;;
     refs/heads/*)
       abbrevRefCheck=1
       refname=${fullRefname#refs/heads/}
-      token=branch
+      token="branch"
       ;;
 #    HEAD)
   esac
-  ret+=($token)
+  ret+=("$token")
   
   local option
   if (( $abbrevRefCheck )); then
-    option=--abbrev-ref
+    option="--abbrev-ref"
   else
-    option=--short
+    option=--"short"
   fi
 
-  fullRefname=$( git rev-parse ${option} HEAD 2>/dev/null )
+  fullRefname=$( git rev-parse "$option" HEAD 2>/dev/null )
   ret+=("$fullRefname")
   
 #  echo "${ret[@]}" >&2
@@ -681,17 +811,21 @@ function module_info () {
 
 function is_branch_exists() {
   [[ -z $1 ]] && (panic "'branch' argument for is_branch_exists() should be given")
-  local branchName=$1
-  local where=$2
-  local checkedSites=("", "${globals[$G_LEGO_REMOTE]}")
+  local branchName="$1"
+  local where="$2"
+  local checkingPlaces=("")
+  local remote="${globals[$G_LEGO_REMOTE]}"
+  if (( "${#remote}" )); then
+    checkingPlaces+="$remote/"
+  fi
+
   local ret=0
   if [[ -n $where ]]; then
     # TODO
     die "'where' parameter for is_branch_exists() not implemented yet"
   fi
 
-  for prefix in "${checkedSites[@]}"; do
-    (( ${#prefix} )) && prefix+="/"
+  for prefix in "${checkingPlaces[@]}"; do
     git rev-parse --no-revs "${prefix}${branchName}" &>/dev/null
     local ret=$?
 
@@ -733,44 +867,36 @@ function module_porcelain_status() {
   unset MODULE_STATUS
 
   local modulePath="$1"
+  local caller=$2
+
+  [[ -z ${modulePath} ]] && panic "$FUNCNAME(): missed parameter 'path'"
+
+  [[ $caller == push || $caller == pull ]] && remoteInteraction=1
+
   local moduleSha
   local managed
   local guessing=1
 
-  [[ -z ${modulePath} ]] && panic "$FUNCNAME() missed parameter 'path'"
+  read initialized managedReftype managedRefname < <(module_info ${modulePath} "initialized" "managed" "refname")
+  if [[ -z $initialized ]]; then
+    panic "$FUNCNAME(): Variable \$initialized is empty. Check code!"
+  fi
 
-  local caller=$2
-  [[ $caller == push || $caller == pull ]] && remoteInteraction=1
-  [[ $caller == checkout ]] && guessing=0
-
-  read initialized managedAlias managedRefname < <(module_info ${modulePath} initialized managed refname)
-
-  if [[ $managedAlias == unmanaged ]]; then
+  if [[ "$managedReftype" == "unmanaged" ]]; then
     MODULE_STATUS[$MS_UNMANAGED]=1
   else
-    local index=0
-    for alias in "${g_lego_aware_tokens_gitmodules[@]}" ; do
-      if [[ $alias == $managedAlias ]]; then
-        break
-      fi
-      index=$(( $index + 1 ))
-    done
-
     MODULE_STATUS[$MS_UNMANAGED]=0
-    MODULE_STATUS[$MS_MANAGED]=$index
+    MODULE_STATUS[$MS_MANAGED]=$( ref_type_index "$managedReftype")
 
-    if [[ -n $managedRefname && $managedRefname != "$NA" ]]; then
-      MODULE_STATUS[$MS_MANAGED_REFNAME]=${managedRefname}
+    if [[ -n "$managedRefname" && "$managedRefname" != "$NA" ]]; then
+      MODULE_STATUS[$MS_MANAGED_REFNAME]="$managedRefname"
     fi
 
   fi
-#  [[ $modulePath == /macosx ]] && die
 
   local moduleRefname
   declare -a output
-  if [[ -z $initialized ]]; then
-    die
-  fi
+
   if (( ! $initialized )) ; then
     MODULE_STATUS[$MS_UNINITIALIZED]=1
   else
@@ -794,20 +920,12 @@ function module_porcelain_status() {
 
               if [[ ${output[1]} == \(detached\) ]]; then
                 MODULE_STATUS[$MS_DETACHED]=1
-                ## git status --porcelain does not shows get tag version
-                ## so we need to use 'old good' git status --long for that
-                while read -a output; do
-                  # find out tag or has
-                  # format HEAD detached at 23a34b or HEAD detached at refs/heads/master
-                  local parsedLength=${#output[@]}
-                  moduleRefname=${output[$parsedLength-1]}
-                done < <(git status --long -uno | grep "HEAD detached at")
-
+                moduleRefname=$( get_possible_tag_unsafe )
                 if [[ -n ${moduleRefname} ]] ; then
                   MODULE_STATUS[$MS_MODULE_REFNAME]="${moduleRefname}"
 
                   local plainSha=$( git rev-parse --short "$moduleRefname" )
-                  if [[ "$moduleRefname" == $plainSha ]] ; then
+                  if [[ "$moduleRefname" == "$plainSha" ]] ; then
                     # specifies it's plain sha, not tag or detached head
                     MODULE_STATUS[$MS_DETACHED]=2
                   fi
@@ -816,16 +934,21 @@ function module_porcelain_status() {
                 MODULE_STATUS[$MS_DETACHED]=0
                 MODULE_STATUS[$MS_MODULE_REFNAME]=${output[1]}
               fi
-              if [[ (${MODULE_STATUS[$MS_DETACHED]} != ${MODULE_STATUS[$MS_MANAGED]}  ||  ${MODULE_STATUS[$MS_MANAGED_REFNAME]} != ${MODULE_STATUS[$MS_MODULE_REFNAME]} ) && ${MODULE_STATUS[$MS_UNMANAGED]} == 0 && $modulePath != / ]]; then
+
+              if [[ ( ${MODULE_STATUS[$MS_DETACHED]} != ${MODULE_STATUS[$MS_MANAGED]} ||  ${MODULE_STATUS[$MS_MANAGED_REFNAME]} != ${MODULE_STATUS[$MS_MODULE_REFNAME]} ) \
+                  && ${MODULE_STATUS[$MS_UNMANAGED]} == 0 \
+                  && $modulePath != "/" ]]
+              then
                 MODULE_STATUS[$MS_MISMATCHED]=1
 
-                if (( "$guessing" )) && (( ${MODULE_STATUS[$MS_DETACHED]} > 0 )) && [[ -n ${managedRefname} ]]; then
+                if (( ${MODULE_STATUS[$MS_DETACHED]} > 0 )) && [[ -n ${managedRefname} ]]; then
                   calculate_ab_for_tags "${managedRefname}"
                 fi
               else
                 MODULE_STATUS[$MS_MISMATCHED]=0
               fi
               ;;
+
             branch\.upstream)
               MODULE_STATUS[$MS_UPSTREAM]=${output[1]}
               ;;
@@ -873,6 +996,19 @@ function module_porcelain_status() {
 #  echo "$FUNCNAME(): ${MODULE_STATUS[@]}"
 }
 
+
+ref_type_index() {
+  local managedReftype="$1"
+  local index=0
+  for reftype in "${g_lego_aware_tokens_gitmodules[@]}" ; do
+    if [[ "$reftype" == "$managedReftype" ]]; then
+      break
+    fi
+    index=$(( $index + 1 ))
+  done
+
+  echo $index
+}
 
 function module_up() {
   cd $(git rev-parse --show-toplevel)"/.."
@@ -1016,23 +1152,34 @@ function import_gitmodules_section {
 
 function prepare_checkout_level() {
   echo ${FUNCNAME}": $@" >&2
+  pwd >&2
+
 #  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
-  local levelRevision="$1"
+  local revision="$1"
   local modulePath="$2"
   local moduleName="$3"
   local levelPath="$4"
-  local toBeDeleted="$5"
+  local parentRefname="$5"
+  local parentRefType="$6"
 
-  local ret=0 checkRevision
-  local childRet # child modules return code
+#TODO get it from array?
+  local toBeDeleted=0
+  local ret=0
 
-  pushd "${levelPath}" &>/dev/null
-#git cat-file -p HEAD | grep -E ^tree | sed -E "s/tree\ ([[:xdigit:]]*)/\1/"
-#git cat-file -s e1ab:.gitmodules&>/dev/null; echo $? 128 - not exists
+  module_porcelain_status "${modulePath}" checkout
+  echo "parentRefname: $parentRefname  parentRefType: $parentRefType"
+set -x
+  if [[ "$revision" == "-" ]]; then
+    local type
+    local guessedRefnames=()
+    read revision type < <( evaluate_attain_hint  "$parentRefname" "$parentRefType" )
+    MODULE_STATUS[$MS_MANAGED_REFNAME]="$revision"
+    MODULE_STATUS[$MS_MANAGED]=$( ref_type_index "$type")
+    MODULE_STATUS[$MS_UNMANAGED]=0
 
+  fi
+set +x
   if (( $toBeDeleted )); then
-
-    module_porcelain_status "${modulePath}" checkout
 
     if [[ 0 == ${doForce} && (1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[$MS_PUSHABLE]}) ]]; then
       dieMsg+="Module '$moduleName' has not committed or not pushed changes, but intended to be deleted as it does not exists in revision "
@@ -1040,26 +1187,14 @@ function prepare_checkout_level() {
     fi
 
   else
+    pwd >&2
     ### Use case when in new checkout revision the submodule not exists, but in current branch it is change
     ### It should be vetoed, but this veto can be disclosed only on the next call for getting if sub-module is
     ### commitable.
-
-    local isBranchRemote=$( is_branch_remote "$levelRevision" )
-    local blobRevision="$levelRevision"
-
-    if (( ! $isBranchRemote )); then
-      local untrackedBranches=($( retrieve_untracked_remote_branches 1))
-      for branch in "${untrackedBranches[@]}"; do
-        if [[ "$branch" == "$levelRevision" ]]; then
-          blobRevision="${globals[$G_LEGO_REMOTE]}/$levelRevision"
-        fi
-      done
-    fi
+    local blobRevision=$( get_blob_revision "$revision" )
 
     local noSubmodules=$(git cat-file -s "${blobRevision}":.gitmodules &>/dev/null; echo $?)
-
     if (( ! $noSubmodules )); then
-
       while read -a module; do
         local after="${module[0]}"
         modulesAfter+=("$after")
@@ -1094,11 +1229,14 @@ function prepare_checkout_level() {
 
       if (( ! $found )); then
         deletedModules+=("${before}")
+
+        ## TODO wrong stuff? MODULE_STATUS is populated now from deleted module (?!) should check!
         pushd "${localPath}" &>/dev/null
         module_porcelain_status "${pathBefore}" checkout
         popd  &>/dev/null
-        if [[ 0 == ${doForce} && (1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[$MS_PUSHABLE]}) ]]; then
-          dieMsg+="Module '$before' (maybe others as well) has not committed or not pushed changes, but intended to be deleted as it does not exists in revision $levelRevision"
+
+        if [[ 0 == ${doForce} && ( 1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[$MS_PUSHABLE]} ) ]]; then
+          dieMsg+="Module '$before' (maybe others as well) has not committed or not pushed changes, but intended to be deleted as it does not exists in revision $revision"
           return 1
         fi
       else
@@ -1117,14 +1255,6 @@ function prepare_checkout_level() {
         local hash
         local after="${modulesAfter[${moduleIndex}]}"
 
-        while read fmode otype mhash mname; do
-          if [[ "$mname" == "$after" ]]; then
-            hash="$mhash"
-            break
-          fi
-        done < <(git cat-file -p "${blobRevision}" | grep -E ^tree | sed -E "s/tree\ ([[:xdigit:]]*)/\1/" | xargs git cat-file -p)
-        hashesAfter+=("${hash}")
-
         found=0
         for pathBefore in "${modulePathsBefore[@]}"; do
           if [[ "$pathBefore" == "$pathAfter" ]]; then
@@ -1133,8 +1263,8 @@ function prepare_checkout_level() {
           fi
         done
 
-        if (( !found )); then
-          modulesAdded+=("${after}")
+        if (( ! $found )); then
+          addedModules+=("${after}")
         fi
 
         moduleIndex=$(( $moduleIndex + 1 ))
@@ -1142,66 +1272,83 @@ function prepare_checkout_level() {
     fi
   fi
 
-  popd &>/dev/null
+#  popd &>/dev/null
   return ${ret}
 } ## of prepare_checkout_level
 
 
 
-attain_module_mode() {
-echo "$FUNCNAME()" $@ >&2
-set -x
-  local moduleName=$1
-  local mode=${2:-${g_lego_mode}}
-  local parentRefname=$3
-  local parentRefType=$4
-  local parentRepoFilePath=$5
-  local doUpdate=$6
+persist_attain_hint() {
+  local doApply="$1"
+  local moduleName="$2"
+  local guessedRefname="$3"
+  local guessedReftype="$4"
+  local mode="${5:-${g_lego_mode}}"
+  local ret=0
 
-  local initRequired=1
-
-  local detached=${MODULE_STATUS[$MS_DETACHED]}
-  local moduleRefType=${g_lego_aware_tokens_gitmodules[$detached]}
-  if [[ $moduleRefType == $parentRefType ]]; then
-    initRequired=0
+  if (( "$doApply" )); then
+    cw_echo "About to update $moduleName to $guessedRefname..."
+    git checkout "$guessedRefname"
+    ret=$?
   fi
-  local uninitialized=${MODULE_STATUS[$MS_UNINITIALIZED]}
-#  local managed=${MODULE_STATUS[$MS_MANAGED]}
-  local unmanaged=${MODULE_STATUS[$MS_UNMANAGED]}
 
+  if (( "$ret" )); then
+    dieMsg="$FUNCNAME(): unexpected error by 'git checkout $guessedRefname'"
+  else
+    local key="$guessedReftype"
+    local section="submodule.$moduleName"
+    cw_echo "Module '$moduleName' is attained to $guessedRefname [$guessedReftype]"
+    set_module_meta_mode "$key" "$guessedRefname" "$section" ".." "$mode"
+  fi
 
-  if (( $unmanaged )) && (( ! $uninitialized )); then
+  return "$ret"
+}
+
+#
+# EXTERNAL : guessedRefnames - array of branches of tags
+#
+evaluate_attain_hint() {
+  local parentRefname="$1"
+  local parentRefType="$2"
+  local hint=()
 
     local guessedRefname
-    local guessedType=${parentRefType}
-    local guessedRefnames=()
+    local guessedReftype=${parentRefType}
 
     case ${parentRefType} in
       branch)
         guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_BRANCHES]})
         if (( ! ${#guessedRefnames[@]} )); then
-          guessedType=pinned
           guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_TAGS]})
+          if (( ! ${#guessedRefnames[@]} )); then
+            guessedReftype="pinned"
+          else
+            guessedReftype="sha"
+          fi
         fi
         ;;
       pinned)
         guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_TAGS]})
         if (( ! ${#guessedRefnames[@]} )); then
-          guessedType=branch
           guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_BRANCHES]})
+          if (( ! ${#guessedRefnames[@]} )); then
+            guessedReftype="branch"
+          else
+            guessedReftype="sha"
+          fi
         fi
         ;;
       sha)
-        guessedRefname=${MODULE_STATUS[$MS_MODULE_REFNAME]}
+          guessedRefname="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
         ;;
     esac
 
     if [[ ${#guessedRefnames[@]} == 1 ]]; then
-      guessedRefname=${guessedRefnames[0]}
-    elif [[ ${#guessedRefnames[@]} > 1 && -n ${parentRefname} ]]; then
-      for myRefname in ${guessedRefnames[@]}; do
-        if [[ "${myRefname}" == ${parentRefname} ]]; then
-          guessedRefname="${myRefname}"
+      guessedRefname="${guessedRefnames[0]}"
+    elif [[ ${#guessedRefnames[@]} > 1 && -n "$parentRefname" ]]; then
+      for myRefname in "${guessedRefnames[@]}"; do
+        if [[ "$myRefname" == "$parentRefname" ]]; then
+          guessedRefname="$myRefname"
         fi
       done
     fi
@@ -1210,40 +1357,9 @@ set -x
       guessedRefname=${guessedRefnames[0]}
     fi
 
-    local token
-    if [[ -n $guessedRefname && -n $guessedType ]] ; then
-      local key="${moduleName}.$guessedType"
-
-      if (( ! $initRequired )) || (( $doUpdate )); then
-        cw_echo "Module '$moduleName' is attained to ${guessedRefname} [${guessedType}]"
-        set_module_meta_mode "${key}" "${guessedRefname}" "submodule" ".." "$mode"
-        cw_echo "About to update $moduleName to $guessedRefname..."
-        git checkout "$guessedRefname"
-
-      else
-        local hint="Module $moduleName can be "
-        if [[ ${guessedType} == branch ]]; then
-          hint+="attained"
-        else
-          hint+="pinned"
-        fi
-        hint+=" to ${guessedRefname}, but --update option required"
-        ## exclude $guessedRefname
-        local asWellRefs=()
-        if [[ ${#guessedRefnames[@]} > 1 ]]; then
-          for asWell in ${guessedRefnames[@]} ; do
-            [[ ${asWell} != ${guessedRefname} ]] && asWellRefs+=("$asWell")
-          done
-          hint+=". Other possible attainable (or pinnable) options are: ${asWellRefs[@]}"
-        fi
-        hint+=". See '$FLAGS_PREFIX --help' for more information"
-        cw_echo "${hint}"
-      fi
-    fi
-  fi
-
-
-set +x
+  hint+=("$guessedRefname")
+  hint+=("$guessedReftype")
+  echo "${hint[@]}"
 }
 
 do_module_update() {
@@ -2011,6 +2127,28 @@ get_lego_mode() {
   echo ${results[@]}
 }
 
+get_blob_revision() {
+  local ret=0
+  local levelRevision="$1"
+  [[ -z "$levelRevision" ]] && ( ret=2; dieMsg="$FUNCNAME(): missing parameter 'revision'")
+  local blobRevision="$levelRevision"
+  if [[ -n "$levelRevision" ]]; then
+    local isBranchRemote=$( is_branch_remote "$levelRevision" )
+
+    if (( ! $isBranchRemote )); then
+      local untrackedBranches=($( retrieve_untracked_remote_branches 1))
+      for branch in "${untrackedBranches[@]}"; do
+        if [[ "$branch" == "$levelRevision" ]]; then
+          blobRevision="${globals[$G_LEGO_REMOTE]}/$levelRevision"
+          break
+        fi
+      done
+    fi
+  fi
+  echo "$blobRevision"
+  return "$ret"
+}
+
 is_branch_remote() {
   local ret=0
   local branch=${1}
@@ -2031,12 +2169,16 @@ retrieve_untracked_remote_branches() {
 #  [[ -z "$legoRemote" ]] && ( ret=2; dieMsg="Lego remote for is not set")
 
   local currentBranches=() remoteBranches=()
-  while read branch; do
-    currentBranches+=(${branch})
-  done < <(git branch --list)
+  while read -a branch; do
+    if [[ "${branch[0]}" == "*" ]]; then
+      currentBranches+=("${branch[1]}")
+    else
+      currentBranches+=("${branch[0]}")
+    fi
+  done < <(git branch --list | grep -v HEAD)
 
   while read rBranch; do
-    if [[ ${rBranch#${legoRemote}/} != "$rBranch" ]]; then
+    if [[ "${rBranch#${legoRemote}/}" != "$rBranch" ]]; then
       local strippedBranch="${rBranch#${legoRemote}/}"
 
       local found=0
@@ -2054,7 +2196,7 @@ retrieve_untracked_remote_branches() {
         fi
       fi
     fi
-  done < <(git branch -r)
+  done < <(git branch -r | grep -v HEAD)
 
   echo "${remoteBranches[@]}"
   return "$ret"

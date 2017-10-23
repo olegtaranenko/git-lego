@@ -30,7 +30,7 @@ COMPLETION_SH=${COMPLETION_DIR}/git-completion.bash
 
 
 typeset verbose=0
-#typeset PROFILE=0
+typeset PROFILE
 typeset doForce=0
 
 show_help() {
@@ -38,7 +38,7 @@ show_help() {
 
 	${0##*/} [.profile|.bash_profile|.bashrc|... any other shell script ...]
 
-        Install environment for git lego to specified profile file.
+      Install environment for git lego to specified profile file.
 	    By default (no profile given) script will look into first existing files in above list
 	    Note, that profile has to be executable.
 

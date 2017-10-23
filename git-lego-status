@@ -129,7 +129,7 @@ function show_current_module_status {
 
   # gather all additional fine information into $MODULE_STATUS global array
 #  [[ $modulePath == / ]] && set -x
-  module_porcelain_status "${modulePath}" status
+  module_porcelain_status "$modulePath" status
 #  [[ $modulePath == / ]] && set +x
 
   # two below variables are defined to cmd_default()
@@ -262,7 +262,7 @@ function show_current_module_status {
 
     if (( ${#infoIssues} )) ; then
       verboseIssues="issues: "$verboseIssues" paths"
-      verboseMsg+=("${verboseIssues}")
+      verboseMsg+=("$verboseIssues")
       oneLine+=", dirty: "${infoIssues}
     fi
 
@@ -295,16 +295,16 @@ function status_level() {
       childRet=0
       subModule="${module[0]}"
       localPath="${module[1]}"
-      subRepoPath=${levelPath}/${localPath}
+      subRepoPath="$levelPath/$localPath"
 
-      pushd "${subRepoPath}" &>/dev/null
+      pushd "$subRepoPath" &>/dev/null
       local modulePath="$3" #/$subModule"
       if [[ ${modulePath:(-1)} != "/" ]]; then
         modulePath+="/"
       fi
       modulePath+="$subModule"
 
-      status_level "${subRepoPath}" "${subModule}" "${modulePath}"
+      status_level "$subRepoPath" "$subModule" "$modulePath"
       childRet=$?
       if [[ ${childRet} > ${ret} ]] ; then
         ret=${childRet}
@@ -324,12 +324,12 @@ cmd_default() {
   local commitable
   local detached
 
-  local modulePath=$(resolve_module_path "${initialPath}" /)
-  read moduleName path < <(module_info "${modulePath}" "name" "path")
+  local modulePath=$(resolve_module_path "$initialPath" /)
+  read moduleName path < <(module_info "$modulePath" "name" "path")
 
   pushd ${path} &>/dev/null
   #baseModulePath=$(_m_pmd)
-  status_level "${path}" "${moduleName}" "${modulePath}"
+  status_level "$path" "$moduleName" "$modulePath"
   ret=$?
 
   if (( $commitable )); then
@@ -340,8 +340,8 @@ cmd_default() {
     fi
     msg+="."
     cw_cr
-    cw_echo "${msg}"
-    [[ -n ${msg2} ]] && cw_echo "${msg2}"
+    cw_echo "$msg"
+    [[ -n ${msg2} ]] && cw_echo "$msg2"
     (( ! $verbose )) && cw_echo "'${FLAGS_PREFIX} -v ' option to get output more verbose or '${FLAGS_PREFIX} --help for other options'"
     cw_cr
   fi

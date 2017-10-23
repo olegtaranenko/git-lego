@@ -201,9 +201,7 @@ function prepare_commit_level() {
 cmd_default() {
   typeset modulePath=$(resolve_module_path "${initialPath}" ".")
 
-set -x
   read moduleName moduleFilePath initialized managed < <(module_info "${modulePath}" "name" "path" "initialized" "managed")
-set +x
 
   typeset affected=0
   typeset onEmptyMessage
