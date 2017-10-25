@@ -1971,6 +1971,10 @@ wipe_section_if_empty () {
   if (( ! $notEmpty )); then
     if [[ $fileOption != '-f .gitlego' || -e .gitlego ]]; then
       git config ${fileOption} --remove-section "${section}" 2>/dev/null
+      read c fn < <(wc -w .gitlego 2>/dev/null)
+      if (( ! "$c" )); then
+        rm -f .gitlego &>/dev/null
+      fi
     fi
   fi
 }

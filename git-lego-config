@@ -289,7 +289,7 @@ cmd_parameter() {
 
 ## Just show current
 cmd_legomode() {
-#  echo "$FUNCNAME setLegoMode=$nextLegoMode"
+  echo "$FUNCNAME() setLegoMode=$nextLegoMode" >&2
   local currentMode
   local investigated
   local hint
@@ -326,28 +326,34 @@ cmd_legomode() {
       *)
 ###################    SET & UNSET LEGO MODE ##################
         (( $doModeUnset )) && nextLegoMode=empty
-        currentMode=${g_lego_mode}
+        read currentMode implicit < <(get_lego_mode 1)
+        if [[ "$currentMode" != "$nextLegoMode" ]] || (( "$implicit" )) || (( "$doModeUnset" )) || (( "$doForce" )); then
 
-        if [[ ${currentMode} != ${nextLegoMode} ]] || (( $doModeUnset )) || (( $doForce )); then
-#          git config ${scope:---local} "lego.mode" ${nextLegoMode} true
+          if (( "$implicit" )) && [[ "$currentMode" == "$nextLegoMode" ]]; then
+            case "$nextLegoMode" in
+            solo)
+              currentMode="versioned"
+              ;;
+            versioned)
+              currentMode="solo"
+              ;;
+            esac
 
-          wipe_lego_setting_at_mode mode lego "${currentMode}"
-
-#          set_module_meta_mode "mode" "$nextLegoMode" "lego" 0 "$currentMode"
-          set_module_meta_mode "mode" "$nextLegoMode" "lego" "." "$nextLegoMode"
-#          local afterScopeRemove=$( get_lego_setting "mode")
-#          if [[ ${afterScopeRemove} == ${currentMode} && ${doModeUnset} == 0 && $doForce ]] ; then
-#            cw_echo "Lego mode changing was not successful, maybe because of global or system settings"
-#          else
+          fi
+          if [[ "$currentMode" == "versioned" || "$currentMode" == "solo" ]]; then
             migrate_lego_mode ${nextLegoMode} ${currentMode}
-            if (( $doModeUnset )) ; then
-              cw_echo "Lego mode unset for ${scope:---local} scope"
-            else
-              cw_echo "Lego mode set to '$nextLegoMode' for ${scope:---local} scope"
-            fi
-#          fi
+            wipe_lego_setting_at_mode "mode" "lego" "$currentMode"
+          fi
+
+          set_module_meta_mode "mode" "$nextLegoMode" "lego" "." "$nextLegoMode"
+
+          if (( "$doModeUnset" )) ; then
+            cw_echo "Lego mode unset for ${scope:---local} scope"
+          else
+            cw_echo "Lego mode set to '$nextLegoMode' for ${scope:---local} scope"
+          fi
         else
-          if (( $doModeUnset )) ; then
+          if (( "$doModeUnset" )) ; then
             cw_echo "Lego mode not yet set."
           else
             cw_echo "Lego mode is already set to $nextLegoMode."
