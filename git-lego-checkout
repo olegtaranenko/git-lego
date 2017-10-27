@@ -345,7 +345,7 @@ checkout_level () {
 pwd >&2
 #set -x
         local subModule localPath refType refname
-#        read refType refname < <( get_refname_from_head )
+#        read refType refname < <( evaluate_refname )
         unset modulesBefore
         unset modulePathsBefore
         unset modulesAfter

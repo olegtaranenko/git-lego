@@ -188,7 +188,7 @@ cmd_default() {
   local modulePath="/"
 
   if [[ -z "$branchName" ]]; then
-    branchName=$( get_refname_from_head )
+    branchName=$( evaluate_refname )
   fi
 
   update_level "${moduleFilePath}" "${moduleName}" "${modulePath}" "." "$branchName"

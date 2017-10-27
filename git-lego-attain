@@ -22,22 +22,15 @@ function show_help() {
 cat << EOF
 
 NAME:
-    ${FLAGS_PREFIX} in git umbrella-managed modules
+    ${FLAGS_PREFIX}
 
 SYNOPSIS:
     '${FLAGS_PREFIX} [options] [-v|--verbose]'
-    '${FLAGS_PREFIX} [--local|--global|--system] --lego-mode[[=| [versioned|solo]] [--force|-f]' # view or set lego mode
 
 DESCRIPTION:
-    Initializes the git-lego workflow after the root repository is cloned. If the repository is git-lego-less,
-    it make some assumption and configures different settings are been used further.
-    Basically git-lego tries to be non-intrusive, ie. don''t pollute modules history. It will explore
-     using some common conventions, and can working without this step.
-    Be non-intrusive means not
-    But such working is very restrictive, ie. it defaulting to origin remote, and at the some time will block working
 
 EXAMPLES:
-    '${FLAGS_PREFIX} -v .' -> show verbose status for current module only
+    '${FLAGS_PREFIX} --auto' -> show verbose status for current module only
 
 
 OPTIONS:
@@ -50,25 +43,19 @@ EOF
 typeset currentLegoMode
 
 typeset verbose=0
-typeset doUpdate=0
-# solo (1) or global (0)
-# lego solo mode means that no any additional settings are stored to versioned files like .gitmodules or .gitrepo
-# That no git lego don''t pollute modules' history at all.
-# Global mode as opposed keep 'lego-aware' settings into history, which can be cloned later by other repo instances.
-# There are pros & cons of both solutions.
-typeset nextLegoMode # string
-typeset warnLegoMode=0 # boolean
-
-# scope where git-lego setting should be saved or read
-typeset scope #--local|--global|--system|-f .gitlego
-
-# to set or get git lego parameter
-typeset parameterKey parameterValue unsetParameter=0
+typeset doUpdate=1
 
 typeset autoAttach=$(get_lego_setting "autoAttach")
 autoAttach=$(READ_boolean ${autoAttach} 1) # 1 === true
+
 #typeset doRecursive=0
 typeset initialPath doRecursive=1  doForce=1
+typeset explicitModules=() explicitRefs=()
+
+# format: git-lego attain master: reference will be 'master'
+typeset reference
+
+typeset BAD_EXPLICIT_PARAM="Wrong format of explicit module -> reference parameter."
 
 ################################ PARAMETERS PARSING ################################
 #      set -x
@@ -108,36 +95,39 @@ while [[ -n $1 ]]; do
       doUpdate=0
       ;;
 
-		--lego-mode)
-			case $2 in
-        '')
-          warnLegoMode=1
-          ;;
-        --unset)
-          doModeUnset=1
-          ;;
-        --*)
-			    nextLegoMode=current
-          ;;
-        *)
-			    nextLegoMode=$2
-          shift
-          ;;
-			esac
-			;;
-		--lego-mode=*)
-			nextLegoMode="${1#--lego-mode=}"
-			;;
+    *\^*)
+      theModuleName="${1%%\^*}"
+      theRefName="${1#*\^}"
+      if [[ -n "$theModuleName" && -n "$theRefName" ]]; then
+        explicitModules+=("$theModuleName")
+        explicitRefs+=("$theRefName")
+      else
+        see_help "$BAD_EXPLICIT_PARAM"
+      fi
+      ;;
+
+    *=*)
+      theModuleName="${1%%=*}"
+      theRefName="${1#*=}"
+      if [[ -n "$theModuleName" && -n "$theRefName" ]]; then
+        explicitModules+=("$theModuleName")
+        explicitRefs+=("$theRefName")
+      else
+        see_help "$BAD_EXPLICIT_PARAM"
+      fi
+      ;;
 
     *)
       if (( $stopOptions )); then
         if [[ -z ${1%%-*} ]]; then
-          die "after '--' additional options ($1) are not allowed "
+          see_help "after '--' additional options ($1) are not allowed "
         else
-          afterDash+=($1)
+          explicitModules+=($1)
         fi
-      elif [[ -z ${1%%-*} ]]; then
-        args+=($1)
+#      elif [[ -z ${1%%-*} ]]; then
+#        args+=($1)
+      elif [[ -z ${reference} ]]; then
+        reference=$1
       elif [[ -z ${initialPath} ]]; then
         initialPath=$1
       else
@@ -149,136 +139,180 @@ while [[ -n $1 ]]; do
 done
 
 
-#set -x
-if [[ -n $nextLegoMode && $nextLegoMode != versioned && $nextLegoMode != solo && $nextLegoMode != current ]] || (( $warnLegoMode )) || [[ $g_lego_mode == empty ]]; then
-  warn "Git lego mode is not set or incorrect, defaulting to 'solo'. See 'git-lego config --lego-mode' for more information about Lego modes"
-  g_lego_mode=solo
-
-  nextLegoMode=${g_lego_mode}
+if (( ${#explicitModules[@]} )); then
+  modulesLen=${#explicitModules[@]}
+  refsLen=${#explicitRefs[@]}
+  if (( ! $refsLen )); then
+    see_help "Wrong reference for explicit modules"
+  fi
+  if [[ "$modulesLen" != "$refsLen" ]]; then
+    index=0
+    total="$modulesLen"
+    if [[ "$refsLen" > "$modulesLen" ]]; then
+      total="$refsLen"
+    fi
+    while [[ "$index" < "$total" ]]; do
+#      if [[ -z ${explicitModules[@]} ]]; then
+#      fi
+      index=$(( $index + 1 ))
+    done
+  fi
 fi
-#set +x
+
+if [[ -n "$reference" ]]; then
+  explicitRefs+=("$reference")
+fi
+
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 
-typeset clearVersioned=0
-typeset clearSolo=0
-
 
 attain_module_mode() {
-#echo "$FUNCNAME()" $@ >&2
+echo "$FUNCNAME()" $@ >&2
 #pwd >&2
-#set -x
-  local moduleName=$1
-  local mode=${2:-${g_lego_mode}}
-  local parentRefname=$3
-  local parentRefType=$4
-  local parentRepoFilePath=$5
-  local doUpdate=$6
+  local moduleName="$1"
+  local modulePath="$2"
+  local parentRefname="$3"
+  local parentRefType="$4"
+
+  local legoMode=${g_lego_mode}
+
+  if [[ $legoMode != "versioned" ]]; then
+    legoMode="solo"
+  fi
 
   local initRequired=1
   local ret=0
 
+  module_porcelain_status "$modulePath" "attain"
+
   local detached="${MODULE_STATUS[$MS_DETACHED]}"
   local moduleRefType="${g_lego_aware_tokens_gitmodules[$detached]}"
 
-  if [[ $moduleRefType == "$parentRefType" ]]; then
+  if [[ "$moduleRefType" == "$parentRefType" ]]; then
     initRequired=0
   fi
-  local uninitialized=${MODULE_STATUS[$MS_UNINITIALIZED]}
-#  local managed=${MODULE_STATUS[$MS_MANAGED]}
-  local unmanaged=${MODULE_STATUS[$MS_UNMANAGED]}
 
-  if (( $unmanaged )) && (( ! $uninitialized )); then
-    local guessedRefname
-    local guessedReftype
+  local uninitialized="${MODULE_STATUS[$MS_UNINITIALIZED]}"
+  local unmanaged="${MODULE_STATUS[$MS_UNMANAGED]}"
 
-    local guessedRefnames=()
-    read guessedRefname guessedReftype < <(evaluate_attain_hint "$parentRefname" "$parentRefType")
+#set -x
+  if [[ "$modulePath" != "/" ]] && (( ! "$uninitialized" )); then
+    if (( "$unmanaged" )); then
+      local guessedRefname
+      local guessedReftype
 
-    if [[ -n "$guessedRefname" && -n "$guessedReftype" ]] ; then
+      local guessedRefnames=()
+      read guessedRefname guessedReftype < <(evaluate_attain_hint "$parentRefname" "$parentRefType")
 
-      if (( ! $initRequired )) || (( $doUpdate )); then
-        persist_attain_hint "1" "$moduleName" "$guessedRefname" "$guessedReftype" "$mode"
-      else
-        local hint="Module $moduleName can be "
-        if [[ ${guessedReftype} == branch ]]; then
-          hint+="attained"
+      if [[ -n "$guessedRefname" && -n "$guessedReftype" ]] ; then
+        if (( "$doUpdate" )); then
+          persist_attain_hint "1" "$moduleName" "$guessedRefname" "$guessedReftype" "$legoMode"
         else
-          hint+="pinned"
+          local hint="Module $moduleName can be "
+          if [[ "${guessedReftype}" == "branch" ]]; then
+            hint+="attained"
+          else
+            hint+="pinned"
+          fi
+          hint+=" to ${guessedRefname}, but --update option required"
+          ## exclude $guessedRefname
+          if [[ "${#guessedRefnames[@]}" > 1 ]]; then
+            local asWellRefs=()
+            calculate_as_well_refnames "$guessedRefname"
+            hint+=". Other possible attainable (or pinnable) options are: ${asWellRefs[@]}"
+          fi
+          cw_echo "$hint"
+          cw_echo "See '$FLAGS_PREFIX --help' for more information"
         fi
-        hint+=" to ${guessedRefname}, but --update option required"
-        ## exclude $guessedRefname
-        local asWellRefs=()
-        if [[ ${#guessedRefnames[@]} > 1 ]]; then
-          for asWell in ${guessedRefnames[@]} ; do
-            [[ ${asWell} != ${guessedRefname} ]] && asWellRefs+=("$asWell")
-          done
-          hint+=". Other possible attainable (or pinnable) options are: ${asWellRefs[@]}"
-        fi
-        cw_echo "$hint"
-        cw_echo "See '$FLAGS_PREFIX --help' for more information"
       fi
     fi
   fi
-
+set +x
   return "$ret"
 }
 
 attain_level() {
 #echo "$FUNCNAME()" $@ >&2
 
-  local levelPath="$1"
-  local parentRefname="$3"
-  local parentRefType="$4"
-  local nextLegoMode="${5:-${g_lego_mode}}"
+  local parentName="$1"
+  local levelPath="$2"
+  local modulePath="$3"
+  local refName="$4"
+  local refType="$5"
+
+  local legoMode="${g_lego_mode}"
   local ret=0
 
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
-  local ret=0   # return code, 0 - the repo is syncronized
-  local childRet # child return code
+set -x
+  if [[ -z "$refName" || -z "$refType" ]]; then
+    local refsCount=${#explicitRefs[@]}
 
-  if [ -f .gitmodules ]; then
-    while read -a module; do
-      childRet=0
-      local moduleName="${module[0]}"
-      local localPath="${module[1]}"
-      local subRepoPath="$levelPath"/"$localPath"
+    if [[ -z "$refName" ]] && (( "$refsCount" )); then
+      refName=${explicitRefs[$refsCount-1]}
+    fi
 
-      local modulePath="$2"
-      if [[ ${modulePath:(-1)} != "/" ]]; then
-        modulePath+="/"
-      fi
-      modulePath+="$moduleName"
-
-      read initialized < <( module_info ${modulePath} initialized )
-
-      if (( $initialized )) ; then
-
-        pushd "$subRepoPath" &>/dev/null
-        module_porcelain_status "$modulePath" attain
-#        echo ${MODULE_STATUS[@]} >&2
-
-        attain_module_mode "$moduleName" "$nextLegoMode" "$parentRefname" "$parentRefType" "$levelPath" "$doUpdate"
-        local detached="${MODULE_STATUS[$MS_DETACHED]}"
-
-        attain_level "$subRepoPath" "$modulePath" "${MODULE_STATUS[$MS_MODULE_REFNAME]}" "${g_lego_aware_tokens_gitmodules[$detached]}" "$nextLegoMode"
-        local childRet=$?
-
-        (( $childRet > $ret )) && ret = "$childRet"
-      else
-        ret=1
-        warnMsg="One or more modules are uninitialized!"
-      fi
-      popd  &>/dev/null
-    done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+    read currentRefType currentRefName < <( evaluate_refname "$refName" )
+    if [[ -z "$refName" ]]; then
+      refName="$currentRefName"
+    fi
+    
+    if [[ -z "$refType" ]]; then
+      refType="$currentRefType"
+    fi
   fi
+set +x
+  local ret=0   # return code, 0 - OK
+  local childRet # sub-lever return code
+
+  pushd "$levelPath" &>/dev/null
+  attain_module_mode "$parentName" "$modulePath" "$refName" "$refType"
+  ret=$?
+
+  if (( ! $ret )); then
+
+    local detached="${MODULE_STATUS[$MS_DETACHED]}"
+    local refName="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
+    local refType="${g_lego_aware_tokens_gitmodules[$detached]}"
+
+    if [ -f .gitmodules ]; then
+      while read -a module; do
+        childRet=0
+        local moduleName="${module[0]}"
+        local localPath="${module[1]}"
+        local subModuleFilePath="$levelPath"/"$localPath"
+
+        local subModulePath="$modulePath"
+        if [[ ${subModulePath:(-1)} != "/" ]]; then
+          subModulePath+="/"
+        fi
+        subModulePath+="$moduleName"
+
+        local initialized=$( module_info "${subModulePath}" "initialized" )
+
+        if (( $initialized )) ; then
+
+          attain_level "$moduleName" "$subModuleFilePath" "$subModulePath" "$refName" "$refType"
+          local childRet=$?
+
+          (( "$childRet" > "$ret" )) && ret = "$childRet"
+        else
+          ret=1
+          warnMsg="One or more modules are uninitialized!"
+        fi
+      done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+    fi
+  fi
+
+  popd  &>/dev/null
+
   return "$ret"
 }
 
 
 ################################ MAIN SCRIPT LOGIC ################################
 
-#set -x
 cmd_default() {
   typeset modulePath=$(resolve_module_path "$initialPath" ".")
   read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
@@ -286,14 +320,14 @@ cmd_default() {
   typeset onEmptyMessage
   typeset skippedModules=()
   typeset warnMsg
-#  pwd >&2
-  local ret
-  read refType refname < <( get_refname_from_head )
-#  echo refType $refType refname $refname >&2
-#  [[ -z ${updateMessage} ]] && onEmptyMessage="update for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
 
-  pushd "$moduleFilePath" &>/dev/null
-  attain_level "$moduleFilePath" "$modulePath" "$refname" "$refType" "$nextLegoMode"
+  local ret
+
+#  pushd "$moduleFilePath" &>/dev/null
+  if [[ -z "$moduleFilePath" ]]; then
+    see_help "Wrong specification of the module"
+  fi
+  attain_level "$moduleName" "$moduleFilePath" "$modulePath" #"$refName" "$refType"
   ret=$?
 
   if (( $verbose )); then
@@ -302,7 +336,7 @@ cmd_default() {
     fi
   fi
 
-  popd &>/dev/null
+#  popd &>/dev/null
   umbrella_finalize
   return $ret
 }

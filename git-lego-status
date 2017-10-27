@@ -23,7 +23,7 @@ function show_help() {
 cat << EOF
 
 NAME:
-    ${FLAGS_PREFIX} status in git lego-managed modules
+    ${FLAGS_PREFIX} in git lego-managed modules
 
 SYNOPSIS:
     '${FLAGS_PREFIX} [<any-git-status-options>] [-v|--verbose] [<path-resolution>] -- [[<module-name>] ...]'
@@ -248,17 +248,25 @@ function show_current_module_status {
 #      verboseMsg+=("Expected, that module should be initialized to ${MODULE_STATUS[$MS_MANAGED_REFNAME]}")
 #    fi
 
-    if (( $mismatched )) || (( $unmanaged )) ; then
-      if (( $detached )); then
+#    if (( $mismatched )) || (( $unmanaged )) ; then
+#      if (( $detached )); then
+#      fi
+#    fi
+        local guessedRefnames=()
+        local asWellRefs=()
         if [[ -n ${MODULE_STATUS[$MS_GUESSED_BRANCHES]} ]]; then
-          oneLine+=", attainable to: ${MODULE_STATUS[$MS_GUESSED_BRANCHES]}"
+          guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_BRANCHES]})
+          asWellRefs=()
+          calculate_as_well_refnames "$managedRefname"
+          oneLine+=", attainable to: ${asWellRefs[@]}"
         fi
 
         if [[ -n ${MODULE_STATUS[$MS_GUESSED_TAGS]} ]]; then
-          oneLine+=", pinnable to: ${MODULE_STATUS[$MS_GUESSED_TAGS]}"
+          guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_TAGS]})
+          asWellRefs=()
+          calculate_as_well_refnames "$managedRefname"
+          oneLine+=", pinnable to: ${asWellRefs[@]}"
         fi
-      fi
-    fi
 
     if (( ${#infoIssues} )) ; then
       verboseIssues="issues: "$verboseIssues" paths"

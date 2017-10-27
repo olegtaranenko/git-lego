@@ -387,6 +387,15 @@ function die() {
   exit 1
 }
 
+function see_help() {
+  local msg=$1
+  if [[ -n "$msg" ]]; then
+    msg+=" Type '$FLAGS_PREFIX --help' for more information"
+  fi
+
+  die "$msg"
+}
+
 function panic() {
   local msg="$1"
   [ -z "${msg}" ] && "Unexpected error. Please check the code or file bug to the forum/github/etc"
@@ -503,13 +512,19 @@ get_reftype_of_refname() {
   return "$ret"
 }
 
-
-function get_refname_from_head() {
+#
+# Evaluate and return refname and type of the repository.
+# The repo's head can be either detached ('tag' or plain 'sha' or git checkout ... --detach or git checkout origin/master)
+# or headed to some 'branch' (possible values for reftype)
+# If reftype is branch,
+#
+function evaluate_refname() {
 #  local type=${1:-full}
 #  if [[ $type == full ]]; then
 #    option=--symbolic-full-name
 #  fi
-  local fullRefname=$( git rev-parse --symbolic-full-name HEAD 2>/dev/null )
+  local refName=${1:-HEAD}
+  local fullRefname=$( git rev-parse --symbolic-full-name "$refName" 2>/dev/null )
   local ret=()
   local abbrevRefCheck=0
   local token="sha"
@@ -519,7 +534,7 @@ function get_refname_from_head() {
       refname=${fullRefname#refs/tags/}
       token="pinned"
       ;;
-    refs/heads/*)
+    refs/heads/*|refs/remotes/${legoRemote}/*)
       abbrevRefCheck=1
       refname=${fullRefname#refs/heads/}
       token="branch"
@@ -532,10 +547,10 @@ function get_refname_from_head() {
   if (( $abbrevRefCheck )); then
     option="--abbrev-ref"
   else
-    option=--"short"
+    option="--short"
   fi
 
-  fullRefname=$( git rev-parse "$option" HEAD 2>/dev/null )
+  fullRefname=$( git rev-parse "$option" "$refName" 2>/dev/null )
   ret+=("$fullRefname")
   
 #  echo "${ret[@]}" >&2
@@ -820,7 +835,7 @@ function is_branch_exists() {
   local checkingPlaces=("")
   local remote="${globals[$G_LEGO_REMOTE]}"
   if (( "${#remote}" )); then
-    checkingPlaces+="$remote/"
+    checkingPlaces+=("$remote/")
   fi
 
   local ret=0
@@ -1036,6 +1051,20 @@ calculate_ab_for_tags() {
       MODULE_STATUS[$MS_UPSTREAM_BEHIND]=$(( $out + 0 ))
     fi
   fi
+}
+
+
+#
+# External arrays:
+#     guessedRefnames
+#     asWell
+#
+calculate_as_well_refnames() {
+  local refName=$1
+
+  for asWell in ${guessedRefnames[@]} ; do
+    [[ "${asWell}" != "${refName}" ]] && asWellRefs+=("$asWell")
+  done
 }
 
 
@@ -1283,28 +1312,31 @@ function prepare_checkout_level() {
 persist_attain_hint() {
   local doApply="$1"
   local moduleName="$2"
-  local guessedRefname="$3"
-  local guessedReftype="$4"
+  local refName="$3"
+  local refType="$4"
   local mode="${5:-${g_lego_mode}}"
   local ret=0
 
-  if (( "$doApply" )); then
-    cw_echo "About to update $moduleName to $guessedRefname..."
-    git checkout "$guessedRefname"
+  # Do checkout for branches only.
+  # currently tag or sha reference will not affect ot the reporting (possible bug, currently in 2.14.2)
+  if (( "$doApply" )) && [[ "$refType" == "branch" ]]; then
+    cw_echo "About to update $moduleName to $refName..."
+    git checkout "$refName"
     ret=$?
   fi
 
   if (( "$ret" )); then
-    dieMsg="$FUNCNAME(): unexpected error by 'git checkout $guessedRefname'"
+    dieMsg="$FUNCNAME(): unexpected error by 'git checkout $refName'"
   else
-    local key="$guessedReftype"
+    local key="$refType"
     local section="submodule.$moduleName"
-    cw_echo "Module '$moduleName' is attained to $guessedRefname [$guessedReftype]"
-    set_module_meta_mode "$key" "$guessedRefname" "$section" ".." "$mode"
+    cw_echo "Module '$moduleName' is attained to $refName [$refType]"
+    set_module_meta_mode "$key" "$refName" "$section" ".." "$mode"
   fi
 
   return "$ret"
 }
+
 
 #
 # EXTERNAL : guessedRefnames - array of branches of tags
@@ -1314,55 +1346,60 @@ evaluate_attain_hint() {
   local parentRefType="$2"
   local hint=()
 
-    local guessedRefname
-    local guessedReftype=${parentRefType}
+  local guessedRefname
+  local guessedReftype=${parentRefType}
 
-    case ${parentRefType} in
-      branch)
-        guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_BRANCHES]})
-        if (( ! ${#guessedRefnames[@]} )); then
-          guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_TAGS]})
-          if (( ! ${#guessedRefnames[@]} )); then
-            guessedReftype="pinned"
-          else
-            guessedReftype="sha"
-          fi
-        fi
-        ;;
-      pinned)
+  case ${parentRefType} in
+    branch)
+      guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_BRANCHES]})
+      if (( ! ${#guessedRefnames[@]} )); then
         guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_TAGS]})
-        if (( ! ${#guessedRefnames[@]} )); then
-          guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_BRANCHES]})
-          if (( ! ${#guessedRefnames[@]} )); then
-            guessedReftype="branch"
-          else
-            guessedReftype="sha"
-          fi
+        if (( ${#guessedRefnames[@]} )); then
+          guessedReftype="pinned"
+        else
+          guessedReftype="sha"
         fi
-        ;;
-      sha)
-          guessedRefname="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
-        ;;
-    esac
-
-    if [[ ${#guessedRefnames[@]} == 1 ]]; then
-      guessedRefname="${guessedRefnames[0]}"
-    elif [[ ${#guessedRefnames[@]} > 1 && -n "$parentRefname" ]]; then
-      for myRefname in "${guessedRefnames[@]}"; do
-        if [[ "$myRefname" == "$parentRefname" ]]; then
-          guessedRefname="$myRefname"
+      fi
+      ;;
+    pinned)
+      guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_TAGS]})
+      if (( ! ${#guessedRefnames[@]} )); then
+        guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_BRANCHES]})
+        if (( ${#guessedRefnames[@]} )); then
+          guessedReftype="branch"
+        else
+          guessedReftype="sha"
         fi
-      done
-    fi
+      fi
+      ;;
+#    sha)
+#      guessedRefname="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
+#      ;;
+  esac
 
-    if [[ -z ${guessedRefname} && ${#guessedRefnames[@]} ]]; then
-      guessedRefname=${guessedRefnames[0]}
-    fi
+  if [[ ${#guessedRefnames[@]} == 1 ]]; then
+    guessedRefname="${guessedRefnames[0]}"
+  elif [[ ${#guessedRefnames[@]} > 1 && -n "$parentRefname" ]]; then
+    for myRefname in "${guessedRefnames[@]}"; do
+      if [[ "$myRefname" == "$parentRefname" ]]; then
+        guessedRefname="$myRefname"
+      fi
+    done
+  fi
+
+  if [[ -z "${guessedRefname}" && "${#guessedRefnames[@]}" ]]; then
+    guessedRefname="${guessedRefnames[0]}"
+  fi
+
+  if [[ -z "${guessedRefname}" ]]; then
+    guessedRefname="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
+  fi
 
   hint+=("$guessedRefname")
   hint+=("$guessedReftype")
   echo "${hint[@]}"
 }
+
 
 do_module_update() {
 #echo "$FUNCNAME()" $@ >&2
@@ -1404,7 +1441,6 @@ do_module_update() {
       fi
     fi
   fi
-
 }
 
 
@@ -1449,8 +1485,9 @@ update_level() {
   fi
 }
 
-
-##
+#
+## DEPRECATED in favor of attain/update commands
+#
 ## Checks branching state for current repository
 ## Let name the branch is synchronized if entry submodule.<module-name>.branch in .gitmodules is matched
 ## to the branch of the sub-repository, (what can be checked via 'cd module-path; git branch',
