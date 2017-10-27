@@ -228,7 +228,6 @@ echo "$FUNCNAME()" $@ >&2
       fi
     fi
   fi
-set +x
   return "$ret"
 }
 
@@ -245,7 +244,6 @@ attain_level() {
   local ret=0
 
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
-set -x
   if [[ -z "$refName" || -z "$refType" ]]; then
     local refsCount=${#explicitRefs[@]}
 
@@ -262,7 +260,6 @@ set -x
       refType="$currentRefType"
     fi
   fi
-set +x
   local ret=0   # return code, 0 - OK
   local childRet # sub-lever return code
 

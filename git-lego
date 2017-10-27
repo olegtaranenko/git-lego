@@ -483,7 +483,7 @@ get_reftype_of_refname() {
   local ret=0
   local refType
   local refName=$1
-  local blobName=$( get_blob_revision "$refName" )
+#  local blobName=$( get_blob_revision "$refName" )
   local fullRefname=$( git rev-parse --symbolic-full-name HEAD 2>/dev/null )
   ret=$?
   if (( ! $ret )); then
@@ -507,16 +507,18 @@ get_reftype_of_refname() {
         refType="branch"
         ;;
     esac
-    echo "$refType"
   fi
+
+  echo "$refType"
   return "$ret"
 }
+
 
 #
 # Evaluate and return refname and type of the repository.
 # The repo's head can be either detached ('tag' or plain 'sha' or git checkout ... --detach or git checkout origin/master)
 # or headed to some 'branch' (possible values for reftype)
-# If reftype is branch,
+# If reftype is branch, we checking remote branches as well, which names are equals.
 #
 function evaluate_refname() {
 #  local type=${1:-full}
@@ -531,18 +533,23 @@ function evaluate_refname() {
   case ${fullRefname} in
     refs/tags/*)
       abbrevRefCheck=1
-      refname=${fullRefname#refs/tags/}
+      refname="${fullRefname#refs/tags/}"
       token="pinned"
       ;;
-    refs/heads/*|refs/remotes/${legoRemote}/*)
+    refs/heads/*)
       abbrevRefCheck=1
-      refname=${fullRefname#refs/heads/}
+      refname="${fullRefname#refs/heads/}"
+      token="branch"
+      ;;
+    refs/remotes/$legoRemote/*)
+      abbrevRefCheck=1
+      refname="${fullRefname#refs/remotes/$legoRemote/}"
       token="branch"
       ;;
 #    HEAD)
   esac
   ret+=("$token")
-  
+
   local option
   if (( $abbrevRefCheck )); then
     option="--abbrev-ref"
@@ -552,10 +559,11 @@ function evaluate_refname() {
 
   fullRefname=$( git rev-parse "$option" "$refName" 2>/dev/null )
   ret+=("$fullRefname")
-  
+
 #  echo "${ret[@]}" >&2
   echo "${ret[@]}"
 }
+
 
 function get_repo_url() {
   [[ -n $1 && $1 != "." ]] && pushd $1  &>/dev/null
@@ -828,36 +836,61 @@ function module_info () {
 }
 
 
+#
+#
+#
 function is_branch_exists() {
   [[ -z $1 ]] && (panic "'branch' argument for is_branch_exists() should be given")
   local branchName="$1"
-  local where="$2"
-  local checkingPlaces=("")
+  local metrics="${2:-0}"
+
   local remote="${globals[$G_LEGO_REMOTE]}"
+  local checkingPlaces=()
+
+
   if (( "${#remote}" )); then
+    local givenRemote=0
+
+    if [[ "${branchName#refs/remotes/$remote/}" != "$branchName" || "${branchName#remotes/$remote/}" != "$branchName" || "${branchName#$remote/}" != "$branchName" ]]; then
+      givenRemote=1
+    fi
+
+    if (( ! $givenRemote )); then
+      checkingPlaces+=("")
+    fi
+
     checkingPlaces+=("$remote/")
   fi
 
-  local ret=0
-  if [[ -n $where ]]; then
-    # TODO
-    die "'where' parameter for is_branch_exists() not implemented yet"
+  if (( ! "${#checkingPlaces[@]}" )); then
+    checkingPlaces+=("")
   fi
 
+  local ret=0
+
+  local found=(0)
   for prefix in "${checkingPlaces[@]}"; do
-    git rev-parse --no-revs "${prefix}${branchName}" &>/dev/null
+    local prefixBranch="${prefix}${branchName}"
+    git rev-parse --no-revs "$prefixBranch" &>/dev/null
     local ret=$?
 
-    # inverting
     if (( ! $ret )); then
-      ret=1
-    else
-      ret=0
+      found[0]=1
+
+      if (( "$metrics" )); then
+        found+=("$prefixBranch")
+
+        if [[ -n "$prefix" ]]; then
+          found+=(1)
+        else
+          found+=(0)
+        fi
+      fi
       break
     fi
   done
 
-  echo ${ret}
+  echo "${found[@]}"
   return ${ret}
 }
 
@@ -961,7 +994,7 @@ function module_porcelain_status() {
                 MODULE_STATUS[$MS_MISMATCHED]=1
 
                 if (( ${MODULE_STATUS[$MS_DETACHED]} > 0 )) && [[ -n ${managedRefname} ]]; then
-                  calculate_ab_for_tags "${managedRefname}"
+                  calculate_ab_for_tag "${managedRefname}"
                 fi
               else
                 MODULE_STATUS[$MS_MISMATCHED]=0
@@ -1035,29 +1068,94 @@ function module_up() {
 }
 
 
-calculate_ab_for_tags() {
+#
+# External arrays:
+#     MODULE_STATUS
+#
+calculate_ab_for_tag() {
 #  echo "$FUNCNAME()" >&2
   local rev=$1
   local against=${2:-HEAD}
-  local ret=()
+  local ret=0
+  local ab=()
   local reachable=$( git merge-base "$rev" "$against" 2>/dev/null | wc -l )
-  if (( $reachable )); then
-    local out=$( git rev-list "$against".."$rev" 2>/dev/null | wc -l )
-    local a=$(( $out + 0 ))
-    if (( $a )); then
-      MODULE_STATUS[$MS_UPSTREAM_AHEAD]=$a
-    else
-      out=$( git rev-list "$rev".."$against" 2>/dev/null | wc -l )
-      MODULE_STATUS[$MS_UPSTREAM_BEHIND]=$(( $out + 0 ))
+  ret=$?
+
+  if (( ! "$ret" )); then
+    if (( "$reachable" )); then
+      local out=$( git rev-list "$against".."$rev" 2>/dev/null | wc -l )
+      ret=$?
+      if (( ! "$ret" )); then
+        local a=$(( $out + 0 ))
+        ab+=(+"$a")
+        MODULE_STATUS[$MS_UPSTREAM_AHEAD]="$a"
+
+        out=$( git rev-list "$rev".."$against" 2>/dev/null | wc -l )
+        ret=$?
+
+        if (( ! "$ret" )); then
+          local b=$(( $out + 0 ))
+          MODULE_STATUS[$MS_UPSTREAM_BEHIND]="$b"
+          ab+=(-"$b")
+        fi
+      fi
     fi
   fi
+
+  echo "${ab[@]}"
+  return "$ret"
+}
+
+
+calculate_ab_for_branch() {
+#  echo "$FUNCNAME()" >&2
+  local branchName=$1
+  local against=${2:-HEAD}
+
+  local ab=()
+  local ret=0
+
+  read branchExists maybeRemoteBranch isRemote < <( is_branch_exists "$branchName" 1 )
+
+  ab+=("$branchExists")
+
+  if (( "$branchExists" )); then
+    ab+=("$isRemote")
+    ab+=("$maybeRemoteBranch")
+
+    local reachable=$( git merge-base "$maybeRemoteBranch" "$against" 2>/dev/null | wc -l )
+    ret=$?
+
+    if (( ! "$ret" )) && (( $reachable )); then
+      local out=$( git rev-list "$against".."$maybeRemoteBranch" 2>/dev/null | wc -l )
+      ret=$?
+
+      if (( ! "$ret" )); then
+        local a=$(( $out + 0 ))
+        ab+=(+"$a")
+        MODULE_STATUS[$MS_UPSTREAM_AHEAD]="$a"
+
+        out=$( git rev-list "$maybeRemoteBranch".."$against" 2>/dev/null | wc -l )
+        ret=$?
+
+        if (( ! "$ret" )); then
+          local b=$(( $out + 0 ))
+          MODULE_STATUS[$MS_UPSTREAM_BEHIND]="$b"
+          ab+=(-"$b")
+        fi
+      fi
+    fi
+  fi
+
+  echo "${ab[@]}"
+  return "$ret"
 }
 
 
 #
 # External arrays:
 #     guessedRefnames
-#     asWell
+#     asWellRefs
 #
 calculate_as_well_refnames() {
   local refName=$1
