@@ -356,7 +356,7 @@ cmd_default() {
 
   if [[ "$modulePath" != "/" ]]; then
     module_up
-    read parentRefType parentRefName < <( evaluate_refname )
+    read parentRefName parentRefType < <( evaluate_refname )
   fi
 
   pushd ${path} &>/dev/null

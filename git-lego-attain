@@ -2,14 +2,6 @@
 set +o posix
 ################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
 
-  #
-  ## Exit code of the script
-  ## 0 - success
-  ## 1 - un-success (bad options/... etc)
-  ## 2 - unexpected error (wrong code)
-  #
-declare ret=0
-
 args=()
 
 ################################ STANDARD BOOTSTRAP CALL ################################
@@ -30,7 +22,7 @@ SYNOPSIS:
 DESCRIPTION:
 
 EXAMPLES:
-    '${FLAGS_PREFIX} --auto' -> show verbose status for current module only
+    '${FLAGS_PREFIX} --auto-attain' -> show verbose status for current module only
 
 
 OPTIONS:
@@ -45,22 +37,24 @@ typeset currentLegoMode
 typeset verbose=0
 typeset doUpdate=1
 
-typeset autoAttach=$(get_lego_setting "autoAttach")
-autoAttach=$(READ_boolean ${autoAttach} 1) # 1 === true
+typeset autoAttain=$(get_lego_setting "autoAttain")
+autoAttain=$(READ_boolean ${autoAttain} 1) # 1 === true
+typeset paramAutoAttain implicitAuto=0
 
 #typeset doRecursive=0
-typeset initialPath doRecursive=1  doForce=1
-typeset explicitModules=() explicitRefs=()
+typeset initialPath doRecursive=1 doForce=1
 
-# format: git-lego attain master: reference will be 'master'
-typeset reference
+typeset explicitModules=() explicitRefs=() explicitTypes=()
+
+typeset reference referenceType
 
 typeset BAD_EXPLICIT_PARAM="Wrong format of explicit module -> reference parameter."
-
+typeset WRONG_FORMAT_REF="Wrong format of explicit reference"
 ################################ PARAMETERS PARSING ################################
 #      set -x
 while [[ -n $1 ]]; do
   noAppendArg=0
+
   case $1 in
     -h|-\?|--help)
       show_help
@@ -88,6 +82,13 @@ while [[ -n $1 ]]; do
       doForce=0
       ;;
 
+    --auto-attain|-a)
+      paramAutoAttain=1
+      ;;
+    --no-auto-attain|-A)
+      paramAutoAttain=0
+      ;;
+
     --update|-u)
       doUpdate=1
       ;;
@@ -95,27 +96,85 @@ while [[ -n $1 ]]; do
       doUpdate=0
       ;;
 
-    *\^*)
-      theModuleName="${1%%\^*}"
-      theRefName="${1#*\^}"
-      if [[ -n "$theModuleName" && -n "$theRefName" ]]; then
-        explicitModules+=("$theModuleName")
-        explicitRefs+=("$theRefName")
-      else
-        see_help "$BAD_EXPLICIT_PARAM"
-      fi
-      ;;
 
-    *=*)
-      theModuleName="${1%%=*}"
-      theRefName="${1#*=}"
-      if [[ -n "$theModuleName" && -n "$theRefName" ]]; then
-        explicitModules+=("$theModuleName")
-        explicitRefs+=("$theRefName")
-      else
-        see_help "$BAD_EXPLICIT_PARAM"
-      fi
-      ;;
+    --to|--branch|-b|--headed|--tag|-t|--pinned|--sha|-s)
+			case "$2" in
+        '' | -*)
+          see_help "$WRONG_FORMAT_REF"
+          ;;
+        *)
+			    reference=$2
+			    case "$1" in
+			      --branch|-b|--headed)
+    			    referenceType="branch"
+			        ;;
+			      --tag|-t|--pinned)
+    			    referenceType="pinned"
+			        ;;
+			      --sha|-s)
+    			    referenceType="sha"
+			        ;;
+			      --to)
+    			    referenceType="auto"
+			        ;;
+          esac
+          shift
+          ;;
+			esac
+			;;
+
+		--branch=*)
+			reference="${1#--branch=}"
+			referenceType="branch"
+			;;
+
+		--headed=*)
+			reference="${1#--headed=}"
+			referenceType="branch"
+			;;
+
+		--tag=*)
+			reference="${1#--tag=}"
+			referenceType="pinned"
+			;;
+
+		--pinned=*)
+			reference="${1#--pinned=}"
+			referenceType="pinned"
+			;;
+
+		--sha=*)
+			reference="${1#--sha=}"
+			referenceType="sha"
+			;;
+
+		--to=*)
+			reference="${1#--to=}"
+			referenceType="auto"
+			;;
+
+
+#    *\^*)
+#      theModuleName="${1%%\^*}"
+#      theRefName="${1#*\^}"
+#      if [[ -n "$theModuleName" && -n "$theRefName" ]]; then
+#        explicitModules+=("$theModuleName")
+#        explicitRefs+=("$theRefName")
+#      else
+#        see_help "$BAD_EXPLICIT_PARAM"
+#      fi
+#      ;;
+#
+#    *=*)
+#      theModuleName="${1%%=*}"
+#      theRefName="${1#*=}"
+#      if [[ -n "$theModuleName" && -n "$theRefName" ]]; then
+#        explicitModules+=("$theModuleName")
+#        explicitRefs+=("$theRefName")
+#      else
+#        see_help "$BAD_EXPLICIT_PARAM"
+#      fi
+#      ;;
 
     *)
       if (( $stopOptions )); then
@@ -126,8 +185,8 @@ while [[ -n $1 ]]; do
         fi
 #      elif [[ -z ${1%%-*} ]]; then
 #        args+=($1)
-      elif [[ -z ${reference} ]]; then
-        reference=$1
+#      elif [[ -z ${reference} ]]; then
+#        reference=$1
       elif [[ -z ${initialPath} ]]; then
         initialPath=$1
       else
@@ -136,6 +195,12 @@ while [[ -n $1 ]]; do
       ;;
   esac
   shift
+
+  if [[ -n "$reference" ]]; then
+    explicitRefs+=("$reference")
+    explicitTypes+=("$referenceType")
+    unset reference
+  fi
 done
 
 
@@ -159,71 +224,156 @@ if (( ${#explicitModules[@]} )); then
   fi
 fi
 
-if [[ -n "$reference" ]]; then
-  explicitRefs+=("$reference")
-fi
-
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 
 
-attain_module_mode() {
+#
+# Should be called after  module_porcelain_status && pushd
+# Externals: 
+#  
+#
+is_module_attainable() {
 echo "$FUNCNAME()" $@ >&2
+  local modulePath="$3"
+
+  local ret=0
+  local explicits=()
+  local refsCount=${#explicitRefs[@]}
+  local refIndex=0
+
+  local detached="${MODULE_STATUS[$MS_DETACHED]}"
+  local moduleRefType="${g_lego_aware_tokens_gitmodules[$detached]}"
+
+  local uninitialized="${MODULE_STATUS[$MS_UNINITIALIZED]}"
+  local moduleAffected=0
+
+  if (( ! "$uninitialized" )) && [[ "$modulePath" != "/" ]]; then
+    # from settings
+    local moduleAutoAttain="$autoAttain"
+    if [[ -n "$paramAutoAttain" ]]; then
+      # from cmd parameters
+      moduleAutoAttain="$paramAutoAttain"
+    else
+      # from started module: true, if it is 'headed' (branch)
+      moduleAutoAttain="$implicitAuto"
+    fi
+
+    local unmanaged="${MODULE_STATUS[$MS_UNMANAGED]}"
+    if (( "$unmanaged" )) && (( "$moduleAutoAttain" )); then
+      moduleAffected=1
+    fi
+
+
+    local explicitRef explicitType
+
+    local guessedRefNames=()
+    for refName in "${explicitRefs[@]}"; do
+      local refType="${explicitTypes[$refIndex]}"
+
+      read currentRefName currentRefType exists fullRefName < <( evaluate_refname "$refName" "$refType" "1")
+
+      if (( "$exists" )); then
+        case "$currentRefType" in
+          branch)
+            guessedRefNames=("${MODULE_STATUS[$MS_GUESSED_BRANCHES]}")
+            ;;
+          pinned)
+            guessedRefNames=("${MODULE_STATUS[$MS_GUESSED_TAGS]}")
+            ;;
+          sha)
+            ;;
+        esac
+
+        if (( ${#guessedRefNames[@]} )); then
+          for guessed in ${guessedRefNames[@]}; do
+            if [[ "$guessed" == "$currentRefName" ]]; then
+              moduleAffected=1
+              explicitRef="$currentRefName"
+              explicitType="$currentRefType"
+              break
+            fi
+          done
+        fi
+      fi
+
+      refIndex=$(( $refIndex + 1 ))
+    done
+    explicits+=("$moduleAffected")
+
+    if [[ -n "$explicitRef" || -n "$explicitType" ]]; then
+      explicits+=("${explicitRef:-$NA}" "${explicitType:-$NA}")
+    fi
+
+  else
+    explicits+=("$moduleAffected")
+  fi
+  echo "${explicits[@]}"
+  return "$ret"
+}
+
+
+attain_module_mode() {
+#echo "$FUNCNAME()" $@ >&2
 #pwd >&2
   local moduleName="$1"
   local modulePath="$2"
   local parentRefname="$3"
   local parentRefType="$4"
 
-  local legoMode=${g_lego_mode}
+  local legoMode="${g_lego_mode}"
 
-  if [[ $legoMode != "versioned" ]]; then
+  if [[ "$legoMode" != "versioned" ]]; then
     legoMode="solo"
   fi
 
-  local initRequired=1
   local ret=0
 
   module_porcelain_status "$modulePath" "attain"
 
-  local detached="${MODULE_STATUS[$MS_DETACHED]}"
-  local moduleRefType="${g_lego_aware_tokens_gitmodules[$detached]}"
+  read affected explicitRef explicitType < <( is_module_attainable "$@" )
+  ret=$?
 
-  if [[ "$moduleRefType" == "$parentRefType" ]]; then
-    initRequired=0
-  fi
+  if (( ! "$ret" )) && (( "$affected" )); then
 
-  local uninitialized="${MODULE_STATUS[$MS_UNINITIALIZED]}"
-  local unmanaged="${MODULE_STATUS[$MS_UNMANAGED]}"
-
-#set -x
-  if [[ "$modulePath" != "/" ]] && (( ! "$uninitialized" )); then
-    if (( "$unmanaged" )); then
-      local guessedRefname
-      local guessedReftype
-
-      local guessedRefnames=()
-      read guessedRefname guessedReftype < <(evaluate_attain_hint "$parentRefname" "$parentRefType")
-
-      if [[ -n "$guessedRefname" && -n "$guessedReftype" ]] ; then
-        if (( "$doUpdate" )); then
-          persist_attain_hint "1" "$moduleName" "$guessedRefname" "$guessedReftype" "$legoMode"
-        else
-          local hint="Module $moduleName can be "
-          if [[ "${guessedReftype}" == "branch" ]]; then
-            hint+="attained"
+    local detached="${MODULE_STATUS[$MS_DETACHED]}"
+    local moduleRefType="${g_lego_aware_tokens_gitmodules[$detached]}"
+    local uninitialized="${MODULE_STATUS[$MS_UNINITIALIZED]}"
+    local unmanaged="${MODULE_STATUS[$MS_UNMANAGED]}"
+  
+    if [[ "$modulePath" != "/" ]]; then
+  
+      if (( "$unmanaged" )); then
+        local guessedRefname
+        local guessedReftype
+  
+        local guessedRefnames=()
+        read guessedRefname guessedReftype < <(evaluate_attain_hint "$parentRefname" "$parentRefType")
+  
+        if [[ -n "$guessedRefname" && -n "$guessedReftype" ]] ; then
+          if (( "$doUpdate" )); then
+            persist_attain_hint "1" "$moduleName" "$guessedRefname" "$guessedReftype" "$legoMode"
           else
-            hint+="pinned"
+            local hint="Module $moduleName can be "
+            if [[ "${guessedReftype}" == "branch" ]]; then
+              hint+="attained"
+            else
+              hint+="pinned"
+            fi
+            hint+=" to ${guessedRefname}, but --update option required"
+            ## exclude $guessedRefname
+            if [[ "${#guessedRefnames[@]}" > 1 ]]; then
+              local asWellRefs=()
+              calculate_as_well_refnames "$guessedRefname"
+              hint+=". Other possible attainable (or pinnable) options are: ${asWellRefs[@]}"
+            fi
+            cw_echo "$hint"
+            cw_echo "See '$FLAGS_PREFIX --help' for more information"
           fi
-          hint+=" to ${guessedRefname}, but --update option required"
-          ## exclude $guessedRefname
-          if [[ "${#guessedRefnames[@]}" > 1 ]]; then
-            local asWellRefs=()
-            calculate_as_well_refnames "$guessedRefname"
-            hint+=". Other possible attainable (or pinnable) options are: ${asWellRefs[@]}"
-          fi
-          cw_echo "$hint"
-          cw_echo "See '$FLAGS_PREFIX --help' for more information"
+        fi
+      else
+        if [[ -n "$explicitRef" && -n "$explicitType" ]]; then
+          persist_attain_hint "1" "$moduleName" "$explicitRef" "$explicitType" "$legoMode"
         fi
       fi
     fi
@@ -231,9 +381,9 @@ echo "$FUNCNAME()" $@ >&2
   return "$ret"
 }
 
-attain_level() {
-#echo "$FUNCNAME()" $@ >&2
 
+attain_level() {
+echo "$FUNCNAME()" $@ >&2
   local parentName="$1"
   local levelPath="$2"
   local modulePath="$3"
@@ -244,22 +394,7 @@ attain_level() {
   local ret=0
 
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
-  if [[ -z "$refName" || -z "$refType" ]]; then
-    local refsCount=${#explicitRefs[@]}
 
-    if [[ -z "$refName" ]] && (( "$refsCount" )); then
-      refName=${explicitRefs[$refsCount-1]}
-    fi
-
-    read currentRefType currentRefName < <( evaluate_refname "$refName" )
-    if [[ -z "$refName" ]]; then
-      refName="$currentRefName"
-    fi
-    
-    if [[ -z "$refType" ]]; then
-      refType="$currentRefType"
-    fi
-  fi
   local ret=0   # return code, 0 - OK
   local childRet # sub-lever return code
 
@@ -311,20 +446,38 @@ attain_level() {
 ################################ MAIN SCRIPT LOGIC ################################
 
 cmd_default() {
+  #
+  ## Exit code of the script
+  ## 0 - success
+  ## 1 - un-success (bad options/... etc)
+  ## 2 - unexpected error (wrong code)
+  #
+  local ret=0
+
   typeset modulePath=$(resolve_module_path "$initialPath" ".")
   read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
   typeset affected=0
   typeset onEmptyMessage
   typeset skippedModules=()
   typeset warnMsg
+  typeset initialRefType initialRefName
+  
 
-  local ret
-
-#  pushd "$moduleFilePath" &>/dev/null
   if [[ -z "$moduleFilePath" ]]; then
-    see_help "Wrong specification of the module"
+    see_help "Wrong module specification"
   fi
-  attain_level "$moduleName" "$moduleFilePath" "$modulePath" #"$refName" "$refType"
+
+  if [[ "$modulePath" != "/" ]]; then
+    module_up
+  fi
+  read refName refType < <( evaluate_refname )
+  initialRefType="$refType"
+  initialRefName="$refName"
+  if [[ "$refType" == "branch" ]]; then
+    implicitAuto=1
+  fi
+
+  attain_level "$moduleName" "$moduleFilePath" "$modulePath" "$refName" "$refType"
   ret=$?
 
   if (( $verbose )); then
@@ -333,7 +486,6 @@ cmd_default() {
     fi
   fi
 
-#  popd &>/dev/null
   umbrella_finalize
   return $ret
 }

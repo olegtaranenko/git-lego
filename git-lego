@@ -515,76 +515,123 @@ get_reftype_of_refname() {
 
 
 #
-# Evaluate and return refname and type of the repository.
+# Evaluate and return refname and type of the current repository.
 # The repo's head can be either detached ('tag' or plain 'sha' or git checkout ... --detach or git checkout origin/master)
 # or headed to some 'branch' (possible values for reftype)
 # If reftype is branch, we checking remote branches as well, which names are equals.
 #
 function evaluate_refname() {
-#  local type=${1:-full}
-#  if [[ $type == full ]]; then
-#    option=--symbolic-full-name
-#  fi
-  local refName=${1:-HEAD}
-  local fullRefname=$( git rev-parse --symbolic-full-name "$refName" 2>/dev/null )
-  local ret=()
-  local abbrevRefCheck=0
-  local token="sha"
-  case ${fullRefname} in
-    refs/tags/*)
-      abbrevRefCheck=1
-      refname="${fullRefname#refs/tags/}"
-      token="pinned"
-      ;;
-    refs/heads/*)
-      abbrevRefCheck=1
-      refname="${fullRefname#refs/heads/}"
-      token="branch"
-      ;;
-    refs/remotes/$legoRemote/*)
-      abbrevRefCheck=1
-      refname="${fullRefname#refs/remotes/$legoRemote/}"
-      token="branch"
-      ;;
-#    HEAD)
-  esac
-  ret+=("$token")
+  local refName="${1:-HEAD}"
+  local refType="${2:-auto}"
+  local getExists="${3:-0}"
 
-  local option
-  if (( $abbrevRefCheck )); then
-    option="--abbrev-ref"
-  else
-    option="--short"
+  local results=()
+  local ret=0
+  local exists=0
+
+  local givenRemote=0
+  local remote="${globals[$G_LEGO_REMOTE]}"
+
+  if [[ "${refName#refs/remotes/$remote/}" != "$refName" || "${refName#remotes/$remote/}" != "$refName" || "${refName#$remote/}" != "$refName" ]]; then
+      givenRemote=1
+      refType="branch"
+    fi
+
+  local localRefName="$refName"
+  if [[ -n "$refType" && "$refType" != "auto" ]] && (( ! "$givenRemote" )); then
+    case "$refType" in
+      branch)
+        localRefName="heads/$refName"
+        ;;
+      pinned)
+        localRefName="tags/$refName"
+        ;;
+    esac
   fi
 
-  fullRefname=$( git rev-parse "$option" "$refName" 2>/dev/null )
-  ret+=("$fullRefname")
+  fullRefname=$( git rev-parse "$localRefName" 2>/dev/null )
+  ret=$?
 
-#  echo "${ret[@]}" >&2
-  echo "${ret[@]}"
+  if (( "$ret" )) && (( ! "$givenRemote" )) && [[ "$refType" == "branch" ]]; then
+    fullRefname=$( git rev-parse --symbolic-full-name "$remote/$refName" 2>/dev/null )
+    ret=$?
+    if (( ! $ret )); then
+      localRefName="$remote/$refName"
+    fi
+  fi
+
+  if (( ! "$ret" )); then
+    exists=1
+    local abbrevRef=0
+    local token="sha"
+
+    case ${fullRefname} in
+      refs/tags/*)
+        abbrevRef=1
+        refName="${fullRefname#refs/tags/}"
+        token="pinned"
+        ;;
+      refs/heads/*)
+        abbrevRef=1
+        refName="${fullRefname#refs/heads/}"
+        token="branch"
+        ;;
+      refs/remotes/$remote/*)
+        abbrevRef=1
+        refName="${fullRefname#refs/remotes/$remote/}"
+        token="branch"
+        ;;
+  #    HEAD)
+    esac
+
+    local option
+    if (( $abbrevRef )); then
+      option="--abbrev-ref"
+    else
+      option="--short"
+    fi
+
+    fullRefname=$( git rev-parse "$option" "$localRefName" 2>/dev/null )
+    ret=$?
+
+    results+=("$refName" "$token")
+  else
+    results+=("" "")
+  fi
+
+  if (( $getExists )); then
+    results+=("$exists")
+  fi
+
+  if [[ -n $fullRefname ]]; then
+    results+=("$fullRefname")
+  fi
+
+  echo "${results[@]}"
+  return "$ret"
 }
 
 
 function get_repo_url() {
-  [[ -n $1 && $1 != "." ]] && pushd $1  &>/dev/null
-  local url=$(git remote get-url ${globals[$G_LEGO_REMOTE]} &> /dev/null)
-  [[ -n $1 && $1 != "." ]] && popd  &>/dev/null
-  echo ${url}
+  [[ -n "$1" && "$1" != "." ]] && pushd $1 &>/dev/null
+  local url=$(git remote get-url ${globals[$G_LEGO_REMOTE]} &>/dev/null)
+  [[ -n "$1" && "$1" != "." ]] && popd  &>/dev/null
+  echo "$url"
 }
 
 function get_repo_name_from_path() {
-  [[ -n $1 && $1 != "." ]] && pushd $1  &>/dev/null
+  [[ -n "$1" && "$1" != "." ]] && pushd $1 &>/dev/null
   local gitDir=$(get_repo_git_dir)
-  [[ -n $1 && $1 != "." ]] && popd  &>/dev/null
+  [[ -n "$1" && "$1" != "." ]] && popd  &>/dev/null
   local name="${gitDir##*/modules/}"
-  [[ $name == ".git" ]] && echo "/" || echo "$name"
+  [[ "$name" == ".git" ]] && echo "/" || echo "$name"
 }
 
 function get_repo_git_dir() {
-  [[ -n $1 && $1 != "." ]] && pushd $1  > /dev/null
+  [[ -n "$1" && "$1" != "." ]] && pushd $1 &>/dev/null
   local url=$(git rev-parse --git-dir)
-  [[ -n $1 && $1 != "." ]] && popd  &>/dev/null
-  echo ${url}
+  [[ -n "$1" && "$1" != "." ]] && popd  &>/dev/null
+  echo "$url"
 }
 
 function get_module_path_up() {
@@ -592,15 +639,15 @@ function get_module_path_up() {
   local path
 
   if [[ $1 != "/" ]]; then
-    path=${1%/*}
+    path="${1%/*}"
 
-    (( ! ${#path} )) && path="/"
+    (( ! "${#path}" )) && path="/"
     ret=0
 
   fi
+  (( ! "$ret" )) && echo "${path}"
 
-  (( ! $ret )) && echo "${path}"
-  return ${ret}
+  return "$ret"
 }
 
 
@@ -653,14 +700,14 @@ function drop_to_affected() {
 
   while read -a module; do
     found=0
-    local moduleName=${module[$MFS_MODULE_NAME]}
-    if [[ "$path" == ${module[$MFS_FULL_PATH]} || "$path" == ${module[$MFS_MODULE_PATH]} ]]; then
+    local moduleName="${module[$MFS_MODULE_NAME]}"
+    if [[ "$path" == "${module[$MFS_FULL_PATH]}" || "$path" == "${module[$MFS_MODULE_PATH]}" ]]; then
       found=1
       if (( ${#afterDash[@]} )); then
         found=0
         for branch in "${afterDash[@]}"; do
           # exact comparison, not matching
-          if [ "${moduleName}" == ${branch} ]; then
+          if [ "${moduleName}" == "$branch" ]; then
             found=1
             break
           fi
@@ -668,7 +715,7 @@ function drop_to_affected() {
       fi
     fi
 
-    if (( ${found} )); then
+    if (( "$found" )); then
       affected=1
       ret=0
       echo ${module[@]} >> ${globals[$G_AFFECTED_MODULES]}
@@ -676,7 +723,7 @@ function drop_to_affected() {
     fi
 
   done < <(cat ${globals[$G_MODULES_FN]})
-#  echo "${ret}"
+
   return ${ret}
 }
 

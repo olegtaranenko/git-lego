@@ -66,23 +66,6 @@ while [[ -n $1 ]]; do
       noAppendArg=1
       ;;
 
-    --fallback)
-      if [ -n "$2" ]; then
-        noAppendArg=1
-        ${fallbacks[${#fallbacks[@]}]}=$2
-        shift
-      else
-        die "--fallback requires a non-empty option argument."
-      fi
-      ;;
-    --fallback=?*)
-      noAppendArg=1
-      ${fallbacks[${#fallbacks[@]}]}=${1#*=} # Delete everything up to "=" and assign the remainder.
-      ;;
-    --fallback=)         # Handle the case of an empty --fallback=
-      die "--fallback requires a non-empty option argument."
-      ;;
-
     --message)
       args+=($1)
       args+=("\"$2\"")
