@@ -12,81 +12,45 @@ umbrella_bootstrap
 
 ################################ BRANCH-SPECIFIC HELP ################################
 function show_help() {
+# TODO staled help... need to be rewritten
 cat << EOF
 
 NAME:
-    ${FLAGS_PREFIX} tool to manage checkouts different version onto umbrella-managed git repositories
+    ${FLAGS_PREFIX} tool to checkout different version onto git-lego managed repositories
 
 SYNOPSIS:
-    ${FLAGS_PREFIX} --[no-]current [--[no-]recursive] ...] [[--fallback <branch1> ...] ([--[no-]push] | [--[no-]commit] | <revision|reference-resolution>) [<path-resolution>] -- <module1> ...
+    ${FLAGS_PREFIX} [--[no-]recursive] ...] ([--[no-]push] | [--[no-]commit] | <revision|reference-resolution>) [<path-resolution>] [-- <module1> ... ]
+    ${FLAGS_PREFIX} --follow-heads=[parent|managed] [-- <module1> <module2> ... ]
 
 DESCRIPTION:
-    Checkout in umbrella mode handles slightly differ from its 'git checkout' counterpart.
-    First it don\'t works with file or files after -- trigger. In umbrella it will works with
-    modules\' list. In absolute convention it defines modules affecting on checkout.
+    Lego checkout handles slightly different from its 'git checkout' counterpart.
 
-    Umbrella checkout processing falling into three different modes.
-    1) solo mode is just revision-resolution direct or inderect reference to specific commit,
-        rather than symbolic ref aka branch.
-    2) if no solo mode - relative mode, if path-resolution follows to be a path relative to current directory.
-    3) if path-resolution directs to the umbrella module, it will be an absolute mode, or setting it to '/'
-        or if path-resolution parameter just omitted.
+    First, it don\'t works with file or files after -- trigger. Instead git-lego works at modules\' level only and defines modules being affected.
+
+    Second, git-lego is very sensitive to which type of reference is going to be checked out, either assigned to branch (headed mode) or
+      to the detached state via tag, remote branch, plain hash, etc. In case of headed references, checkout tries to attain or update
+      sibling modules according to some useful conventions, which drastically spare time to further manipulating with submodules\' states.
+      If outer module is
+
+
+    git-lego checkout processing starts at current module, if no module resolution parameter is present.
 
     For solo mode all parameters except umbrella-specific will be used as parameters for usual 'git commit ... '
     command. For two other modes usual git checkout parameters are not permitted.
 
-    CAUTION!
-    Umbrella checkout does NOT supports --branch|--orphan functionality. It is moved to
-    'branch <branch-name>' to avoid over-complicated scenarios can happening in multi-repo architecture.
-
 
 EXAMPLES:
-    '${FLAGS_PREFIX} master /' -> absolute mode, --no-recursive, --current, --no-commit, --no-push
-        ACTION: if umbrella module branch is different from master, it will be checked out to master,
-        all sub-modules will be updated to master as well
-
-    '${FLAGS_PREFIX} master' -> same as above
-
-    '${FLAGS_PREFIX} develop .' -> relative mode, --no-recursive, --current, --commit, --push
-        This action may cause (or may not) enclosed module to be dirty, if previous commit differs to develop.
-        ACTION: if umbrella module branch differs from develop, it will be checked out to develop,
-        all sub-modules have to be updated to develop as well. If there is any module having no develop branch,
-        getting warning about this, no commit (if no --force given), state of that module is not changed.
-
-    '${FLAGS_PREFIX} --fallback=develop qa' -> absolute mode, --recursive, --current, --commit, --push
-        ACTION: if umbrella module branch differs from develop, it will be checked out to develop,
-        all sub-modules have to be updated to develop as well. Any of module has no develop branch,
-        but has develop, will be checked out to develop.
-
-    '${FLAGS_PREFIX} --fallback=develop --fallback=master qa' -> same as above, but if no qa and develop exists,
-        change to master
-
-    '${FLAGS_PREFIX} master .' -> relative mode, --no-recursive, --current, --no-commit, --no-push
-        Change for current module to master branch. Get warning, if enclosing repo not referencing to master.
-        All options except umbrella-specific will be passed to underlying 'git checkout ...' command.
-
-    '${FLAGS_PREFIX} release . --commit --push' -> solo mode, --no-recursive, --current, --push
-        all predecessor modules will be updated to new state, if required. After they will be committed and
-        pushed to origin.
-
-    '${FLAGS_PREFIX} release ./wiki' -> relative mode, change branch for first sibling wiki module to 'release', --commit
-
-    '${FLAGS_PREFIX} release -- wiki docs' -> absolute, looking from umbrella root, doesn\'t matter deep of module.
-
 
 OPTIONS:
       --help|-h|-\?
           get this help
 
-      --[no-]push[=<remote>]
-          push (or prevent) to <remote> ('origin' by default) repository.
-
       --[no]-commit]
           valid with --view option only. Attempts to fix the branding modules hierarchy
           if possible. By default --sync is not performed
 
-      --fallback[=| ]<branch>
-          fallback branch name used instead of <fork-branch>, if last does not exists in sub-module
+      --[no-]push[=<remote>]
+          push (or prevent to push) to <remote> ('origin' by default) repository.
 
       --
           marks state after which only affected repositories will be enumerated. Actual with --[no-]current
@@ -99,12 +63,24 @@ OPTIONS:
 EOF
 }
 
-typeset verbose=0
-typeset doAdd=0 # by default do not add
+typeset verbose=0  stopOptions=0
+#typeset doAdd=0 # by default do not add
 typeset revision
-typeset commit=1 doForce=0
-typeset fallbacks=()
-typeset initialPath 
+typeset commit=0 doForce=0
+#typeset fallbacks=()
+typeset initialPath
+
+# possible values for follow-heads option
+#   parent - update sibling
+#   mananged - for versioned version only, update
+#   none - (default)
+typeset followHeads=$( get_lego_setting "followHeads" )
+followHeads=$( READ_string "$followHeads" "none" ) # by default - do not follow heads
+
+typeset autoAttain=$(get_lego_setting "autoAttain")
+autoAttain=$(READ_boolean ${autoAttain} 1) # 1 === true
+typeset paramAutoAttain implicitAuto=0
+
 
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
@@ -120,29 +96,29 @@ while [[ -n $1 ]]; do
       noAppendArg=1
       ;;
 
-    --fallback)
-      if [ -n "$2" ]; then
-        noAppendArg=1
-        ${fallbacks[${#fallbacks[@]}]}=$2
-        shift
-      else
-        die "--fallback requires a non-empty option argument."
-      fi
+    --)
+      stopOptions=1
       ;;
-    --fallback=?*)
-      noAppendArg=1
-      ${fallbacks[${#fallbacks[@]}]}=${1#*=} # Delete everything up to "=" and assign the remainder.
-      ;;
-    --fallback=)         # Handle the case of an empty --fallback=
-      die "--fallback requires a non-empty option argument."
-      ;;
-
 
     --commit)
       commit=1
       ;;
     --no-commit)
       commit=0
+      ;;
+
+    --follow-heads=*)
+      followHeads="${1#--follow-heads=}"
+      ;;
+    --no-follow-heads)
+      followHeads=0
+      ;;
+
+    --auto-attain|-a)
+      paramAutoAttain=1
+      ;;
+    --no-auto-attain|-A)
+      paramAutoAttain=0
       ;;
 
     --force|-f)
@@ -153,7 +129,7 @@ while [[ -n $1 ]]; do
       ;;
 
     -b|-B|--orphan)
-      die "$1 options is not supported for now. Create new branches using CW 'branch ...' command" >&2
+      die "$1 options is not supported for now. Create new branches using 'branch ...' command" >&2
       ;;
     *)
       if [[ -z ${1%%-*} ]]; then
@@ -166,28 +142,28 @@ while [[ -n $1 ]]; do
       fi
       ;;
   esac
-  (( ${noAppendArg} )) && args+=$1
+
+#  (( ${noAppendArg} )) && args+=($1)
   shift
 done
 
 
-if [[ -z $revision ]]; then
+if [[ -z "$revision" ]]; then
   die "Parameter revision/branch required"
 fi
 #set -x
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 checkout_level () {
-#echo "$FUNCNAME()" $@ >&2
+echo "$FUNCNAME()" $@ >&2
 
-  local moduleName="$3"
-#  [[ "$moduleName" == "viatra" ]] && set -x
   local revision="$1"
-  local modulePath="$2"
+  local moduleName="$2"
+#  [[ "$moduleName" == "macosx" ]] && set -x
+  local modulePath="$3"
   local levelPath="$4"
   local parentRefname="$5"
   local parentRefType="$6"
-#  local doUpdate="$5"
 
   if [[ -z "$parentRefname" && "$revision" != "-" ]]; then
     parentRefname="$revision"
@@ -195,7 +171,7 @@ checkout_level () {
   if [[ -n "$parentRefname" && -z "$parentRefType" ]]; then
     parentRefType=$( get_reftype_of_refname "$parentRefname" )
   fi
-  local reftype="$parentRefType"
+  local refType="$parentRefType"
 
   pushd "$levelPath" &>/dev/null
 
@@ -210,7 +186,7 @@ checkout_level () {
 
   local ret=0
   
-  prepare_checkout_level "$revision" "$modulePath" "$moduleName" "$levelPath" "$parentRefname" "$parentRefType"
+  prepare_checkout_level "$revision" "$moduleName" "$modulePath" "$levelPath" "$parentRefname" "$parentRefType"
   ret=$?
 
 #  echo "before: ${modulesBefore[@]}" >&2
@@ -226,24 +202,27 @@ checkout_level () {
     local addedFound
     local beforeIndex afterIndex
     local added deleted before subModule before pathAdded
-
     if (( "${#deletedModules[@]}" )); then
       local deletedIndex=0
+
       for deleted in "${deletedModules[@]}"; do
-        afterIndex=0
-        addedFound=0
-        for subModule in "${modulesAfter[@]}"; do
+        local deletedFound=0
+        local beforeIndex=0
+
+        for subModule in "${modulesBefore[@]}"; do
           if [[ "$subModule" == "$deleted" ]]; then
-            pathDeleted="${modulePathsAfter[$afterIndex]}"
-            addedFound=1
+            pathDeleted="${modulePathsBefore[$beforeIndex]}"
+            deletedFound=1
             break
           fi
-          afterIndex=$(( $afterIndex + 1 ))
+          beforeIndex=$(( $beforeIndex + 1 ))
         done
 
-        read initialized < <(module_info "$pathDeleted" "initialized")
-        if (( $initialized )) ; then
-          git submodule deinit -- "$deleted"
+        if (( $deletedFound )); then
+          read initialized < <(module_info "$pathDeleted" "initialized")
+          if (( $initialized )) ; then
+            git submodule deinit -- "$deleted"
+          fi
         fi
 
         deletedIndex=$(( $deletedIndex + 1 ))
@@ -253,7 +232,7 @@ checkout_level () {
     if [[ -n "${MODULE_STATUS[$MS_MANAGED_REFNAME]}" && "$revision" == "-" ]]; then
       revision="${MODULE_STATUS[$MS_MANAGED_REFNAME]}"
       managed="${MODULE_STATUS[$MS_MANAGED]}"
-      reftype="${g_lego_aware_tokens_gitmodules[$managed]}"
+      refType="${g_lego_aware_tokens_gitmodules[$managed]}"
     fi
 
     git checkout "$revision"
@@ -267,12 +246,9 @@ checkout_level () {
         local legoMode="$g_lego_mode"
         [[ "$legoMode" != "versioned" ]] && legoMode="solo"
 
-        persist_attain_hint "0" "$moduleName" "$revision" "$parentRefType" "$legoMode"
+        persist_attain_hint "0" "$moduleName" "$revision" "$refType" "$legoMode"
         ret=$?
       fi
-
-#      local blobRevision=$( get_blob_revision "$levelRevision" )
-#      ret=$?
 
       if (( ! "$ret" )); then
 
@@ -280,9 +256,6 @@ checkout_level () {
         local doUpdateInit=0
         local doAppendNewModule=0
         local doRecreateCache=()
-
-#        local addedFound=0
-        pwd >&2
 
         for after in "${modulesAfter[@]}"; do
           local pathAfter="${modulePathsAfter[$index]}"
@@ -309,6 +282,7 @@ checkout_level () {
                   doRecreateCache+=("$cachedPath")
                   break
                 fi
+
                 moduleIndex=$(( "$moduleIndex" + 1 ))
               done
             fi
@@ -322,15 +296,13 @@ checkout_level () {
 
         if (( "${#doRecreateCache[@]}" )); then
           recreate_modules_cache "${doRecreateCache[@]}"
-#cat ${globals[$G_MODULES_FN]} >&2
         fi
 
         # remove folders of deleted modules
         if (( "${#deletedModules[@]}" )); then
+          index=0
 
           for deleted in "${deletedModules[@]}"; do
-
-          index=0
             for before in "${modulesBefore[@]}"; do
               if [[ "$before" == "$deleted" ]]; then
                 rm -rf "${modulePathsBefore[$index]}" &>/dev/null
@@ -342,10 +314,6 @@ checkout_level () {
           done
         fi
 
-pwd >&2
-#set -x
-        local subModule localPath refType refname
-#        read refname refType < <( evaluate_refname )
         unset modulesBefore
         unset modulePathsBefore
         unset modulesAfter
@@ -357,25 +325,21 @@ pwd >&2
 
         if [ -f .gitmodules ]; then
           while read -a module; do
-            subModule="${module[0]}"
-            localPath="${module[1]}"
+            local subModule="${module[0]}"
+            local localPath="${module[1]}"
             subRepoPath="$levelPath/$localPath"
 
             local subModulePath="$modulePath"
-            [[ ${subModulePath:(-1)} != "/" ]] && local subModulePath+="/"
+            [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
             subModulePath+="$subModule"
-#            pushd "$levelPath$subModulePath" &>/dev/null
 
-            checkout_level "-" "$subModulePath" "$subModule" "$subRepoPath" "$parentRefname" "$parentRefType"
-#            popd &>/dev/null
+            checkout_level "-" "$subModule" "$subModulePath" "$subRepoPath" "$parentRefname" "$parentRefType"
+
           done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
-
-#set +x
         fi
       fi
     fi
   fi
-
   popd &>/dev/null
 }  ## of checkout_level
 
@@ -384,7 +348,7 @@ pwd >&2
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
   local modulePath=$(resolve_module_path "$initialPath" "/")
-  read moduleName filePath < <(module_info "$modulePath" "name" "path")
+  read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
 
   local dieMsg
   local skippedModules=()
@@ -393,16 +357,36 @@ cmd_default() {
   ret=0
 
   #pushd ${path} &>/dev/null
-  cd ${filePath}
-  git rev-parse "$revision" &> /dev/null
-  if (( $? )); then
-    git rev-parse "origin/${revision}" &> /dev/null
-    if (( $? )); then
-      die "Revision '$revision' not exists in the module '$moduleName'"
-    fi
+#  cd ${moduleFilePath}
+
+#  git rev-parse "$revision" &> /dev/null
+#  if (( $? )); then
+#    git rev-parse "origin/${revision}" &> /dev/null
+#    if (( $? )); then
+#      die "Revision '$revision' not exists in the module '$moduleName'"
+#    fi
+#  fi
+#
+#set -x
+  if [[ -z "$moduleFilePath" ]]; then
+    see_help "Wrong module specification"
   fi
 
-  checkout_level "$revision" "$modulePath" "$moduleName" "$filePath"
+  if [[ "$modulePath" != "/" ]]; then
+    module_up
+  fi
+
+  read refName refType isExists full < <( evaluate_refname "$revision" "" "1")
+
+  if (( ! "$isExists" )); then
+    die "Incorrect revision '$revision' in module '$moduleName'"
+  fi
+
+  if [[ "$refType" == "branch" ]]; then
+    implicitAutoAttain=1
+  fi
+
+  checkout_level "$revision" "$moduleName" "$modulePath" "$moduleFilePath"
   ret=$?
 
   umbrella_finalize

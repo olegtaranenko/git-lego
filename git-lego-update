@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set +o posix
 
+########### TODO Subject to remove in favour of checkout #################
+
 ################################ STANDARD BOOTSTRAP CALL ################################
 umbrella_bootstrap
 

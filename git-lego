@@ -176,7 +176,7 @@ MFS_MANAGED_REFNAME=8
 
 
 typeset g_lego_mode
-#set -x
+
 umbrella_bootstrap (){
   local legoRemote=$(get_lego_setting "remote")
   local gitDir
@@ -521,6 +521,7 @@ get_reftype_of_refname() {
 # If reftype is branch, we checking remote branches as well, which names are equals.
 #
 function evaluate_refname() {
+#echo "$FUNCNAME()" $@ >&2
   local refName="${1:-HEAD}"
   local refType="${2:-auto}"
   local getExists="${3:-0}"
@@ -547,16 +548,34 @@ function evaluate_refname() {
         localRefName="tags/$refName"
         ;;
     esac
+  elif [[ "$refType" == "auto" ]]; then
+    read isCorrect remoteBranch isRemote isBranch < <( is_revision_correct "$refName" "1" )
+    if (( "$isCorrect" )); then
+      if (( "$isBranch" )); then
+        refType="branch"
+        if (( ! "$isRemote" )); then
+          localRefName="heads/$refName"
+        else
+          localRefName="$remote/$refName"
+        fi
+      fi
+    fi
   fi
 
-  fullRefname=$( git rev-parse "$localRefName" 2>/dev/null )
+  fullRefname=$( git rev-parse --symbolic-full-name "$localRefName" 2>/dev/null )
   ret=$?
 
-  if (( "$ret" )) && (( ! "$givenRemote" )) && [[ "$refType" == "branch" ]]; then
-    fullRefname=$( git rev-parse --symbolic-full-name "$remote/$refName" 2>/dev/null )
-    ret=$?
-    if (( ! $ret )); then
-      localRefName="$remote/$refName"
+  if (( "$ret" )); then
+    unset fullRefname
+
+    if (( ! "$givenRemote" )) ; then
+      fullRefname=$( git rev-parse --symbolic-full-name "$remote/$refName" 2>/dev/null )
+      ret=$?
+      if (( ! $ret )); then
+        localRefName="$remote/$refName"
+      else
+        unset fullRefname
+      fi
     fi
   fi
 
@@ -593,19 +612,22 @@ function evaluate_refname() {
 
     fullRefname=$( git rev-parse "$option" "$localRefName" 2>/dev/null )
     ret=$?
+    if (( "$ret" )); then
+      unset fullRefname
+    fi
 
     results+=("$refName" "$token")
   else
-    results+=("" "")
+    results+=("-")
+    results+=("-")
   fi
 
-  if (( $getExists )); then
-    results+=("$exists")
+  if (( "$getExists" )); then
+    results+=("${exists:-0}")
+
+    results+=("${fullRefname:--}")
   fi
 
-  if [[ -n $fullRefname ]]; then
-    results+=("$fullRefname")
-  fi
 
   echo "${results[@]}"
   return "$ret"
@@ -886,59 +908,68 @@ function module_info () {
 #
 #
 #
-function is_branch_exists() {
-  [[ -z $1 ]] && (panic "'branch' argument for is_branch_exists() should be given")
+function is_revision_correct() {
+#echo "$FUNCNAME()" $@ >&2
+  [[ -z $1 ]] && (panic "$FUNCNAME() missed revision argument")
   local branchName="$1"
   local metrics="${2:-0}"
 
   local remote="${globals[$G_LEGO_REMOTE]}"
-  local checkingPlaces=()
-
+  local checkingPlaces=("")
+  local givenRemote=0
 
   if (( "${#remote}" )); then
-    local givenRemote=0
 
     if [[ "${branchName#refs/remotes/$remote/}" != "$branchName" || "${branchName#remotes/$remote/}" != "$branchName" || "${branchName#$remote/}" != "$branchName" ]]; then
       givenRemote=1
     fi
 
     if (( ! $givenRemote )); then
-      checkingPlaces+=("")
+      checkingPlaces+=("$remote/")
     fi
 
-    checkingPlaces+=("$remote/")
   fi
 
-  if (( ! "${#checkingPlaces[@]}" )); then
-    checkingPlaces+=("")
+  if (( ! $givenRemote )); then
+      checkingPlaces+=("heads/")
   fi
 
   local ret=0
+  local results=(0)
 
-  local found=(0)
   for prefix in "${checkingPlaces[@]}"; do
     local prefixBranch="${prefix}${branchName}"
     git rev-parse --no-revs "$prefixBranch" &>/dev/null
     local ret=$?
 
     if (( ! $ret )); then
-      found[0]=1
+      results[0]=1
 
-      if (( "$metrics" )); then
-        found+=("$prefixBranch")
+      if (( "$metrics" == 1 )); then
+        local isBranch=0
+        results+=("$prefixBranch")
 
-        if [[ -n "$prefix" ]]; then
-          found+=(1)
+        if [[ "$prefix" == "$remote/" || "$givenRemote" == 1 ]] ; then
+          results+=(1)
+          isBranch=1
         else
-          found+=(0)
+          results+=(0)
         fi
+
+        if [[ "$prefix" == "heads/" ]]; then
+          isBranch=1
+        elif [[ -z "$prefix" && ( "${branchName#refs/heads/}" != "$branchName" || "${branchName#heads/}" != "$branchName" ) ]]; then
+          isBranch=1
+        fi
+
+        results+=("$isBranch")
       fi
       break
     fi
   done
 
-  echo "${found[@]}"
-  return ${ret}
+  echo "${results[@]}"
+  return "$ret"
 }
 
 
@@ -961,7 +992,7 @@ typeset MODULE_STATUS=()
 #     $MODULE_STATUS array
 #
 function module_porcelain_status() {
-
+#echo "$FUNCNAME()" $@ >&2
   local remoteInteraction=0 managedBranch guessedBranched=()
   unset MODULE_STATUS
 
@@ -995,7 +1026,6 @@ function module_porcelain_status() {
 
   local moduleRefname
   declare -a output
-
   if (( ! $initialized )) ; then
     MODULE_STATUS[$MS_UNINITIALIZED]=1
   else
@@ -1041,7 +1071,7 @@ function module_porcelain_status() {
                 MODULE_STATUS[$MS_MISMATCHED]=1
 
                 if (( ${MODULE_STATUS[$MS_DETACHED]} > 0 )) && [[ -n ${managedRefname} ]]; then
-                  calculate_ab_for_tag "${managedRefname}"
+                  calculate_ab_for_tag "$managedRefname"
                 fi
               else
                 MODULE_STATUS[$MS_MISMATCHED]=0
@@ -1092,6 +1122,7 @@ function module_porcelain_status() {
     (( "$guessing" )) && guess_refnames_of_commit "$modulePath" HEAD
 
   fi
+#  set +x
 #  echo "$FUNCNAME(): ${MODULE_STATUS[@]}"
 }
 
@@ -1149,7 +1180,7 @@ calculate_ab_for_tag() {
     fi
   fi
 
-  echo "${ab[@]}"
+#  echo "${ab[@]}"
   return "$ret"
 }
 
@@ -1162,11 +1193,11 @@ calculate_ab_for_branch() {
   local ab=()
   local ret=0
 
-  read branchExists maybeRemoteBranch isRemote < <( is_branch_exists "$branchName" 1 )
+  read revisionCorrect maybeRemoteBranch isRemote isBranch < <( is_revision_correct "$branchName" 1 )
 
-  ab+=("$branchExists")
+  ab+=("$revisionCorrect")
 
-  if (( "$branchExists" )); then
+  if (( "$revisionCorrect" )); then
     ab+=("$isRemote")
     ab+=("$maybeRemoteBranch")
 
@@ -1330,12 +1361,11 @@ function import_gitmodules_section {
 
 function prepare_checkout_level() {
 #  echo ${FUNCNAME}": $@" >&2
-  pwd >&2
+#  pwd >&2
 
-#  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local revision="$1"
-  local modulePath="$2"
-  local moduleName="$3"
+  local moduleName="$2"
+  local modulePath="$3"
   local levelPath="$4"
   local parentRefname="$5"
   local parentRefType="$6"
@@ -1349,24 +1379,26 @@ function prepare_checkout_level() {
   if [[ "$revision" == "-" ]]; then
     local type
     local guessedRefnames=()
+#    set -x
     read revision type < <( evaluate_attain_hint  "$parentRefname" "$parentRefType" )
     MODULE_STATUS[$MS_MANAGED_REFNAME]="$revision"
     MODULE_STATUS[$MS_MANAGED]=$( ref_type_index "$type")
     MODULE_STATUS[$MS_UNMANAGED]=0
+#    set +x
 
   fi
   if (( $toBeDeleted )); then
 
+    # Use case when in new checkout revision the submodule not exists, but in current branch the module has changed.
+    # It should be vetoed, but this veto can be disclosed only on the next call for getting, if sub-module is commitable.
     if [[ 0 == ${doForce} && (1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[$MS_PUSHABLE]}) ]]; then
       dieMsg+="Module '$moduleName' has not committed or not pushed changes, but intended to be deleted as it does not exists in revision "
       ret=1
     fi
 
   else
-    pwd >&2
-    ### Use case when in new checkout revision the submodule not exists, but in current branch it is change
-    ### It should be vetoed, but this veto can be disclosed only on the next call for getting if sub-module is
-    ### commitable.
+#    pwd >&2
+
     local blobRevision=$( get_blob_revision "$revision" )
 
     local noSubmodules=$(git cat-file -s "${blobRevision}":.gitmodules &>/dev/null; echo $?)
@@ -1484,7 +1516,7 @@ persist_attain_hint() {
 
 
 #
-# EXTERNAL : guessedRefnames - array of branches of tags
+# EXTERNAL : guessedRefnames - array of branches or tags
 #
 evaluate_attain_hint() {
   local parentRefname="$1"
@@ -1940,8 +1972,8 @@ function _m_root() {
 # Sorry for inconvenience ;)
 #
 READ_boolean() {
-  local input=${1:-0};
-  local default=${2}
+  local input="${1:-0}"
+  local default="$2"
 
   case "${input}" in
     true|t|1)
@@ -1950,9 +1982,31 @@ READ_boolean() {
     false|f|0)
       input=0
     ;;
-    *) warn "wrong format for boolean value, defaulting to 0" ;;
+    *)
+#      warn "wrong format for boolean value, defaulting to 0"
+      input="$default"
+      ;;
   esac
-  echo ${input}
+  echo "$input"
+}
+
+
+#
+# Get  default if missed
+#
+READ_string() {
+  local input="$1"
+  local default="$2"
+
+  case "${input}" in
+    '')
+      input="$default"
+      ;;
+    *) #warn "wrong format for boolean value, defaulting to 0" ;;
+#      input
+  esac
+
+  echo "$input"
 }
 
 

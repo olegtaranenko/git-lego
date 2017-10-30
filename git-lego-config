@@ -289,7 +289,7 @@ cmd_parameter() {
 
 ## Just show current
 cmd_legomode() {
-  echo "$FUNCNAME() setLegoMode=$nextLegoMode" >&2
+#  echo "$FUNCNAME() setLegoMode=$nextLegoMode" >&2
   local currentMode
   local investigated
   local hint

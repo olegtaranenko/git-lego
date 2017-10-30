@@ -251,7 +251,7 @@ cmd_default() {
 
 
   # TODO signature changed
-  prepare_checkout_level "${revision}" "${modulePath}" "${moduleName}" "${path}" 0
+  prepare_checkout_level "${revision}" "${moduleName}" "${modulePath}" "${path}" 0
   if (( $? )); then
     if [[ -n $dieMsg ]]; then
       die "${dieMsg}"

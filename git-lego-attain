@@ -34,12 +34,12 @@ EOF
 
 typeset currentLegoMode
 
-typeset verbose=0
+typeset verbose=0 stopOptions=0
 typeset doUpdate=1
 
 typeset autoAttain=$(get_lego_setting "autoAttain")
 autoAttain=$(READ_boolean ${autoAttain} 1) # 1 === true
-typeset paramAutoAttain implicitAuto=0
+typeset paramAutoAttain implicitAutoAttain=0
 
 #typeset doRecursive=0
 typeset initialPath doRecursive=1 doForce=1
@@ -234,7 +234,7 @@ fi
 #  
 #
 is_module_attainable() {
-echo "$FUNCNAME()" $@ >&2
+#echo "$FUNCNAME()" $@ >&2
   local modulePath="$3"
 
   local ret=0
@@ -256,7 +256,7 @@ echo "$FUNCNAME()" $@ >&2
       moduleAutoAttain="$paramAutoAttain"
     else
       # from started module: true, if it is 'headed' (branch)
-      moduleAutoAttain="$implicitAuto"
+      moduleAutoAttain="$implicitAutoAttain"
     fi
 
     local unmanaged="${MODULE_STATUS[$MS_UNMANAGED]}"
@@ -383,7 +383,7 @@ attain_module_mode() {
 
 
 attain_level() {
-echo "$FUNCNAME()" $@ >&2
+#echo "$FUNCNAME()" $@ >&2
   local parentName="$1"
   local levelPath="$2"
   local modulePath="$3"
@@ -460,7 +460,7 @@ cmd_default() {
   typeset onEmptyMessage
   typeset skippedModules=()
   typeset warnMsg
-  typeset initialRefType initialRefName
+#  typeset initialRefType initialRefName
   
 
   if [[ -z "$moduleFilePath" ]]; then
@@ -471,10 +471,10 @@ cmd_default() {
     module_up
   fi
   read refName refType < <( evaluate_refname )
-  initialRefType="$refType"
-  initialRefName="$refName"
+#  initialRefType="$refType"
+#  initialRefName="$refName"
   if [[ "$refType" == "branch" ]]; then
-    implicitAuto=1
+    implicitAutoAttain=1
   fi
 
   attain_level "$moduleName" "$moduleFilePath" "$modulePath" "$refName" "$refType"

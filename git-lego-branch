@@ -256,7 +256,7 @@ EOF
     currentUmbrellaState="'${mainBranch}'"
     [[ $mainBranch == "HEAD" ]] && currentUmbrellaState="detached"
 
-    typeset mainAlreadyExists=$(is_branch_exists "${branchName}")
+    typeset mainAlreadyExists=$(is_revision_correct "${branchName}")
     if (( $mainAlreadyExists )) && (( $doUmbrella )); then
       die "Branch '$branchName' already exists in the umbrella repo.
           You are advised to do 'checkout $branchName' and then continue to create branch in sub-repositories
