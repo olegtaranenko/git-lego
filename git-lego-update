@@ -99,15 +99,15 @@ done
 
 cmd_default() {
   typeset modulePath=$(resolve_module_path "${initialPath}" ".")
-  read moduleName moduleFilePath < <(module_info "${modulePath}" "name" "path")
+  read moduleName moduleFilePath localPath < <(module_info "${modulePath}" "name" "path" "relative")
 
   typeset affected=0
   typeset onEmptyMessage
   typeset skippedModules=()
 #  [[ -z ${updateMessage} ]] && onEmptyMessage="update for umbrella ${globals[$G_ROOT_NAME]}, affected modules: "
 
-  pushd ${moduleFilePath} &>/dev/null
-  update_level "${moduleFilePath}" "${moduleName}" "${modulePath}"
+  pushd "$moduleFilePath" &>/dev/null
+  update_level "$moduleFilePath" "$moduleName" "$modulePath" "$localPath"
 
   popd &>/dev/null
   umbrella_finalize

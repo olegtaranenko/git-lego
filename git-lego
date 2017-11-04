@@ -234,7 +234,8 @@ umbrella_bootstrap (){
 #  echo $g_lego_mode ${implicit:-2}
 
   module_startup_investigate "${umbrellaRepoName}" "/" ".git" "${umbrellaRepoDir}" "/" 1 "${sha}" 1 "$NA"
-#  cat ${globals[$G_MODULES_FN]} >&2
+
+  cat ${globals[$G_MODULES_FN]} >&2
 #  echo ${g_module_name[@]} >&2
 #  echo ${g_module_inited[@]} >&2
 #  echo ${g_module_managed[@]} >&2
@@ -296,19 +297,21 @@ cache_module_descriptor() {
   echo "$@">>${tmpModules}
   # keep all module descriptors' values in the global arrays for cached access
   # basically they will be used in 'module_info' method
-  g_module_name+=($1)
-  g_relative_paths+=($2)
-  g_git_dirs+=($3)
-  g_full_paths+=($4)
-  g_module_paths+=($5)
-  g_module_inited+=($6)
-  g_module_shas+=($7)
-  g_module_managed+=($8)
-  g_managed_refnames+=($9)
+  g_module_name+=("$1")
+  g_relative_paths+=("$2")
+  g_git_dirs+=("$3")
+  g_full_paths+=("$4")
+  g_module_paths+=("$5")
+  g_module_inited+=("$6")
+  g_module_shas+=("$7")
+  g_module_managed+=("$8")
+  g_managed_refnames+=("$9")
 }
 
 function module_startup_investigate() {
-#echo "$FUNCNAME() $@" >&2
+echo "$FUNCNAME() $@" >&2
+  local moduleName="$1"
+  local modulePath="$5"
 
   cache_module_descriptor $@
 
@@ -318,21 +321,24 @@ function module_startup_investigate() {
   do
     local subModule="${module[$MFS_MODULE_NAME]}"       #0
     local localPath="${module[MFS_RELATIVE_PATH]}"      #1
+    local subModulePath="$modulePath"
+    [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
+    subModulePath+="$subModule"
+    investigate_module "$subModule" "$localPath" "$subModulePath"
 
-    investigate_module "$subModule" "$localPath"
-
-    pushd ${localPath} &>/dev/null
-    module_startup_investigate ${module[@]}
+    pushd "$localPath" &>/dev/null
+    module_startup_investigate "${module[@]}"
     popd &>/dev/null
+
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
 }
 
 
 #
-# EXTERNAL: module :: array(2), prepared with moduleName & modulePath
+# EXTERNAL: module :: array(2), prepared with moduleName & localPath
 #
 investigate_module() {
-#echo "$FUNCNAME() $@" >&2
+echo "$FUNCNAME() $@" >&2
   local moduleName="$1"
   local localPath="$2"
 #    local parentFilePath="$4"
@@ -343,19 +349,16 @@ investigate_module() {
 #    pushPath+="$localPath"
 
   local is_initialized=1
-  local moduleStatus=($(git submodule status -- ${moduleName}))
+  local moduleStatus=($(git submodule status -- "$localPath"))
   local managed=($(resolve_module_managed "${moduleName}" "${localPath}"))
 
-
   pushd ${localPath} &>/dev/null
+
   module+=($(get_repo_git_dir))             # MFS_GIT_DIR=2
   module+=($(pwd))                          # MFS_FULL_PATH=3
 
-  if [[ $5 == "/" ]]; then                  # MFS_MODULE_PATH = 4
-    module+=("/$moduleName")
-  else
-    module+=("$5/$moduleName")
-  fi
+  module+=("$3")                            # MFS_MODULE_PATH=4
+
   if [[ ${moduleStatus:0:1} == "-" ]]; then
     is_initialized=0
   fi
@@ -368,6 +371,7 @@ investigate_module() {
   module+=(${sha})                          # MFS_MODULE_SHA 6
   module+=("${managed[0]}")                 # MFS_MODULE_MANAGED 7
   module+=("${managed[1]}")                 # MFS_MANAGED_REFNAME 8
+
   popd &>/dev/null
 }
 
@@ -992,7 +996,7 @@ typeset MODULE_STATUS=()
 #     $MODULE_STATUS array
 #
 function module_porcelain_status() {
-#echo "$FUNCNAME()" $@ >&2
+echo "$FUNCNAME()" $@ >&2
   local remoteInteraction=0 managedBranch guessedBranched=()
   unset MODULE_STATUS
 
@@ -1360,9 +1364,9 @@ function import_gitmodules_section {
 
 
 function prepare_checkout_level() {
-#  echo ${FUNCNAME}": $@" >&2
+  echo ${FUNCNAME}": $@" >&2
 #  pwd >&2
-
+#set -x
   local revision="$1"
   local moduleName="$2"
   local modulePath="$3"
@@ -1387,16 +1391,16 @@ function prepare_checkout_level() {
 #    set +x
 
   fi
-  if (( $toBeDeleted )); then
-
-    # Use case when in new checkout revision the submodule not exists, but in current branch the module has changed.
-    # It should be vetoed, but this veto can be disclosed only on the next call for getting, if sub-module is commitable.
-    if [[ 0 == ${doForce} && (1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[$MS_PUSHABLE]}) ]]; then
-      dieMsg+="Module '$moduleName' has not committed or not pushed changes, but intended to be deleted as it does not exists in revision "
-      ret=1
-    fi
-
-  else
+#  if (( $toBeDeleted )); then
+#
+#    # Use case when in new checkout revision the submodule not exists, but in current branch the module has changed.
+#    # It should be vetoed, but this veto can be disclosed only on the next call for getting, if sub-module is commitable.
+#    if [[ 0 == ${doForce} && (1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[$MS_PUSHABLE]}) ]]; then
+#      dieMsg+="Module '$moduleName' has not committed or not pushed changes, but intended to be deleted as it does not exists in revision "
+#      ret=1
+#    fi
+#
+#  else
 #    pwd >&2
 
     local blobRevision=$( get_blob_revision "$revision" )
@@ -1405,7 +1409,9 @@ function prepare_checkout_level() {
     if (( ! $noSubmodules )); then
       while read -a module; do
         local after="${module[0]}"
-        modulesAfter+=("$after")
+        modulesNamesAfter+=("$after")
+        # modulesAfter keeps module local path instead of just module name
+        modulesAfter+=("${module[1]}")
         local pathAfter="${modulePath}"
         [[ "${pathAfter:-1}" != "/" ]] && pathAfter+="/"
         pathAfter+="${after}"
@@ -1417,11 +1423,11 @@ function prepare_checkout_level() {
     local moduleIndex=0
     while read -a module; do
       local before="${module[0]}"
-      modulesBefore+=("$before")
       local localPath="${module[1]}"
+      modulesBefore+=("$localPath")
       local pathBefore="${modulePath}"
       [[ "${pathBefore:-1}" != "/" ]] && pathBefore+="/"
-      pathBefore+="${localPath}"
+      pathBefore+="${before}"
       modulePathsBefore+=("$pathBefore")
 
       found=0
@@ -1478,10 +1484,10 @@ function prepare_checkout_level() {
         moduleIndex=$(( $moduleIndex + 1 ))
       done
     fi
-  fi
+#  fi
 
 #  popd &>/dev/null
-  return ${ret}
+  return "$ret"
 } ## of prepare_checkout_level
 
 
@@ -1494,6 +1500,9 @@ persist_attain_hint() {
   local mode="${5:-${g_lego_mode}}"
   local ret=0
 
+if [[ $refName == "-" ]]; then
+  set -x
+fi
   # Do checkout for branches only.
   # currently tag or sha reference will not affect ot the reporting (possible bug, currently in 2.14.2)
   if (( "$doApply" )) && [[ "$refType" == "branch" ]]; then
@@ -1579,13 +1588,14 @@ evaluate_attain_hint() {
 
 
 do_module_update() {
-#echo "$FUNCNAME()" $@ >&2
+echo "$FUNCNAME()" $@ >&2
   local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local moduleName="$2"
   local modulePath="$3"
-  local parentFullPath="$4"
-  local revision="$5"
+  local localPath="$4"
+#  local parentFullPath="$4"
+#  local revision="$5"
 
   if [[ $modulePath != / ]]; then
     local uninitialized=${MODULE_STATUS[$MS_UNINITIALIZED]}
@@ -1599,7 +1609,7 @@ do_module_update() {
       pushd "${parentFullPath}" &>/dev/null
       if (( $uninitialized )); then
         cw_echo "About to update module $moduleName..."
-        git submodule update --init -- "${moduleName}"
+        git submodule update --init -- "${localPath}"
         (( ! $? )) && cw_echo "... OK!"
       fi
       popd &>/dev/null
@@ -1622,7 +1632,7 @@ do_module_update() {
 
 
 update_level() {
-#echo "$FUNCNAME()" $@ >&2
+echo "$FUNCNAME()" $@ >&2
   local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local moduleName="$2"
@@ -2046,7 +2056,7 @@ resolve_module_managed() {
     local section="submodule.${module_name}"
     local value=$(get_lego_setting_mode "${token}" "$section" "${mode}")
 
-    if (( ${#value} )) ; then
+    if (( "${#value}" )) ; then
       ret+=("${token}")
       ret+=("${value}")
       found=1

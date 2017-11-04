@@ -234,7 +234,7 @@ fi
 #  
 #
 is_module_attainable() {
-#echo "$FUNCNAME()" $@ >&2
+echo "$FUNCNAME()" $@ >&2
   local modulePath="$3"
 
   local ret=0
@@ -314,8 +314,8 @@ is_module_attainable() {
 
 
 attain_module_mode() {
-#echo "$FUNCNAME()" $@ >&2
-#pwd >&2
+echo "$FUNCNAME()" $@ >&2
+pwd >&2
   local moduleName="$1"
   local modulePath="$2"
   local parentRefname="$3"
@@ -383,7 +383,7 @@ attain_module_mode() {
 
 
 attain_level() {
-#echo "$FUNCNAME()" $@ >&2
+echo "$FUNCNAME()" $@ >&2
   local parentName="$1"
   local levelPath="$2"
   local modulePath="$3"
@@ -428,7 +428,7 @@ attain_level() {
           attain_level "$moduleName" "$subModuleFilePath" "$subModulePath" "$refName" "$refType"
           local childRet=$?
 
-          (( "$childRet" > "$ret" )) && ret = "$childRet"
+          (( "$childRet" > "$ret" )) && ret="$childRet"
         else
           ret=1
           warnMsg="One or more modules are uninitialized!"
@@ -467,6 +467,7 @@ cmd_default() {
     see_help "Wrong module specification"
   fi
 
+  cd "$moduleFilePath"
   if [[ "$modulePath" != "/" ]]; then
     module_up
   fi

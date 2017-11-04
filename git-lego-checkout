@@ -178,6 +178,7 @@ echo "$FUNCNAME()" $@ >&2
   local modulesBefore=()
   local modulePathsBefore=()
   local modulesAfter=()
+  local modulesNamesAfter=()
   local modulePathsAfter=()
   local hashesAfter=()
   local addedModules=()
@@ -185,14 +186,15 @@ echo "$FUNCNAME()" $@ >&2
   local movedModules=()
 
   local ret=0
-  
+
   prepare_checkout_level "$revision" "$moduleName" "$modulePath" "$levelPath" "$parentRefname" "$parentRefType"
   ret=$?
 
 #  echo "before: ${modulesBefore[@]}" >&2
 #  echo "paths before: ${modulePathsBefore[@]}" >&2
-#  echo "after: ${modulesAfter[@]}" >&2
-#  echo "paths after: ${modulePathsAfter[@]}" >&2
+  echo "after: ${modulesAfter[@]}" >&2
+  echo "names after: ${modulesNamesAfter[@]}" >&2
+  echo "paths after: ${modulePathsAfter[@]}" >&2
 #  echo "to add: ${addedModules[@]}" >&2
 #  echo "to delete: ${deletedModules[@]}" >&2
 #  echo "ret: ${ret}" >&2
@@ -257,20 +259,25 @@ echo "$FUNCNAME()" $@ >&2
         local doAppendNewModule=0
         local doRecreateCache=()
 
-        for after in "${modulesAfter[@]}"; do
-          local pathAfter="${modulePathsAfter[$index]}"
+#      set -x
+        for pathAfter in "${modulePathsAfter[@]}"; do
+          local localPath="${modulesAfter[$index]}"
+          local afterName="${modulesNamesAfter[$index]}"
           doUpdateInit=0
 
           initialized=$(module_info "$pathAfter" "initialized")
 
           if [[ -z "$initialized" || "$initialized" == 0 ]]; then
-            git submodule update --init -- "$after"
+          pwd >&2
+            git submodule update --init -- "$localPath"
             ret=$?
             if [[ -z "$initialized" ]]; then
               # 'module' is an external array is being used in investigate_module function
-              local localPath="${pathAfter:1}"
-              local module=("$after" "$localPath")
-              investigate_module "$after" "$localPath"
+              local module=("$afterName" "$localPath")
+              local subModulePath="$modulePath"
+              [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
+              subModulePath+="$afterName"
+              investigate_module "$afterName" "$localPath" "$subModulePath"
 
               cache_module_descriptor "${module[@]}"
 
@@ -293,6 +300,8 @@ echo "$FUNCNAME()" $@ >&2
 
           index=$(( $index + 1 ))
         done
+
+      set +x
 
         if (( "${#doRecreateCache[@]}" )); then
           recreate_modules_cache "${doRecreateCache[@]}"
@@ -317,6 +326,7 @@ echo "$FUNCNAME()" $@ >&2
         unset modulesBefore
         unset modulePathsBefore
         unset modulesAfter
+        unset modulesNamesAfter
         unset modulePathsAfter
         unset hashesAfter
         unset addedModules
@@ -325,6 +335,7 @@ echo "$FUNCNAME()" $@ >&2
 
         if [ -f .gitmodules ]; then
           while read -a module; do
+#          set -x
             local subModule="${module[0]}"
             local localPath="${module[1]}"
             subRepoPath="$levelPath/$localPath"
@@ -332,7 +343,7 @@ echo "$FUNCNAME()" $@ >&2
             local subModulePath="$modulePath"
             [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
             subModulePath+="$subModule"
-
+#          set +x
             checkout_level "-" "$subModule" "$subModulePath" "$subRepoPath" "$parentRefname" "$parentRefType"
 
           done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
@@ -347,7 +358,7 @@ echo "$FUNCNAME()" $@ >&2
 
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
-  local modulePath=$(resolve_module_path "$initialPath" "/")
+  local modulePath=$(resolve_module_path "$initialPath" ".")
   read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
 
   local dieMsg
@@ -356,29 +367,22 @@ cmd_default() {
   local vetoed=0
   ret=0
 
-  #pushd ${path} &>/dev/null
-#  cd ${moduleFilePath}
+  cd ${moduleFilePath}
 
-#  git rev-parse "$revision" &> /dev/null
-#  if (( $? )); then
-#    git rev-parse "origin/${revision}" &> /dev/null
-#    if (( $? )); then
-#      die "Revision '$revision' not exists in the module '$moduleName'"
-#    fi
-#  fi
-#
-#set -x
   if [[ -z "$moduleFilePath" ]]; then
     see_help "Wrong module specification"
   fi
 
   if [[ "$modulePath" != "/" ]]; then
+    pushd ${moduleFilePath} &>/dev/null
     module_up
+
+    read refName refType isExists full < <( evaluate_refname "$revision" "" "1")
+
+    popd &>/dev/null
   fi
 
-  read refName refType isExists full < <( evaluate_refname "$revision" "" "1")
-
-  if (( ! "$isExists" )); then
+  if (( ! "${isExists:-0}" )); then
     die "Incorrect revision '$revision' in module '$moduleName'"
   fi
 
@@ -386,7 +390,7 @@ cmd_default() {
     implicitAutoAttain=1
   fi
 
-  checkout_level "$revision" "$moduleName" "$modulePath" "$moduleFilePath"
+  checkout_level "$revision" "$moduleName" "$modulePath" "$moduleFilePath" "$refName" "$refType"
   ret=$?
 
   umbrella_finalize
