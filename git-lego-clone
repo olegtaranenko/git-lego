@@ -152,10 +152,9 @@ cmd_default() {
   cw_echo "Redirect to 'git clone'"
   git clone "${args[@]}"
   ret=$?
-  #echo $ret
 
   if (( $ret )); then
-       die "Unrecoverable error by cloning"
+     die "Unrecoverable error by cloning"
   fi
 
   if [[ -z "$repoPath" ]]; then
@@ -176,10 +175,9 @@ cmd_default() {
 
     done < <(find . -type d -maxdepth 1 -print0 )
   fi
-  cd "$repoPath"
 
-  #pushd . &> /dev/null
-  #git submodule update --recursive --init
+
+  cd "$repoPath"
 
   umbrella_bootstrap
 
@@ -187,11 +185,12 @@ cmd_default() {
   local moduleName="${globals[$G_ROOT_NAME]}"
   local modulePath="/"
 
+  splash "$modulePath"
+
   if [[ -z "$branchName" ]]; then
     read branchName type < <( evaluate_refname )
   fi
-
-  update_level "${moduleFilePath}" "${moduleName}" "${modulePath}" "." "$branchName"
+  update_level "$moduleFilePath" "$moduleName" "$modulePath" "." "$branchName"
 
   umbrella_finalize
   exit ${ret}

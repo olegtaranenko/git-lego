@@ -48,6 +48,10 @@ EOF
 
 typeset verbose=0
 typeset initialPath
+typeset modulePath
+typeset moduleName
+typeset moduleFilePath
+
 typeset afterDash=()
 typeset stopOptions=0
 #set -x
@@ -348,6 +352,9 @@ function status_level() {
   return $ret
 }
 
+get_default_init_path() {
+  echo "/";
+}
 
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
@@ -356,17 +363,23 @@ cmd_default() {
   local commitable
   local detached
 
-  local modulePath=$(resolve_module_path "$initialPath" /)
-  read moduleName path < <(module_info "$modulePath" "name" "path")
 #  local parentRefType parentRefName
 
+  cd "$moduleFilePath"
+
   if [[ "$modulePath" != "/" ]]; then
+    pushd "$moduleFilePath" &>/dev/null
     module_up
-    read parentRefName parentRefType < <( evaluate_refname )
   fi
 
-  pushd ${path} &>/dev/null
-  status_level "$path" "$moduleName" "$modulePath" "$parentRefName" "$parentRefType"
+  read parentRefName parentRefType < <( evaluate_refname )
+
+  if [[ "$modulePath" != "/" ]]; then
+    popd &>/dev/null
+  fi
+
+  pushd ${moduleFilePath} &>/dev/null
+  status_level "$moduleFilePath" "$moduleName" "$modulePath" "$parentRefName" "$parentRefType"
   ret=$?
 
   if (( $commitable )); then

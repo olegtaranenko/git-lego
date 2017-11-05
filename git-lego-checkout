@@ -20,7 +20,7 @@ NAME:
 
 SYNOPSIS:
     ${FLAGS_PREFIX} [--[no-]recursive] ...] ([--[no-]push] | [--[no-]commit] | <revision|reference-resolution>) [<path-resolution>] [-- <module1> ... ]
-    ${FLAGS_PREFIX} --follow-heads=[parent|managed] [-- <module1> <module2> ... ]
+    ${FLAGS_PREFIX} --update-heads=[parent|managed] [-- <module1> <module2> ... ]
 
 DESCRIPTION:
     Lego checkout handles slightly different from its 'git checkout' counterpart.
@@ -70,12 +70,12 @@ typeset commit=0 doForce=0
 #typeset fallbacks=()
 typeset initialPath
 
-# possible values for follow-heads option
+# possible values for update-heads option
 #   parent - update sibling
 #   mananged - for versioned version only, update
 #   none - (default)
-typeset followHeads=$( get_lego_setting "followHeads" )
-followHeads=$( READ_string "$followHeads" "none" ) # by default - do not follow heads
+typeset updateHeads=$( get_lego_setting "updateHeads" )
+updateHeads=$( READ_string "$updateHeads" "none" ) # by default - do not update heads
 
 typeset autoAttain=$(get_lego_setting "autoAttain")
 autoAttain=$(READ_boolean ${autoAttain} 1) # 1 === true
@@ -107,11 +107,11 @@ while [[ -n $1 ]]; do
       commit=0
       ;;
 
-    --follow-heads=*)
-      followHeads="${1#--follow-heads=}"
+    --update-heads=*)
+      updateHeads="${1#--update-heads=}"
       ;;
-    --no-follow-heads)
-      followHeads=0
+    --no-update-heads)
+      updateHeads=0
       ;;
 
     --auto-attain|-a)
@@ -155,7 +155,7 @@ fi
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 checkout_level () {
-echo "$FUNCNAME()" $@ >&2
+ echo "$FUNCNAME()" $@ >&2
 
   local revision="$1"
   local moduleName="$2"
@@ -192,9 +192,9 @@ echo "$FUNCNAME()" $@ >&2
 
 #  echo "before: ${modulesBefore[@]}" >&2
 #  echo "paths before: ${modulePathsBefore[@]}" >&2
-  echo "after: ${modulesAfter[@]}" >&2
-  echo "names after: ${modulesNamesAfter[@]}" >&2
-  echo "paths after: ${modulePathsAfter[@]}" >&2
+#  echo "after: ${modulesAfter[@]}" >&2
+#  echo "names after: ${modulesNamesAfter[@]}" >&2
+#  echo "paths after: ${modulePathsAfter[@]}" >&2
 #  echo "to add: ${addedModules[@]}" >&2
 #  echo "to delete: ${deletedModules[@]}" >&2
 #  echo "ret: ${ret}" >&2
@@ -234,7 +234,7 @@ echo "$FUNCNAME()" $@ >&2
     if [[ -n "${MODULE_STATUS[$MS_MANAGED_REFNAME]}" && "$revision" == "-" ]]; then
       revision="${MODULE_STATUS[$MS_MANAGED_REFNAME]}"
       managed="${MODULE_STATUS[$MS_MANAGED]}"
-      refType="${g_lego_aware_tokens_gitmodules[$managed]}"
+      refType="${G_REFTYPE_TOKENS[$managed]}"
     fi
 
     git checkout "$revision"
@@ -245,9 +245,13 @@ echo "$FUNCNAME()" $@ >&2
     else
 
       if [[ "$modulePath" != "/" ]]; then
-        local legoMode="$g_lego_mode"
-        [[ "$legoMode" != "versioned" ]] && legoMode="solo"
+        local parentModulePath=$(get_module_path_up "$modulePath")
+        read legoMode modeImplicit < <( get_lego_mode "1" "$parentModulePath" )
 
+#        read legoMode modeImplicit < <( module_info "$parentModulePath" "lego_mode" "lego_mode_implicit" )
+        if [[ "$legoMode" != "versioned" || "$modeImplicit" == "1" ]]; then
+          legoMode="solo"
+        fi
         persist_attain_hint "0" "$moduleName" "$revision" "$refType" "$legoMode"
         ret=$?
       fi
@@ -259,7 +263,7 @@ echo "$FUNCNAME()" $@ >&2
         local doAppendNewModule=0
         local doRecreateCache=()
 
-#      set -x
+
         for pathAfter in "${modulePathsAfter[@]}"; do
           local localPath="${modulesAfter[$index]}"
           local afterName="${modulesNamesAfter[$index]}"
@@ -268,14 +272,13 @@ echo "$FUNCNAME()" $@ >&2
           initialized=$(module_info "$pathAfter" "initialized")
 
           if [[ -z "$initialized" || "$initialized" == 0 ]]; then
-          pwd >&2
             git submodule update --init -- "$localPath"
             ret=$?
             if [[ -z "$initialized" ]]; then
               # 'module' is an external array is being used in investigate_module function
               local module=("$afterName" "$localPath")
               local subModulePath="$modulePath"
-              [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
+              [[ "${subModulePath:(-1)}" != "/" ]] && subModulePath+="/"
               subModulePath+="$afterName"
               investigate_module "$afterName" "$localPath" "$subModulePath"
 
@@ -294,14 +297,14 @@ echo "$FUNCNAME()" $@ >&2
               done
             fi
           else
-            git submodule update
+            git submodule update -- "$localPath"
             ret=$?
           fi
 
           index=$(( $index + 1 ))
         done
 
-      set +x
+#      set +x
 
         if (( "${#doRecreateCache[@]}" )); then
           recreate_modules_cache "${doRecreateCache[@]}"
@@ -335,7 +338,6 @@ echo "$FUNCNAME()" $@ >&2
 
         if [ -f .gitmodules ]; then
           while read -a module; do
-#          set -x
             local subModule="${module[0]}"
             local localPath="${module[1]}"
             subRepoPath="$levelPath/$localPath"
@@ -343,13 +345,14 @@ echo "$FUNCNAME()" $@ >&2
             local subModulePath="$modulePath"
             [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
             subModulePath+="$subModule"
-#          set +x
-            checkout_level "-" "$subModule" "$subModulePath" "$subRepoPath" "$parentRefname" "$parentRefType"
+            checkout_level "-" "$subModule" "$subModulePath" "$subRepoPath" "$parentRefname" "$parentRefType" "$levelPath"
 
           done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
         fi
       fi
     fi
+  else
+    die "$dieMsg"
   fi
   popd &>/dev/null
 }  ## of checkout_level
@@ -358,6 +361,7 @@ echo "$FUNCNAME()" $@ >&2
 
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
+
   local modulePath=$(resolve_module_path "$initialPath" ".")
   read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
 
@@ -376,9 +380,11 @@ cmd_default() {
   if [[ "$modulePath" != "/" ]]; then
     pushd ${moduleFilePath} &>/dev/null
     module_up
+  fi
 
-    read refName refType isExists full < <( evaluate_refname "$revision" "" "1")
+  read refName refType isExists fullRefname < <( evaluate_refname "$revision" "" "1")
 
+  if [[ "$modulePath" != "/" ]]; then
     popd &>/dev/null
   fi
 

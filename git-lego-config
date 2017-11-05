@@ -51,6 +51,8 @@ typeset autoAttach=$(get_lego_setting "autoAttach")
 autoAttach=$(READ_boolean ${autoAttach} 1) # 1 === true
 #typeset doRecursive=0
 
+typeset initialPath initialModulePath
+
 ################################ PARAMETERS PARSING ################################
 #      set -x
 while [[ -n $1 ]]; do
@@ -117,25 +119,39 @@ while [[ -n $1 ]]; do
       parameterValue=${1:#*=}
       ;;
     *)
-      parameterKey="${1}"
-      case "$2" in
-        '')
-          showParameter=1
-        ;;
-        --unset)
-          unsetParameter=1
-          shift
-        ;;
-        --*)
-          showParameter=1
-          shift
-        ;;
-        *)
-          parameterValue="$2"
-          shift
-      esac
+#    set -x
+      notAPath=1
+      if [[ -z "$initialPath" ]]; then
+        initialPath="$1"
+        initialModulePath=$(resolve_module_path "$initialPath" "..." "1")
+        notAPath=$?
+
+        if (( $notAPath )); then
+          unset initialPath
+        fi
+      fi
+
+      if (( "$notAPath" )); then
+        parameterKey="$1"
+        case "$2" in
+          '')
+            showParameter=1
+          ;;
+          --unset)
+            unsetParameter=1
+            shift
+          ;;
+          --*)
+            showParameter=1
+          ;;
+          *)
+            parameterValue="$2"
+            shift
+        esac
+      fi
       ;;
   esac
+#  set +x
   shift
 done
 #set +x
@@ -236,7 +252,7 @@ reconcile_level() {
     unset reference
     unset key
 
-    for token in "${g_lego_aware_tokens_gitmodules[@]}" ; do
+    for token in "${G_REFTYPE_TOKENS[@]}" ; do
       reference=$(get_lego_setting_mode "${token}" "$section" "${modeFrom}" )
       if (( ${#reference} )); then
         key="$token"
@@ -295,20 +311,19 @@ cmd_legomode() {
   local hint
 
   local doEcho=$1
-#
-#set -x
+
   if (( $showLegoMode )) ; then
     local currentMode=$( get_lego_setting "mode")
     if [[ -z "$currentMode" ]] ; then
       investigated=$( investigate_lego_mode )
-      if [[ $investigated == empty ]]; then
+      if [[ "$investigated" == "empty" ]]; then
         unset investigated
       fi
     fi
 
     cw_echo "${currentMode:+Mode is explicit set to }${currentMode:-Mode not set}${investigated:+, guessing: ${investigated}}."
-    if [[ -n ${investigated} ]]; then
-      if [[ $investigated == ambiguous ]] || [[ $investigated == empty ]]; then
+    if [[ -n "${investigated}" ]]; then
+      if [[ "$investigated" == "ambiguous" ]] || [[ "$investigated" == "empty" ]]; then
         hint="[versioned|solo]"
       else
         hint="${investigated}"
@@ -317,16 +332,16 @@ cmd_legomode() {
     fi
 
     # get feedback if necessary
-    (( $doEcho )) && echo ${nextLegoMode}
+    (( "$doEcho" )) && echo "$nextLegoMode"
   else
-    case ${nextLegoMode} in
+    case "$nextLegoMode" in
       current)
         #do nothing
         ;;
       *)
 ###################    SET & UNSET LEGO MODE ##################
         (( $doModeUnset )) && nextLegoMode=empty
-        read currentMode implicit < <(get_lego_mode 1)
+        read currentMode implicit < <( get_lego_mode 1 )
         if [[ "$currentMode" != "$nextLegoMode" ]] || (( "$implicit" )) || (( "$doModeUnset" )) || (( "$doForce" )); then
 
           if (( "$implicit" )) && [[ "$currentMode" == "$nextLegoMode" ]]; then

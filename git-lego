@@ -26,14 +26,28 @@ g_module_inited=()
 g_module_shas=()
 g_module_managed=()
 g_managed_refnames=()
+g_module_lego_modes=()
+g_module_lego_modes_implicit=()
+#
+# At the beginning there is a logic to investigate possible initial path of command
+# For most of the git-lego commands initial path by default is current module - '.'
+# But in command it can be explicit given, ie. 'git checkout master macosx' - both 'master' and 'macosx'
+# are potential initial paths. Rough resolving whether the potential path is real one is done in umbrella_bootstrap.
+#
+g_potential_init_paths=()
 
-declare -a g_lego_aware_tokens_gitmodules=("branch" "pinned" "sha")
+declare -a G_REFTYPE_TOKENS=("branch" "pinned" "sha")
 
-declare -a g_lego_modes=("solo" "versioned")
+declare -a G_LEGO_MODES=("solo" "versioned")
 G_MODE_MASK_SOLO="0x1"
 G_MODE_MASK_VERSIONED="0x2"
 
 declare NA="n/a"
+
+
+typeset g_lego_mode
+
+
 
 # keeps some global settings during git-lego script execution
 # initialized at startup
@@ -70,7 +84,13 @@ G_AFFECTED_MODULES=5
 G_LEGO_REMOTE=6
 
   # if root repository is headed (checked out to branch) it contains branch name, otherwise hash of the current HEAD
-G_HEADED_REF=7
+G_ROOT_REF=7
+
+  # Reference type of module where git-lego starts. Ie.
+G_ROOT_DETACHED=8
+
+G_LEGO_MODE=9
+G_LEGO_MODE_IMPLICIT=10
 
 #################### CONSTANTS for MODULE STATUS (see function module_porcelain_status() ####################
 #
@@ -169,15 +189,16 @@ MFS_MODULE_INITIALIZED=5
 MFS_MODULE_SHA=6
 MFS_MODULE_MANAGED=7
 MFS_MANAGED_REFNAME=8
+MFS_LEGO_MODE=9 
+MFS_LEGO_MODE_IMPLICIT=10
 
 # set this to workaround expr problems in shFlags on freebsd
 #if uname -s | egrep -iq 'bsd'; then export EXPR_COMPAT=1; fi
 
 
+typeset skipSplash=1
 
-typeset g_lego_mode
-
-umbrella_bootstrap (){
+umbrella_bootstrap() {
   local legoRemote=$(get_lego_setting "remote")
   local gitDir
   local umbrellaRepoDir
@@ -230,19 +251,22 @@ umbrella_bootstrap (){
 
   ##
   local implicit
-  read g_lego_mode implicit < <(get_lego_mode 1)
+  read g_lego_mode implicit < <( get_lego_mode 1 "${globals[$G_ROOT_DIR]}" )
+  globals[$G_LEGO_MODE]="$g_lego_mode"
+  globals[$G_LEGO_MODE_IMPLICIT]="$implicit"
 #  echo $g_lego_mode ${implicit:-2}
 
-  module_startup_investigate "${umbrellaRepoName}" "/" ".git" "${umbrellaRepoDir}" "/" 1 "${sha}" 1 "$NA"
 
-  cat ${globals[$G_MODULES_FN]} >&2
+  module_startup_investigate "${umbrellaRepoName}" "/" ".git" "${umbrellaRepoDir}" "/" 1 "${sha}" 1 "$NA" "$g_lego_mode" "$implicit"
+
+#  cat ${globals[$G_MODULES_FN]} >&2
 #  echo ${g_module_name[@]} >&2
 #  echo ${g_module_inited[@]} >&2
-#  echo ${g_module_managed[@]} >&2
+#  echo "${g_module_lego_modes[@]}" >&2
+#  echo "${g_module_lego_modes_implicit[@]}" >&2
   popd &>/dev/null
 
-  splash ${umbrellaRepoName} ${implicit}
-
+  skipSplash=0
   return 0
 }
 
@@ -250,7 +274,6 @@ umbrella_bootstrap (){
 recreate_modules_cache() {
 #echo "$FUNCNAME() $@" >&2
   local modulePaths=("$@")
-#echo "${modulePaths[@]}" >&2
   local tmpDir="${globals[$G_SCRIPT_TMP_DIRECTORY]}"
   local originalModules="${globals[$G_MODULES_FN]}"
   local backup="$tmpDir/modules.bak"
@@ -278,9 +301,12 @@ recreate_modules_cache() {
       local l_module_shas="${g_module_shas[$index]}"
       local l_module_managed="${g_module_managed[$index]}"
       local l_managed_refnames="${g_managed_refnames[$index]}"
+      local l_module_lego_modes="${g_module_lego_modes[$index]}"
+      local l_module_lego_modes_implicit="${g_module_lego_modes_implicit[$index]}"
 
 
-      echo "$l_module_name" "$l_relative_paths" "$l_git_dirs" "$l_full_paths" "$l_module_paths" "$l_module_inited" "$l_module_shas" "$l_module_managed" "$l_managed_refnames">>$newCache
+      echo "$l_module_name" "$l_relative_paths" "$l_git_dirs" "$l_full_paths" "$l_module_paths" "$l_module_inited" "$l_module_shas" \
+        "$l_module_managed" "$l_managed_refnames" "$l_module_lego_modes" "$l_module_lego_modes_implicit" >>$newCache
     else
       echo "${module[@]}">>$newCache
     fi
@@ -305,11 +331,13 @@ cache_module_descriptor() {
   g_module_inited+=("$6")
   g_module_shas+=("$7")
   g_module_managed+=("$8")
-  g_managed_refnames+=("$9")
+  g_managed_refnames+=("${9}")
+  g_module_lego_modes+=("${10}")
+  g_module_lego_modes_implicit+=("${11}")
 }
 
 function module_startup_investigate() {
-echo "$FUNCNAME() $@" >&2
+#echo "$FUNCNAME() $@" >&2
   local moduleName="$1"
   local modulePath="$5"
 
@@ -338,21 +366,15 @@ echo "$FUNCNAME() $@" >&2
 # EXTERNAL: module :: array(2), prepared with moduleName & localPath
 #
 investigate_module() {
-echo "$FUNCNAME() $@" >&2
+#echo "$FUNCNAME() $@" >&2
   local moduleName="$1"
   local localPath="$2"
-#    local parentFilePath="$4"
-#    local pushPath
-#
-#    [[ -n "$parentFilePath" ]] && pushPath="$parentFilePath"
-#    [[ ${pushPath:-1} != "/" && ${localPath:0:1} != "/" ]] && pushPath+="/"
-#    pushPath+="$localPath"
 
   local is_initialized=1
   local moduleStatus=($(git submodule status -- "$localPath"))
   local managed=($(resolve_module_managed "${moduleName}" "${localPath}"))
 
-  pushd ${localPath} &>/dev/null
+  pushd "$localPath" &>/dev/null
 
   module+=($(get_repo_git_dir))             # MFS_GIT_DIR=2
   module+=($(pwd))                          # MFS_FULL_PATH=3
@@ -371,7 +393,9 @@ echo "$FUNCNAME() $@" >&2
   module+=(${sha})                          # MFS_MODULE_SHA 6
   module+=("${managed[0]}")                 # MFS_MODULE_MANAGED 7
   module+=("${managed[1]}")                 # MFS_MANAGED_REFNAME 8
-
+  read moduleLegoMode implicit < <( get_lego_mode 1 "${module[$MFS_FULL_PATH]}" )
+  module+=("$moduleLegoMode")               # MFS_LEGO_MODE 9
+  module+=("$implicit")                     # MFS_LEGO_MODE_IMPLICIT 10
   popd &>/dev/null
 }
 
@@ -450,19 +474,25 @@ function cw_verbose_stop () {
 
 function splash() {
   (( $skipSplash )) && return
-  local url=$1
-  local implicit=$2
-  local legoMode=${g_lego_mode}
-  if [[ $legoMode == empty ]]; then
-    legoMode='none'
+
+  local modulePath="$1"
+  local projectName="${globals[$G_ROOT_NAME]}"
+  read moduleName legoMode implicit gitDir < <( module_info "$modulePath" "name" "lego_mode" "lego_mode_implicit" "git_dir" )
+
+  local msg="project: $projectName"
+
+  if [[ "$modulePath" != "/" && -n "$moduleName" ]]; then
+    msg+=", current module '$moduleName'"
   fi
 
-  local msg="project: $url, lego mode: $legoMode"
-  (( $implicit )) &&  [[ $g_lego_mode != empty ]] && [[ $g_lego_mode != detached ]]  && msg+=" (guessed)"
+  if [[ "$legoMode" == "empty" ]]; then
+    legoMode='none'
+  fi
+  local msg+=", lego mode: $legoMode"
+  if (( "$implicit" )) &&  [[ "$g_lego_mode" != "empty" ]] && [[ "$g_lego_mode" != "detached" ]]; then
+     msg+=" (guessed)"
+  fi
 
-  local currentGitDir=$(get_repo_git_dir)
-  local currentRepoName=${currentGitDir##*/modules/}
-  [[ -n ${currentRepoName} && ${url} != ${currentRepoName} && $currentGitDir != ".git" ]] && msg+=", current module '"${currentRepoName}"'"
   cw_echo "${msg}"
 }
 
@@ -720,9 +750,7 @@ function drop_to_affected() {
   local found=0
   local ret=1
 
-#  affected=0
-
-  [[ -z ${path} ]] && panic "$FUNCNAME() missed parameter 'path'"
+  [[ -z "$path" ]] && path=$( pwd )
 
   while read -a module; do
     found=0
@@ -750,7 +778,7 @@ function drop_to_affected() {
 
   done < <(cat ${globals[$G_MODULES_FN]})
 
-  return ${ret}
+  return "$ret"
 }
 
 function module_descriptor() {
@@ -797,14 +825,19 @@ function get_module_path_down() {
   return ${ret}
 }
 
-
+#
+# returns
+# 0 - correct path
+# 1 - wrong path
 function resolve_module_path() {
-  cantResolve="Can't resolve module path '$1'"
-  local originPath reminder="$1"
+  local originPath 
+  local reminder="$1"
   local default="$2"
+  local quiet="${3:-0}"
+  local ret=0
 
-  if [[ -z ${reminder} ]]; then
-    reminder=$default
+  if [[ -z "$reminder" ]]; then
+    reminder="$default"
   fi
 
   if [[ -n ${reminder} ]]; then
@@ -819,38 +852,54 @@ function resolve_module_path() {
       reminder=${reminder:3}
       originPath=$(_m_pmd)
       originPath=$(get_module_path_up ${originPath})
-      (( $? )) && die "${cantResolve}"
+      (( $? )) && ret=$(die_cant_resolve "$1" "$quiet")
     elif [[ -z ${reminder%%./*} || $reminder == "." ]]; then
       reminder=${reminder:2}
       originPath=$(_m_pmd)
     fi
 
-    if (( ${#reminder} )); then
+    if (( ! "$ret" )) && (( ${#reminder} )); then
       IFS="/" read -a parts <<< $reminder
-      for part in $parts; do
-        case $part in
+      for part in "${parts[@]}"; do
+        case "$part" in
           \.\.\.)
-            die "${cantResolve}"
+            die_cant_resolve "$1" "$quiet"
           ;;
           \.\.)
-            originPath=$(get_module_path_up ${originPath})
-            (( $? )) && die "${cantResolve}"
+            originPath=$(get_module_path_up "$originPath")
+            (( $? )) && die_cant_resolve "$1" "$quiet"
           ;;
           \.)
             ## nothing
           ;;
           *)
-            originPath=$(get_module_path_down ${originPath} ${part})
-            (( $? )) && die "${cantResolve}"
+            originPath=$(get_module_path_down "$originPath" "$part")
+            (( $? )) && die_cant_resolve "$1" "$quiet"
           ;;
         esac
       done
     fi
   fi
 
-  [[ -z $originPath ]] && originPath="${default}"
+  if (( ! "$ret" )); then
+    [[ -z "$originPath" ]] && originPath="$default"
+    echo "$originPath"
+  fi
 
-  echo "${originPath}"
+  return "$ret"
+}
+
+die_cant_resolve() {
+  local path="$1"
+  local quiet="${2:-0}"
+  local ret=0
+  cantResolve="Can't resolve module path '$1'"
+  if (( ! "$quiet" )); then
+    die "$cantResolve"
+  else
+    ret=1
+  fi
+  return "$ret"
 }
 
 function module_info () {
@@ -896,6 +945,12 @@ function module_info () {
         ;;
       refname)
         results+=(${g_managed_refnames[$index]})
+        ;;
+      lego_mode)
+        results+=(${g_module_lego_modes[$index]})
+        ;;
+      lego_mode_implicit)
+        results+=(${g_module_lego_modes_implicit[$index]})
         ;;
       *)
         ret=2
@@ -996,23 +1051,23 @@ typeset MODULE_STATUS=()
 #     $MODULE_STATUS array
 #
 function module_porcelain_status() {
-echo "$FUNCNAME()" $@ >&2
+#echo "$FUNCNAME()" $@ >&2
   local remoteInteraction=0 managedBranch guessedBranched=()
   unset MODULE_STATUS
 
   local modulePath="$1"
   local caller=$2
 
-  [[ -z ${modulePath} ]] && panic "$FUNCNAME(): missed parameter 'path'"
+  [[ -z "$modulePath" ]] && panic "$FUNCNAME(): missed parameter 'path'"
 
-  [[ $caller == push || $caller == pull ]] && remoteInteraction=1
+  [[ "$caller" == "push" || "$caller" == "pull" ]] && remoteInteraction=1
 
   local moduleSha
   local managed
   local guessing=1
 
   read initialized managedReftype managedRefname < <(module_info ${modulePath} "initialized" "managed" "refname")
-  if [[ -z $initialized ]]; then
+  if [[ -z "$initialized" ]]; then
     panic "$FUNCNAME(): Variable \$initialized is empty. Check code!"
   fi
 
@@ -1029,7 +1084,7 @@ echo "$FUNCNAME()" $@ >&2
   fi
 
   local moduleRefname
-  declare -a output
+  local -a output
   if (( ! $initialized )) ; then
     MODULE_STATUS[$MS_UNINITIALIZED]=1
   else
@@ -1134,7 +1189,7 @@ echo "$FUNCNAME()" $@ >&2
 ref_type_index() {
   local managedReftype="$1"
   local index=0
-  for reftype in "${g_lego_aware_tokens_gitmodules[@]}" ; do
+  for reftype in "${G_REFTYPE_TOKENS[@]}" ; do
     if [[ "$reftype" == "$managedReftype" ]]; then
       break
     fi
@@ -1374,8 +1429,6 @@ function prepare_checkout_level() {
   local parentRefname="$5"
   local parentRefType="$6"
 
-#TODO get it from array?
-  local toBeDeleted=0
   local ret=0
 
   module_porcelain_status "${modulePath}" checkout
@@ -1391,102 +1444,89 @@ function prepare_checkout_level() {
 #    set +x
 
   fi
-#  if (( $toBeDeleted )); then
-#
-#    # Use case when in new checkout revision the submodule not exists, but in current branch the module has changed.
-#    # It should be vetoed, but this veto can be disclosed only on the next call for getting, if sub-module is commitable.
-#    if [[ 0 == ${doForce} && (1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[$MS_PUSHABLE]}) ]]; then
-#      dieMsg+="Module '$moduleName' has not committed or not pushed changes, but intended to be deleted as it does not exists in revision "
-#      ret=1
-#    fi
-#
-#  else
-#    pwd >&2
 
-    local blobRevision=$( get_blob_revision "$revision" )
+  local blobRevision=$( get_blob_revision "$revision" )
 
-    local noSubmodules=$(git cat-file -s "${blobRevision}":.gitmodules &>/dev/null; echo $?)
-    if (( ! $noSubmodules )); then
-      while read -a module; do
-        local after="${module[0]}"
-        modulesNamesAfter+=("$after")
-        # modulesAfter keeps module local path instead of just module name
-        modulesAfter+=("${module[1]}")
-        local pathAfter="${modulePath}"
-        [[ "${pathAfter:-1}" != "/" ]] && pathAfter+="/"
-        pathAfter+="${after}"
-        modulePathsAfter+=("$pathAfter")
-      done < <(git config --blob ${blobRevision}:.gitmodules --get-regexp "submodule.*.path" 2>/dev/null | sed -E "s/submodule\.(.*)\.path/\1/" )
-    fi
-
-    local found
-    local moduleIndex=0
+  local noSubmodules=$(git cat-file -s "${blobRevision}":.gitmodules &>/dev/null; echo $?)
+  if (( ! $noSubmodules )); then
     while read -a module; do
-      local before="${module[0]}"
-      local localPath="${module[1]}"
-      modulesBefore+=("$localPath")
-      local pathBefore="${modulePath}"
-      [[ "${pathBefore:-1}" != "/" ]] && pathBefore+="/"
-      pathBefore+="${before}"
-      modulePathsBefore+=("$pathBefore")
+      local after="${module[0]}"
+      modulesNamesAfter+=("$after")
+      # modulesAfter keeps module local path instead of just module name
+      modulesAfter+=("${module[1]}")
+      local pathAfter="${modulePath}"
+      [[ "${pathAfter:-1}" != "/" ]] && pathAfter+="/"
+      pathAfter+="${after}"
+      modulePathsAfter+=("$pathAfter")
+    done < <(git config --blob ${blobRevision}:.gitmodules --get-regexp "submodule.*.path" 2>/dev/null | sed -E "s/submodule\.(.*)\.path/\1/" )
+  fi
 
-      found=0
-      if (( ! $noSubmodules )); then
-        local after
-        for after in "${modulesAfter[@]}"; do
-          if [[ "$after" == "$before" ]]; then
-            found=1
-            break
-          fi
-        done
-      fi
+  local found
+  local moduleIndex=0
+  while read -a module; do
+    local before="${module[0]}"
+    local localPath="${module[1]}"
+    modulesBefore+=("$localPath")
+    local pathBefore="${modulePath}"
+    [[ "${pathBefore:-1}" != "/" ]] && pathBefore+="/"
+    pathBefore+="${before}"
+    modulePathsBefore+=("$pathBefore")
 
-      if (( ! $found )); then
-        deletedModules+=("${before}")
-
-        ## TODO wrong stuff? MODULE_STATUS is populated now from deleted module (?!) should check!
-        pushd "${localPath}" &>/dev/null
-        module_porcelain_status "${pathBefore}" checkout
-        popd  &>/dev/null
-
-        if [[ 0 == ${doForce} && ( 1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[$MS_PUSHABLE]} ) ]]; then
-          dieMsg+="Module '$before' (maybe others as well) has not committed or not pushed changes, but intended to be deleted as it does not exists in revision $revision"
-          return 1
-        fi
-      else
-        local foundPath="${modulePathsAfter[$moduleIndex]}"
-        if [[ "$foundPath" != "${module[1]}" ]]; then
-          movedModules+=("${before}")
-        fi
-      fi
-      moduleIndex=$(( $moduleIndex + 1 ))
-    done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
-
+    found=0
     if (( ! $noSubmodules )); then
-      moduleIndex=0
-      local pathAfter pathBefore
+      local pathAfter
       for pathAfter in "${modulePathsAfter[@]}"; do
-        local hash
-        local after="${modulesAfter[${moduleIndex}]}"
-
-        found=0
-        for pathBefore in "${modulePathsBefore[@]}"; do
-          if [[ "$pathBefore" == "$pathAfter" ]]; then
-            found=1
-            break
-          fi
-        done
-
-        if (( ! $found )); then
-          addedModules+=("${after}")
+        if [[ "$pathAfter" == "$pathBefore" ]]; then
+          found=1
+          break
         fi
-
-        moduleIndex=$(( $moduleIndex + 1 ))
       done
     fi
-#  fi
 
-#  popd &>/dev/null
+    if (( ! $found )); then
+      deletedModules+=("${before}")
+
+      ## TODO wrong stuff? MODULE_STATUS is populated now from deleted module (?!) should check!
+      pushd "${localPath}" &>/dev/null
+      module_porcelain_status "${pathBefore}" checkout
+      popd  &>/dev/null
+
+      if [[ 0 == ${doForce} && ( 1 == ${MODULE_STATUS[$MS_COMMITABLE]} || 1 == ${MODULE_STATUS[$MS_UNTRACKED]} || 1 == ${MODULE_STATUS[$MS_PUSHABLE]} ) ]]; then
+        dieMsg+="Module '$before' (maybe others as well) has not committed or not pushed changes, but intended to be deleted as it does not exists in revision '$revision'"
+        return 1
+      fi
+    else
+      local foundPath="${modulePathsAfter[$moduleIndex]}"
+      if [[ "$foundPath" != "${module[1]}" ]]; then
+        movedModules+=("${before}")
+      fi
+    fi
+    moduleIndex=$(( $moduleIndex + 1 ))
+  done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+
+  if (( ! $noSubmodules )); then
+    moduleIndex=0
+    local pathAfter pathBefore
+    for pathAfter in "${modulePathsAfter[@]}"; do
+      local hash
+      local after="${modulesAfter[${moduleIndex}]}"
+
+      found=0
+      for pathBefore in "${modulePathsBefore[@]}"; do
+        if [[ "$pathBefore" == "$pathAfter" ]]; then
+          found=1
+          break
+        fi
+      done
+
+      if (( ! $found )); then
+        addedModules+=("${after}")
+      fi
+
+      moduleIndex=$(( $moduleIndex + 1 ))
+    done
+  fi
+
   return "$ret"
 } ## of prepare_checkout_level
 
@@ -1500,9 +1540,9 @@ persist_attain_hint() {
   local mode="${5:-${g_lego_mode}}"
   local ret=0
 
-if [[ $refName == "-" ]]; then
-  set -x
-fi
+#if [[ $refName == "-" ]]; then
+#  set -x
+#fi
   # Do checkout for branches only.
   # currently tag or sha reference will not affect ot the reporting (possible bug, currently in 2.14.2)
   if (( "$doApply" )) && [[ "$refType" == "branch" ]]; then
@@ -1588,31 +1628,26 @@ evaluate_attain_hint() {
 
 
 do_module_update() {
-echo "$FUNCNAME()" $@ >&2
-  local levelPath="$1"
-  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+#echo "$FUNCNAME()" $@ >&2
+  local parentFilePath="$1"
   local moduleName="$2"
   local modulePath="$3"
   local localPath="$4"
-#  local parentFullPath="$4"
-#  local revision="$5"
+  local revision="$5"
 
-  if [[ $modulePath != / ]]; then
+  if [[ "$modulePath" != "/" ]]; then
     local uninitialized=${MODULE_STATUS[$MS_UNINITIALIZED]}
     local unmanaged=${MODULE_STATUS[$MS_UNMANAGED]}
-    local applied=0
+    local applied=1
 
-    applied=1
     if (( "$uninitialized" )) || (( ! "$unmanaged" )) || [[ -n "$revision" ]] || (( $doForce )); then
 
       local managedRefname
-      pushd "${parentFullPath}" &>/dev/null
       if (( $uninitialized )); then
         cw_echo "About to update module $moduleName..."
-        git submodule update --init -- "${localPath}"
+        git -C "$parentFilePath" submodule update --init -- "$localPath"
         (( ! $? )) && cw_echo "... OK!"
       fi
-      popd &>/dev/null
 
       if [[ -n "$revision" ]]; then
         managedRefname="$revision"
@@ -1632,19 +1667,20 @@ echo "$FUNCNAME()" $@ >&2
 
 
 update_level() {
-echo "$FUNCNAME()" $@ >&2
-  local levelPath="$1"
-  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+#echo "$FUNCNAME()" $@ >&2
+  local parentFilePath="$1"
+  local levelPath=$(pwd)
+#  [[ -z "$levelPath" ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local moduleName="$2"
   local modulePath="$3"
 
   local ret=0   # return code
   local childRet # child return code
 
-  drop_to_affected "$levelPath"
+  drop_to_affected #"$levelPath"
   if (( ! $? )) ; then
 
-    module_porcelain_status "${modulePath}" update
+    module_porcelain_status "$modulePath" "update"
 
     do_module_update "$@"
 
@@ -1653,20 +1689,20 @@ echo "$FUNCNAME()" $@ >&2
         childRet=0
         moduleName="${module[0]}"
         localPath="${module[1]}"
-        subRepoPath="${levelPath}"
-        [[ ${subRepoPath:(-1)} != "/" ]] && subRepoPath+="/"
-        subRepoPath+="${localPath}"
+
+        subRepoPath="$levelPath"/"$localPath"
 
         local modulePath="$3"
         [[ ${modulePath:(-1)} != "/" ]] && modulePath+="/"
         modulePath+="$moduleName"
 
-        pushd "${subRepoPath}" &>/dev/null
-        update_level "${subRepoPath}" "${moduleName}" "${modulePath}" "$levelPath"
+        pushd "$subRepoPath" &>/dev/null
+        update_level "$levelPath" "$moduleName" "$modulePath" "$localPath"
         childRet=$?
 
-        (( $childRet > $ret )) && ret = ${childRet}
         popd  &>/dev/null
+
+        (( "$childRet" > "$ret" )) && ret = "$childRet"
       done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
     fi
   fi
@@ -2052,7 +2088,7 @@ resolve_module_managed() {
   local ret=()
   local found=0
 
-  for token in "${g_lego_aware_tokens_gitmodules[@]}" ; do
+  for token in "${G_REFTYPE_TOKENS[@]}" ; do
     local section="submodule.${module_name}"
     local value=$(get_lego_setting_mode "${token}" "$section" "${mode}")
 
@@ -2082,7 +2118,7 @@ clean_git_config_section() {
   local fileOption
 
   local index=0
-  for mode in ${g_lego_modes[@]}; do
+  for mode in ${G_LEGO_MODES[@]}; do
     local bitIndex=$((1 << $index))
     if (( $bitIndex & $legoModesMask )); then
       if [[ ${mode} == versioned ]]; then
@@ -2112,7 +2148,7 @@ clean_module_meta_mode() {
   local worktree=$3
 
   local section="submodule.${moduleName}"
-  for token in ${g_lego_aware_tokens_gitmodules[@]}; do
+  for token in ${G_REFTYPE_TOKENS[@]}; do
     wipe_lego_setting_at_mode "${token}" "${section}" "${mode}" "${worktree}"
   done
 }
@@ -2125,7 +2161,7 @@ clean_module_meta_mask() {
   local worktree=$3
 
   local index=0
-  for mode in ${g_lego_modes[@]}; do
+  for mode in ${G_LEGO_MODES[@]}; do
     local bitIndex=$((1 << $index))
     if (( $bitIndex & $legoModesMask )); then
       clean_module_meta_mode "$mode" "$moduleName" "$worktree"
@@ -2143,12 +2179,12 @@ wipe_lego_setting_at_mode() {
   local worktree=${4:-.}
   local value
 
-  if [[ ${mode} == solo ]] ; then
-    wipe_lego_setting_concrete "$1" "${section}" "$worktree" "--local"
-  elif [[ ${mode} == versioned ]] ; then
-    wipe_lego_setting_concrete "$1" "${section}" "$worktree" "-f .gitlego"
-    if [[ -z ${section##submodule.*} ]] ; then
-      wipe_lego_setting_concrete "$1" "${section}" "$worktree" "-f .gitmodules"
+  if [[ "$mode" == "solo" ]] ; then
+    wipe_lego_setting_concrete "$key" "${section}" "$worktree" "--local"
+  elif [[ "$mode" == "versioned" ]] ; then
+    wipe_lego_setting_concrete "$key" "${section}" "$worktree" "-f .gitlego"
+    if [[ -z "${section##submodule.*}" ]] ; then
+      wipe_lego_setting_concrete "$key" "${section}" "$worktree" "-f .gitmodules"
     fi
   fi
 }
@@ -2157,33 +2193,34 @@ wipe_lego_setting_at_mode() {
 wipe_lego_setting_concrete() {
 #echo "$FUNCNAME()" $@ >&2
   local key="$1"
-  [[ -z $key ]] && panic "$FUNCNAME() missing parameter 'key'"
+  [[ -z "$key" ]] && panic "$FUNCNAME() missing parameter 'key'"
   local section="${2:-core}"
   local worktree="${3:-.}"
   local fileOption="${4---}"
+  local ret=0
 
-  if [[ $worktree == . ]]; then
+  if [[ "$worktree" == "." ]]; then
     unset worktree
   fi
 
-  if [[ -z "${fileOption##--*}" &&  ${section} == core ]] ; then
-    section=lego
-  elif [[ -n "${fileOption##--*}" &&  ${section} == lego ]] ; then
-    section=core
+  if [[ -z "${fileOption##--*}" &&  "$section" == "core" ]] ; then
+    section="lego"
+  elif [[ -n "${fileOption##--*}" &&  "$section" == "lego" ]] ; then
+    section="core"
   fi
 
-  if [[ ${fileOption} == -- ]]; then
+  if [[ "$fileOption" == "--" ]]; then
     unset fileOption
   fi
 
 
-  if [[ -n ${worktree} ]]; then
+  if [[ -n "$worktree" ]]; then
     pushd "$worktree" &>/dev/null
   fi
 
-  if [[ $fileOption != '-f .gitlego' || -e .gitlego ]]; then
-    git config ${fileOption} --unset-all "${section}.$key"  2>/dev/null
-  fi
+#  if [[ $fileOption != '-f .gitlego' || -e .gitlego ]]; then
+  git config $fileOption --unset-all "${section}.$key"  &>/dev/null
+#  fi
   ret=$?
 
   wipe_section_if_empty "$section" "$fileOption"
@@ -2191,7 +2228,7 @@ wipe_lego_setting_concrete() {
   if [[ -n ${worktree} ]]; then
     popd &>/dev/null
   fi
-
+  return "$ret"
 }
 
 
@@ -2206,7 +2243,7 @@ wipe_section_if_empty () {
     section=core
   fi
 
-  if [[ ${fileOption} == -- ]]; then
+  if [[ "$fileOption" == -- ]]; then
     unset fileOption
   fi
 
@@ -2218,7 +2255,7 @@ wipe_section_if_empty () {
     if [[ $fileOption != '-f .gitlego' || -e .gitlego ]]; then
       git config ${fileOption} --remove-section "${section}" 2>/dev/null
       read c fn < <(wc -w .gitlego 2>/dev/null)
-      if (( ! "$c" )); then
+      if [[ -n "$c" ]]; then
         rm -f .gitlego &>/dev/null
       fi
     fi
@@ -2228,7 +2265,7 @@ wipe_section_if_empty () {
 
 ##################################################### SETTING #################################################
 set_module_meta_mode() {
-#echo "$FUNCNAME()" $@ >&2
+echo "$FUNCNAME()" $@ >&2
   local key="$1"
   local value="$2"
   local section="$3"
@@ -2236,10 +2273,21 @@ set_module_meta_mode() {
   local mode="${5:-${g_lego_mode}}"
   local ret=0
 
-  if [[ ${mode} == solo ]] ; then
+set -x
+  if [[ -z "${section##submodule.*}" ]]; then
+    #wipe all except $key
+    for token in "${G_REFTYPE_TOKENS[@]}"; do
+      if [[ "$token" != "$key" ]]; then
+        wipe_lego_setting_at_mode "${token}" "${section}" "${mode}"
+      fi
+    done
+  fi
+set +x
+
+  if [[ "$mode" == "solo" ]]; then
     value=$( set_lego_setting_concrete "$key" "$value" "$section" "$mode" "$worktree")
     ret=$? || $ret
-  elif [[ ${mode} == versioned ]] ; then
+  elif [[ "$mode" == "versioned" ]]; then
     value=$( set_lego_setting_concrete "$key" "$value" "$section" "$mode" "$worktree" "-f .gitlego" )
     ret=$? || $ret
   fi
@@ -2364,8 +2412,12 @@ get_lego_setting_concrete() {
 
 ##
 get_lego_mode() {
-  local verbose=$1
+  local verbose="${1:-0}"
+  local moduleFilePath="$2"
+  pushd "$moduleFilePath" &>/dev/null
+
   local mode=$( get_lego_setting "mode")
+
   local implicit=0
   local results=()
   if [[ -z "$mode" ]] ; then
@@ -2373,10 +2425,11 @@ get_lego_mode() {
     implicit=1
   fi
   results+=("$mode")
-  if [[ $verbose == 1 ]] ; then
+  if [[ "$verbose" == 1 ]] ; then
     results+=("${implicit}")
   fi
-  echo ${results[@]}
+  popd &>/dev/null
+  echo "${results[@]}"
 }
 
 get_blob_revision() {
@@ -2460,28 +2513,31 @@ investigate_lego_mode() {
   local mode
 #  local ambiguous
   local module value
-  local cwRoot="${globals[$G_ROOT_DIR]}"
+  local moduleFilePath="${1:-.}"
   local headed
 
-  pushd ${cwRoot} &>/dev/null
+
+#  pushd ${moduleFilePath} &>/dev/null
 
   local fullRefname=$( git rev-parse --symbolic-full-name HEAD 2>/dev/null )
-  case "${fullRefname}" in
-    HEAD|'')
-      mode="detached"
-      globals[G_HEADED_REF]=$( git rev-parse --short HEAD 2>/dev/null )
-      ;;
-    *)
-      globals[G_HEADED_REF]=${fullRefname#refs/heads/}
-  esac
+#  case "${fullRefname}" in
+#    HEAD|'')
+#      mode="detached"
+#      globals[$G_ROOT_REF]=$( git rev-parse --short HEAD 2>/dev/null )
+#      globals[$G_ROOT_DETACHED]=1
+#      ;;
+#    *)
+#      globals[$G_ROOT_REF]=${fullRefname#refs/heads/}
+#      globals[$G_ROOT_DETACHED]=0
+#  esac
 
   if [[ -z "$mode" ]] ; then
-    if [[ -e "$cwRoot/.gitlego" ]] ; then
+    if [[ -e "$moduleFilePath/.gitlego" ]] ; then
       mode=versioned
     fi
 
 
-    if [[  -e "${cwRoot}/.gitmodules" ]] ; then
+    if [[  -e "${moduleFilePath}/.gitmodules" ]] ; then
 
       while read module path; do
         if [[ $(get_lego_setting_concrete "${module}.branch" "submodule" "." "-f .gitmodules") ]]; then
@@ -2511,7 +2567,7 @@ investigate_lego_mode() {
     fi
   fi
 
-  popd &>/dev/null
+#  popd &>/dev/null
   echo "${mode:-empty}"
 }
 
@@ -2539,43 +2595,106 @@ check_ambiguous_lego_mode() {
 export GITLEGO_DIR=$(dirname "$(echo "$0" | sed -e 's,\\,/,g')")
 
 usage() {
-
+  local subcommand="${1:-<subcommand>}"
   cat << EOF
-
-    Git extension to ease work with intensive using of git submodules
-
-    working dir: ${GITLEGO_DIR}
-    usage: git lego <subcommand>
-
-    Try 'git lego <subcommand> help' for details
+    git-lego is a git extension to ease dealing with git submodules (installed in ${GITLEGO_DIR})
+    Usage: git lego [<global-options>] <subcommand> [<subcommand arguments> ...]
+    Try 'git lego --help' to list all git-lego commands
+    or 'git lego $subcommand --help' for more details
 EOF
 }
 
 
+declare SUBCOMMAND
+declare raw_args=()
 
-#set -x
+global_parse_args() {
+#echo "$FUNCNAME()" "$@" >&2
 
+  local potential_subcommand
+  local found=0 index=0
+
+#  local VERSION="0.1"
+  for arg in "$@"
+  do
+    case "$arg" in
+      --version)
+        SUBCOMMAND="config"
+        break
+        ;;
+      -*)
+        raw_args+=("$arg")
+        ;;
+      *)
+        if [[ -z "$SUBCOMMAND" ]]; then
+          if [ -e "$GITLEGO_DIR/git-lego-$arg" ]; then
+            SUBCOMMAND="$arg"
+            found=1
+            shift
+          else
+            if [[ -z "$potential_subcommand" ]]; then
+              potential_subcommand="$arg"
+            else
+              raw_args+=("$arg")
+              g_potential_init_paths+=("$arg")
+            fi
+          fi
+        else
+          raw_args+=("$arg")
+          g_potential_init_paths+=("$arg")
+        fi
+      ;;
+    esac
+    shift;
+    index=$(( "$index" + 1 ))
+  done
+
+  if [[ -z "$SUBCOMMAND" ]]; then
+    case "$arg" in
+      version)
+        SUBCOMMAND="config"
+        raw_args+=("--version")
+        ;;
+    esac
+  fi
+
+  if [[ -z "$SUBCOMMAND" && -n "$potential_subcommand" ]]; then
+    SUBCOMMAND="$potential_subcommand"
+  fi
+
+}
+
+#declare moduleName moduleFilePath
 main() {
 	if [ $# -lt 1 ]; then
 		usage
 		exit 1
 	fi
 
-	# sanity checks
-	local SUBCOMMAND="$1"; shift
+  global_parse_args "$@"
 
 	if [ ! -e "$GITLEGO_DIR/git-lego-$SUBCOMMAND" ]; then
+	  cw_echo "wrong command '$SUBCOMMAND'"
 		usage
 		exit 1
+  else
+    set -- "${raw_args[@]}"
 	fi
 
   FLAGS_PREFIX="${0##*/} $SUBCOMMAND"
 	# run command
 	. "$GITLEGO_DIR/git-lego-$SUBCOMMAND"
 
+  local defInitPath="."
+  if type get_default_init_path >/dev/null 2>&1; then
+    defInitPath=$(get_default_init_path)
+  fi
+  modulePath=$( resolve_module_path "$initialPath" "$defInitPath" )
+  read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
 
+#	echo "$initialPath" "$moduleName" "$moduleFilePath" >&2
+	splash "$modulePath"
 	SUBACTION="default"
-
 	# Particular script can figure out a specific action depends on arguments or other circumstances.
 	# In this case it should define dispatch_subaction function and echo'ing required action.
 	# If dispatch_subaction returns empty string - default is using
@@ -2588,7 +2707,7 @@ main() {
 
 	if ! type "cmd_$SUBACTION" >/dev/null 2>&1; then
 		warn "Unknown subcommand: '$SUBACTION'"
-		usage
+		usage "$SUBCOMMAND"
 		exit 1
 	fi
 
