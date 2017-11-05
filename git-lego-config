@@ -156,14 +156,14 @@ while [[ -n $1 ]]; do
 done
 #set +x
 
-if [[ -n $nextLegoMode ]] && [[ $nextLegoMode != versioned ]] && [[ $nextLegoMode != solo ]] && [[ $nextLegoMode != current ]]; then
+if [[ -n "$nextLegoMode" ]] && [[ "$nextLegoMode" != "versioned" ]] && [[ "$nextLegoMode" != "solo" ]] && [[ "$nextLegoMode" != "current" ]]; then
   die "Unrecognized option for --lego-mode options, 'solo' and 'versioned' are allowed for now"
 fi
 
-if (( ! $showLegoMode )) && [[ -z ${nextLegoMode} ]] ; then
+if (( ! "$showLegoMode" )) && [[ -z "$nextLegoMode" ]] ; then
   currentLegoMode=$( get_lego_mode )
-  [[ ${currentLegoMode} == versioned ]] && versioned=1
-  [[ ${currentLegoMode} == solo ]] && solo=1
+  [[ "$currentLegoMode" == "versioned" ]] && versioned=1
+  [[ "$currentLegoMode" == "solo" ]] && solo=1
 fi
 
 
@@ -173,7 +173,7 @@ fi
 typeset modeTo
 typeset modeFrom
 typeset doReconcile=${doForce}
-(( doModeUnset )) && doReconcile=0
+(( "$doModeUnset" )) && doReconcile=0
 typeset clearVersioned=0
 typeset clearSolo=0
 typeset copyFrom=0
@@ -181,29 +181,31 @@ typeset toVersioned=0
 typeset toSolo=0
 
 migrate_lego_mode() {
+#set -x
   modeTo=$1
   modeFrom=$2
-  case ${modeFrom} in
+#echo "modeFrom $modeFrom modeTo $modeTo" >&2
+  case "$modeFrom" in
     empty|'')
-      (( ! doModeUnset )) && doReconcile=1
+      (( ! "$doModeUnset" )) && doReconcile=1
       ;;
     ambiguous)
-      (( ! doModeUnset )) && doReconcile=1
+      (( ! "$doModeUnset" )) && doReconcile=1
       clearSolo=1
       clearVersioned=1
       ;;
     versioned)
       clearVersioned=1
-      (( ! doModeUnset )) && copyFrom=1
+      (( ! "$doModeUnset" )) && copyFrom=1
       ;;
     solo)
       clearSolo=1
-      (( ! doModeUnset )) && copyFrom=1
+      (( ! "$doModeUnset" )) && copyFrom=1
       ;;
   esac
 
-  if (( ! doModeUnset )) ; then
-    case ${modeTo} in
+  if (( ! "$doModeUnset" )) ; then
+    case "$modeTo" in
       versioned)
         toVersioned=1
         ;;
@@ -219,11 +221,11 @@ migrate_lego_mode() {
 
   local filePath="${globals[$G_ROOT_DIR]}"
 
-  (( $clearSolo )) && git config --local --remove-section lego
+  (( "$clearSolo" )) && git config --local --remove-section lego
 
-  pushd ${filePath} &>/dev/null
+  pushd "$filePath" &>/dev/null
 
-  reconcile_level "${filePath}" "/"
+  reconcile_level "$filePath" "/"
 
   popd &>/dev/null
 
@@ -234,36 +236,39 @@ migrate_lego_mode() {
 
 
 reconcile_level() {
+#echo "$FUNCNAME()" $@ >&2
+#pwd >&2
   local outerFilePath="$1"
   local outerPath="${2:-/}"
-#
-#set -x
-#echo "modeFrom $modeFrom modeTo $modeTo"
-  read -a outerModule < <(module_descriptor ${outerFilePath})
-  local reference
+
+#  read -a outerModule < <(module_descriptor ${outerFilePath})
+  local referenceFrom
   local key
 
   while read -a innerModule; do
     local moduleName="${innerModule[0]}"
-    local moduleInnerPath="${innerModule[1]}"
-    local innerFilePath="${outerFilePath}/${moduleInnerPath}"
-    local section="submodule.${moduleName}"
+    local innerModulePath="${innerModule[1]}"
+    local innerFilePath="$outerFilePath/$innerModulePath"
+    local section="submodule.$moduleName"
 
-    unset reference
+    unset referenceFrom
     unset key
 
-    for token in "${G_REFTYPE_TOKENS[@]}" ; do
-      reference=$(get_lego_setting_mode "${token}" "$section" "${modeFrom}" )
-      if (( ${#reference} )); then
-        key="$token"
-        break
+    for token in "${G_MANAGED_TOKENS[@]}" ; do
+      referenceFrom=$( get_lego_setting_mode "$token" "$section" "$modeFrom" )
+      if [[ -n "$referenceFrom" ]]; then
+#        referenceTo=$( get_lego_setting_mode "$token" "$section" "$modeTo" )
+#        # TODO do not override existing? or do?
+#        if [[ -z "$referenceTo" ]]; then
+          key="$token"
+#        fi
       fi
     done
 
-    if (( ${#key} )); then
+    if [[ -n "$key" ]]; then
       wipe_lego_setting_at_mode "$key" "$section" "$modeFrom"
       if (( $copyFrom )); then
-        set_module_meta_mode "$key" "$reference" "$section" "." "$modeTo"
+        set_module_meta_mode "$key" "$referenceFrom" "$section" "." "$modeTo"
       fi
 
       if (( $doModeUnset )); then
@@ -272,13 +277,11 @@ reconcile_level() {
     fi
 
     local modulePath="${outerPath}"
-    if [[ ${modulePath:(-1)} != "/" ]]; then
-      modulePath+="/"
-    fi
+    [[ ${modulePath:(-1)} != "/" ]] && modulePath+="/"
     modulePath+="$moduleName"
 
-    pushd ${innerFilePath} &>/dev/null
-    reconcile_level "${innerFilePath}" "${modulePath}"
+    pushd "$innerFilePath" &>/dev/null
+    reconcile_level "$innerFilePath" "$modulePath"
     popd &>/dev/null
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
 }
@@ -340,7 +343,7 @@ cmd_legomode() {
         ;;
       *)
 ###################    SET & UNSET LEGO MODE ##################
-        (( $doModeUnset )) && nextLegoMode=empty
+        (( $doModeUnset )) && nextLegoMode="empty"
         read currentMode implicit < <( get_lego_mode 1 )
         if [[ "$currentMode" != "$nextLegoMode" ]] || (( "$implicit" )) || (( "$doModeUnset" )) || (( "$doForce" )); then
 
@@ -356,7 +359,7 @@ cmd_legomode() {
 
           fi
           if [[ "$currentMode" == "versioned" || "$currentMode" == "solo" ]]; then
-            migrate_lego_mode ${nextLegoMode} ${currentMode}
+            migrate_lego_mode "$nextLegoMode" "$currentMode"
             wipe_lego_setting_at_mode "mode" "lego" "$currentMode"
           fi
 

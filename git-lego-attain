@@ -37,12 +37,22 @@ typeset currentLegoMode
 typeset verbose=0 stopOptions=0
 typeset doUpdate=1
 
+#
+# de-attain module, make it detached. Technically this is just remove managed reference from .gitlego or .git/config
+# TODO not implemented yet
+# TODO redirect from 'git-lego detain ...' command
+# TODO add config setting
+typeset doDetain=0
+
+# attain to current state
+# TODO add config setting
+typeset doCurrent=1
+
 typeset autoAttain=$(get_lego_setting "autoAttain")
 autoAttain=$(READ_boolean ${autoAttain} 1) # 1 === true
 typeset paramAutoAttain implicitAutoAttain=0
 
-#typeset doRecursive=0
-typeset initialPath doRecursive=1 doForce=1
+typeset initialPath doRecursive=1 doForce=0
 
 typeset explicitModules=() explicitRefs=() explicitTypes=()
 
@@ -51,7 +61,6 @@ typeset reference referenceType
 typeset BAD_EXPLICIT_PARAM="Wrong format of explicit module -> reference parameter."
 typeset WRONG_FORMAT_REF="Wrong format of explicit reference"
 ################################ PARAMETERS PARSING ################################
-#      set -x
 while [[ -n $1 ]]; do
   noAppendArg=0
 
@@ -96,6 +105,19 @@ while [[ -n $1 ]]; do
       doUpdate=0
       ;;
 
+    --detain|-d)
+      doDetain=1
+      ;;
+    --no-detain|-D)
+      doDetain=0
+      ;;
+
+    --current|-c)
+      doCurrent=1
+      ;;
+    --no-current|-C)
+      doCurrent=0
+      ;;
 
     --to|--branch|-b|--headed|--tag|-t|--pinned|--sha|-s)
 			case "$2" in
@@ -153,28 +175,6 @@ while [[ -n $1 ]]; do
 			referenceType="auto"
 			;;
 
-
-#    *\^*)
-#      theModuleName="${1%%\^*}"
-#      theRefName="${1#*\^}"
-#      if [[ -n "$theModuleName" && -n "$theRefName" ]]; then
-#        explicitModules+=("$theModuleName")
-#        explicitRefs+=("$theRefName")
-#      else
-#        see_help "$BAD_EXPLICIT_PARAM"
-#      fi
-#      ;;
-#
-#    *=*)
-#      theModuleName="${1%%=*}"
-#      theRefName="${1#*=}"
-#      if [[ -n "$theModuleName" && -n "$theRefName" ]]; then
-#        explicitModules+=("$theModuleName")
-#        explicitRefs+=("$theRefName")
-#      else
-#        see_help "$BAD_EXPLICIT_PARAM"
-#      fi
-#      ;;
 
     *)
       if (( $stopOptions )); then
@@ -234,19 +234,22 @@ fi
 #  
 #
 is_module_attainable() {
-#echo "$FUNCNAME()" $@ >&2
+echo "$FUNCNAME()" $@ >&2
+  local moduleName="$1"
   local modulePath="$2"
+  local parentRefName="$3"
+  local parentRefType="$4"
 
   local ret=0
   local explicits=()
   local refsCount=${#explicitRefs[@]}
-  local refIndex=0
 
   local detached="${MODULE_STATUS[$MS_DETACHED]}"
   local moduleRefType="${G_REFTYPE_TOKENS[$detached]}"
 
   local uninitialized="${MODULE_STATUS[$MS_UNINITIALIZED]}"
-  local moduleAffected=0
+
+  local moduleAffected="$doCurrent"
 
   if (( ! "$uninitialized" )) && [[ "$modulePath" != "/" ]]; then
     # from settings
@@ -254,39 +257,35 @@ is_module_attainable() {
     if [[ -n "$paramAutoAttain" ]]; then
       # from cmd parameters
       moduleAutoAttain="$paramAutoAttain"
-    else
-      # from started module: true, if it is 'headed' (branch)
-      moduleAutoAttain="$implicitAutoAttain"
+#    else
+#      # from started module: true, if it is 'headed' (branch)
+#      moduleAutoAttain="$implicitAutoAttain"
     fi
-
-    local unmanaged="${MODULE_STATUS[$MS_UNMANAGED]}"
-    if (( "$unmanaged" )) && (( "$moduleAutoAttain" )); then
-      moduleAffected=1
-    fi
-
 
     local explicitRef explicitType
+    local currentRefName currentRefType exists distinctRefName fullRefName
 
     local guessedRefNames=()
+    local refIndex=0
     for refName in "${explicitRefs[@]}"; do
       local refType="${explicitTypes[$refIndex]}"
-
-      read currentRefName currentRefType exists fullRefName < <( evaluate_refname "$refName" "$refType" "1")
-
-      if (( "$exists" )); then
+      read currentRefName currentRefType exists distinctRefName fullRefName < <( evaluate_refname "$refName" "1" "$refType")
+      ret=$?
+      if (( ! "$ret" )) && (( "$exists" )); then
         case "$currentRefType" in
           branch)
-            guessedRefNames=("${MODULE_STATUS[$MS_GUESSED_BRANCHES]}")
+            guessedRefNames=(${MODULE_STATUS[$MS_GUESSED_BRANCHES]})
             ;;
           pinned)
-            guessedRefNames=("${MODULE_STATUS[$MS_GUESSED_TAGS]}")
+            guessedRefNames=(${MODULE_STATUS[$MS_GUESSED_TAGS]})
             ;;
           sha)
+            moduleAffected=1
             ;;
         esac
 
-        if (( ${#guessedRefNames[@]} )); then
-          for guessed in ${guessedRefNames[@]}; do
+        if (( "${#guessedRefNames[@]}" )); then
+          for guessed in "${guessedRefNames[@]}"; do
             if [[ "$guessed" == "$currentRefName" ]]; then
               moduleAffected=1
               explicitRef="$currentRefName"
@@ -302,7 +301,8 @@ is_module_attainable() {
     explicits+=("$moduleAffected")
 
     if [[ -n "$explicitRef" || -n "$explicitType" ]]; then
-      explicits+=("${explicitRef:-$NA}" "${explicitType:-$NA}")
+      explicits+=("${explicitRef:-$NA}")
+      explicits+=("${explicitType:-$NA}")
     fi
 
   else
@@ -318,7 +318,7 @@ attain_module_mode() {
 #pwd >&2
   local moduleName="$1"
   local modulePath="$2"
-  local parentRefname="$3"
+  local parentRefName="$3"
   local parentRefType="$4"
 
   local legoMode="${g_lego_mode}"
@@ -331,51 +331,61 @@ attain_module_mode() {
 
   module_porcelain_status "$modulePath" "attain"
 
-  read affected explicitRef explicitType < <( is_module_attainable "$@" )
-  ret=$?
+  local detached="${MODULE_STATUS[$MS_DETACHED]}"
+  local moduleRefType="${G_REFTYPE_TOKENS[$detached]}"
 
-  if (( ! "$ret" )) && (( "$affected" )); then
+  local uninitialized="${MODULE_STATUS[$MS_UNINITIALIZED]}"
+  local unmanaged="${MODULE_STATUS[$MS_UNMANAGED]}"
 
-    local detached="${MODULE_STATUS[$MS_DETACHED]}"
-    local moduleRefType="${G_REFTYPE_TOKENS[$detached]}"
-    local uninitialized="${MODULE_STATUS[$MS_UNINITIALIZED]}"
-    local unmanaged="${MODULE_STATUS[$MS_UNMANAGED]}"
-  
-    if [[ "$modulePath" != "/" ]]; then
-  
-      if (( "$unmanaged" )); then
-        local guessedRefname
-        local guessedReftype
-  
-        local guessedRefnames=()
-        read guessedRefname guessedReftype < <(evaluate_attain_hint "$parentRefname" "$parentRefType")
-  
-        if [[ -n "$guessedRefname" && -n "$guessedReftype" ]] ; then
-          if (( "$doUpdate" )); then
-            persist_attain_hint "1" "$moduleName" "$guessedRefname" "$guessedReftype" "$legoMode"
-          else
-            local hint="Module $moduleName can be "
-            if [[ "${guessedReftype}" == "branch" ]]; then
-              hint+="attained"
-            else
-              hint+="pinned"
-            fi
-            hint+=" to ${guessedRefname}, but --update option required"
-            ## exclude $guessedRefname
-            if [[ "${#guessedRefnames[@]}" > 1 ]]; then
-              local asWellRefs=()
-              calculate_as_well_refnames "$guessedRefname"
-              hint+=". Other possible attainable (or pinnable) options are: ${asWellRefs[@]}"
-            fi
-            cw_echo "$hint"
-            cw_echo "See '$FLAGS_PREFIX --help' for more information"
-          fi
-        fi
-      else
+  local alreadyAttained=0
+
+  if [[ "$uninitialized" == 0 && "$unmanaged" == 0 && "$doForce" == 0 ]]; then
+    alreadyAttained=1
+  fi
+
+  if (( ! $alreadyAttained )); then
+    read affected explicitRef explicitType < <( is_module_attainable "$@" )
+    ret=$?
+  fi
+  if (( ! "$ret" )) ; then
+    if (( "$affected" )) && (( ! "$alreadyAttained" )); then
+
+      if [[ "$modulePath" != "/" && "$uninitialized" != 1 ]]; then
+
         if [[ -n "$explicitRef" && -n "$explicitType" ]]; then
           persist_attain_hint "1" "$moduleName" "$explicitRef" "$explicitType" "$legoMode"
+        elif (( "$unmanaged" )); then
+          local guessedRefname
+          local guessedReftype
+
+          local guessedRefnames=()
+          read guessedRefname guessedReftype < <(evaluate_attain_hint "$parentRefName" "$parentRefType")
+
+          if [[ -n "$guessedRefname" && -n "$guessedReftype" ]] ; then
+            if (( "$doUpdate" )); then
+              persist_attain_hint "1" "$moduleName" "$guessedRefname" "$guessedReftype" "$legoMode"
+            else
+              local hint="Module $moduleName can be "
+              if [[ "${guessedReftype}" == "branch" ]]; then
+                hint+="attained"
+              else
+                hint+="pinned"
+              fi
+              hint+=" to ${guessedRefname}, but --update option required"
+              ## exclude $guessedRefname
+              if [[ "${#guessedRefnames[@]}" > 1 ]]; then
+                local asWellRefs=()
+                calculate_as_well_refnames "$guessedRefname"
+                hint+=". Other possible attainable (or pinnable) options are: ${asWellRefs[@]}"
+              fi
+              cw_echo "$hint"
+              cw_echo "See '$FLAGS_PREFIX --help' for more information"
+            fi
+          fi
         fi
       fi
+    elif [[ "$modulePath" != "/" ]]; then
+      cw_echo "Module $moduleName skipped"
     fi
   fi
   return "$ret"

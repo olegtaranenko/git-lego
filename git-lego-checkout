@@ -75,12 +75,13 @@ typeset initialPath
 #   mananged - for versioned version only, update
 #   none - (default)
 typeset updateHeads=$( get_lego_setting "updateHeads" )
-updateHeads=$( READ_string "$updateHeads" "none" ) # by default - do not update heads
+updateHeads=$( READ_string "$updateHeads" "managed" ) # by default - do not update heads
 
 typeset autoAttain=$(get_lego_setting "autoAttain")
 autoAttain=$(READ_boolean ${autoAttain} 1) # 1 === true
-typeset paramAutoAttain implicitAuto=0
+typeset paramAutoAttain
 
+typeset attainOnCheckout=1
 
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
@@ -151,210 +152,365 @@ done
 if [[ -z "$revision" ]]; then
   die "Parameter revision/branch required"
 fi
-#set -x
+
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 checkout_level () {
- echo "$FUNCNAME()" $@ >&2
+#echo "$FUNCNAME()" $@ >&2
+#pwd >&2
+#if [[ $4 == "/" ]]; then
+#  set -x
+#fi
+
+  local ret=0
 
   local revision="$1"
-  local moduleName="$2"
-#  [[ "$moduleName" == "macosx" ]] && set -x
-  local modulePath="$3"
-  local levelPath="$4"
-  local parentRefname="$5"
-  local parentRefType="$6"
+  local revisionType="$2"
+  local moduleName="$3"
+  local modulePath="$4"
+  local levelPath="$5"
+  local parentRefName="$6"
+  local parentRefType="$7"
+  local moduleLocalPath="${8:-.}"
 
-  if [[ -z "$parentRefname" && "$revision" != "-" ]]; then
-    parentRefname="$revision"
+  local topLevelModule=1
+
+  if [[ "$revision" == "-" ]]; then
+    topLevelModule=0
   fi
-  if [[ -n "$parentRefname" && -z "$parentRefType" ]]; then
-    parentRefType=$( get_reftype_of_refname "$parentRefname" )
+
+  local parentFilePath
+#  local levelPath=$( pwd 2>/dev/null )
+  if [[ "$modulePath" != "/" ]]; then
+    local parentModulePath=$(get_module_path_up "$modulePath")
+    parentFilePath=$( module_info "$parentModulePath" "full" )
   fi
-  local refType="$parentRefType"
+
+  if [[ -z "$parentRefName" && "$revision" != "-" && -n "$revision" ]]; then
+    parentRefName="$revision"
+  fi
+
+  if [[ -z "$parentRefType" && "$revisionType" != "-" && -n "$revisionType"  ]]; then
+    parentRefType="$revisionType"
+  fi
+
+  if [[ -n "$parentRefName" && -z "$parentRefType" ]]; then
+    parentRefType=$( get_reftype_of_refname "$parentRefName" )
+  fi
+
+  local refType="$revisionType"
+  local blobRevision="$revision"
+
+  if (( ! "$attainOnCheckout" )) && (( ! "$topLevelModule" )); then
+    local moduleCommit=($( git cat-file -p HEAD | grep -E "^tree [[:xdigit:]]{40}$" | cut -d' ' -f2 | xargs git cat-file -p | grep -E "^160000\s*commit\s*[[:xdigit:]]{40}\s*${moduleName}" ))
+    ret=$?
+
+    blobRevision="${moduleCommit[2]}"
+
+#      revision=$( git_submodule_blob_sha "$moduleName" )
+  fi
 
   pushd "$levelPath" &>/dev/null
 
   local modulesBefore=()
   local modulePathsBefore=()
   local modulesAfter=()
+  local refnamesAfter=()
   local modulesNamesAfter=()
   local modulePathsAfter=()
   local hashesAfter=()
   local addedModules=()
   local deletedModules=()
   local movedModules=()
+  local postBlobModules=()
+  local postBlobRefs=()
 
-  local ret=0
+  local noSubmodules noLego
 
-  prepare_checkout_level "$revision" "$moduleName" "$modulePath" "$levelPath" "$parentRefname" "$parentRefType"
-  ret=$?
+  read initialized checkoutRef < <(module_info "$modulePath" "initialized" "checkout" )
 
-#  echo "before: ${modulesBefore[@]}" >&2
-#  echo "paths before: ${modulePathsBefore[@]}" >&2
-#  echo "after: ${modulesAfter[@]}" >&2
-#  echo "names after: ${modulesNamesAfter[@]}" >&2
-#  echo "paths after: ${modulePathsAfter[@]}" >&2
-#  echo "to add: ${addedModules[@]}" >&2
-#  echo "to delete: ${deletedModules[@]}" >&2
-#  echo "ret: ${ret}" >&2
+  if [[ "$initialized" == 1 ]]; then
 
-  if (( ! $ret )); then
+    if [[ -n "$checkoutRef" && "$checkoutRef" != "-" && "$attainOnCheckout" == 1 ]]; then
+      read revision refType < <( evaluate_refname "$checkoutRef" )
+      ret=$?
+    fi
 
-    local addedFound
-    local beforeIndex afterIndex
-    local added deleted before subModule before pathAdded
-    if (( "${#deletedModules[@]}" )); then
-      local deletedIndex=0
+    if [[ "$revision" != "-" && "$ret" == 0 && "$attainOnCheckout" == 1 ]]; then
+      blobRevision=$( get_blob_revision "$revision" )
+      ret=$?
+    fi
 
-      for deleted in "${deletedModules[@]}"; do
-        local deletedFound=0
-        local beforeIndex=0
+    noSubmodules=$(git cat-file -s "$blobRevision":.gitmodules &>/dev/null; echo $?)
+    noLego=$(git cat-file -s "$blobRevision":.gitlego &>/dev/null; echo $?)
 
-        for subModule in "${modulesBefore[@]}"; do
-          if [[ "$subModule" == "$deleted" ]]; then
-            pathDeleted="${modulePathsBefore[$beforeIndex]}"
-            deletedFound=1
+    if (( ! $noSubmodules )) && (( ! $ret )); then
+      while read -a module; do
+        local blobRefName
+        local after="${module[0]}"
+        modulesNamesAfter+=("$after")
+        # modulesAfter keeps module local path instead of just module name
+        modulesAfter+=("${module[1]}")
+        local pathAfter="${modulePath}"
+        [[ "${pathAfter:-1}" != "/" ]] && pathAfter+="/"
+        pathAfter+="${after}"
+        modulePathsAfter+=("$pathAfter")
+        local notUpdated
+
+        if (( ! $noLego )); then
+          blobRefName=$( git config --blob ${blobRevision}:.gitlego "submodule.$after.refname" 2>/dev/null )
+          blobRefName="${blobRefName:--}"
+          refnamesAfter+=("$blobRefName")
+          update_module_cache "$pathAfter" "g_checkout_refnames" "$blobRefName"
+          notUpdated=$?
+          if (( "$notUpdated" )); then
+            postBlobModules+=("$pathAfter")
+            postBlobRefs+=("$blobRefName")
+          fi
+        else
+          update_module_cache "$pathAfter" "g_module_managed" "unmanaged" "g_managed_refnames" "$NA"
+#          notUpdated=$?
+        fi
+      done < <(git config --blob ${blobRevision}:.gitmodules --get-regexp "submodule.*.path" 2>/dev/null | sed -E "s/submodule\.(.*)\.path/\1/" )
+    fi
+
+    local found
+    local moduleIndex=0
+
+    while read -a module; do
+      local before="${module[0]}"
+      local localPath="${module[1]}"
+      modulesBefore+=("$localPath")
+      local pathBefore="$modulePath"
+      [[ "${pathBefore:-1}" != "/" ]] && pathBefore+="/"
+      pathBefore+="$before"
+      modulePathsBefore+=("$pathBefore")
+
+      found=0
+      if (( ! $noSubmodules )); then
+        local pathAfter
+        for pathAfter in "${modulePathsAfter[@]}"; do
+          if [[ "$pathAfter" == "$pathBefore" ]]; then
+            found=1
             break
           fi
-          beforeIndex=$(( $beforeIndex + 1 ))
         done
+      fi
 
-        if (( $deletedFound )); then
-          read initialized < <(module_info "$pathDeleted" "initialized")
-          if (( $initialized )) ; then
-            git submodule deinit -- "$deleted"
+      if (( ! $found )); then
+        deletedModules+=("$pathBefore")
+        local DELETED_STATUS=()
+        pushd "$localPath" &>/dev/null
+        module_porcelain_status "$pathBefore" "checkout" "DELETED_STATUS"
+        popd  &>/dev/null
+
+        if [[ 0 == ${doForce} && ( 1 == "${DELETED_STATUS[$MS_COMMITABLE]}" || 1 == "${DELETED_STATUS[$MS_UNTRACKED]}" || 1 == "${DELETED_STATUS[$MS_PUSHABLE]}" ) ]]; then
+          dieMsg+="Module '$before' (maybe others as well) has not committed or not pushed changes, but intended to be deleted as it does not exists in revision '$revision'"
+          return 1
+        else
+          if [[ "${DELETED_STATUS[$MS_UNINITIALIZED]}" == 0 ]]; then
+            git submodule deinit -- "$localPath"
+          else
+            rm -rf "$localPath" &>/dev/null
           fi
         fi
 
-        deletedIndex=$(( $deletedIndex + 1 ))
+#      else
+#        local foundPath="${modulePathsAfter[$moduleIndex]}"
+#        if [[ "$foundPath" != "$localPath" ]]; then
+#          movedModules+=("$localPath")
+#        fi
+      fi
+      moduleIndex=$(( $moduleIndex + 1 ))
+    done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+    if (( ! $noSubmodules )); then
+      moduleIndex=0
+      local pathAfter pathBefore
+      for pathAfter in "${modulePathsAfter[@]}"; do
+        local after="${modulesAfter[$moduleIndex]}"
+
+        found=0
+        for pathBefore in "${modulePathsBefore[@]}"; do
+          if [[ "$pathBefore" == "$pathAfter" ]]; then
+            found=1
+            break
+          fi
+        done
+
+        if (( ! $found )); then
+          addedModules+=("$after")
+        fi
+
+        moduleIndex=$(( $moduleIndex + 1 ))
       done
     fi
 
-    if [[ -n "${MODULE_STATUS[$MS_MANAGED_REFNAME]}" && "$revision" == "-" ]]; then
-      revision="${MODULE_STATUS[$MS_MANAGED_REFNAME]}"
-      managed="${MODULE_STATUS[$MS_MANAGED]}"
-      refType="${G_REFTYPE_TOKENS[$managed]}"
+    if [[ "$modulePath" != "/" && -n "$moduleLocalPath" && "$revision" == "-" ]]; then
+      git -C "$parentFilePath" submodule update -- "$moduleLocalPath"
+      ret=$?
+
+      # module sha have to be changed in cache arrays
+      local sha=$( git rev-parse HEAD )
+      update_module_cache "$modulePath" "g_module_shas" "$sha"
     fi
 
-    git checkout "$revision"
-    ret=$?
+#    echo "before: ${modulesBefore[@]}" >&2
+#    echo "paths before: ${modulePathsBefore[@]}" >&2
+#    echo "after: ${modulesAfter[@]}" >&2
+#    echo "names after: ${modulesNamesAfter[@]}" >&2
+#    echo "paths after: ${modulePathsAfter[@]}" >&2
+#    echo "to add: ${addedModules[@]}" >&2
+#    echo "to delete: ${deletedModules[@]}" >&2
 
-    if (( $ret )); then
-      dieMsg="Unrecoverable error by checkout $revision for module $moduleName ($modulePath)"
-    else
 
-      if [[ "$modulePath" != "/" ]]; then
-        local parentModulePath=$(get_module_path_up "$modulePath")
-        read legoMode modeImplicit < <( get_lego_mode "1" "$parentModulePath" )
+  #  prepare_checkout_level "$revision" "$moduleName" "$modulePath" "$parentRefname" "$parentRefType"
+  #  ret=$?
 
-#        read legoMode modeImplicit < <( module_info "$parentModulePath" "lego_mode" "lego_mode_implicit" )
-        if [[ "$legoMode" != "versioned" || "$modeImplicit" == "1" ]]; then
-          legoMode="solo"
-        fi
-        persist_attain_hint "0" "$moduleName" "$revision" "$refType" "$legoMode"
-        ret=$?
+    module_porcelain_status "${modulePath}" checkout
+
+    if [[ "$revision" == "-" && "$attainOnCheckout" == 1 ]]; then
+      local type
+
+      local checkoutRefName="${MODULE_STATUS[$MS_CHECKOUT_REFNAME]}"
+      local checkoutRefType="${MODULE_STATUS[$MS_CHECKOUT_REFTYPE]}"
+
+      if [[ -z "$checkoutRefName" || -z "$checkoutRefType" || "$checkoutRefName" == "-" || "$checkoutRefName" == "$NA" ]]; then
+        # TODO auto-attain setting/parameter ??
+        local guessedRefnames=()
+        read revision type < <( evaluate_attain_hint  "$parentRefName" "$parentRefType" )
+        type=$( ref_type_index "$type")
+      else
+        MODULE_STATUS[$MS_UNMANAGED]=0
+        revision="$checkoutRefName"
+        type="$checkoutRefType"
       fi
 
-      if (( ! "$ret" )); then
+      MODULE_STATUS["$MS_MANAGED_REFNAME"]="$revision"
+      MODULE_STATUS["$MS_MANAGED_REFTYPE"]="$type"
+    fi
 
-        local index=0
-        local doUpdateInit=0
-        local doAppendNewModule=0
-        local doRecreateCache=()
+    if (( ! $ret )); then
+      local addedFound
+      local beforeIndex afterIndex
+      local added deleted before subModule before pathAdded
 
+      if [[ -n "${MODULE_STATUS[$MS_MANAGED_REFNAME]}" && "$revision" == "-" && "${MODULE_STATUS[$MS_UNMANAGED]}" == 0 ]]; then
+        revision="${MODULE_STATUS[$MS_MANAGED_REFNAME]}"
+        refTypeIndex="${MODULE_STATUS[$MS_MANAGED_REFTYPE]}"
+        refType="${G_REFTYPE_TOKENS[$refTypeIndex]}"
+      fi
 
-        for pathAfter in "${modulePathsAfter[@]}"; do
-          local localPath="${modulesAfter[$index]}"
-          local afterName="${modulesNamesAfter[$index]}"
-          doUpdateInit=0
+      if [[ -n "$refType" ]]; then
+        if [[ "$refType" != "-" && (("$refType" != "sha" && "$attainOnCheckout" == 1) || "$topLevelModule" == 1) ]]; then
+          git checkout "$revision"
+          ret=$?
 
-          initialized=$(module_info "$pathAfter" "initialized")
-
-          if [[ -z "$initialized" || "$initialized" == 0 ]]; then
-            git submodule update --init -- "$localPath"
-            ret=$?
-            if [[ -z "$initialized" ]]; then
-              # 'module' is an external array is being used in investigate_module function
-              local module=("$afterName" "$localPath")
-              local subModulePath="$modulePath"
-              [[ "${subModulePath:(-1)}" != "/" ]] && subModulePath+="/"
-              subModulePath+="$afterName"
-              investigate_module "$afterName" "$localPath" "$subModulePath"
-
-              cache_module_descriptor "${module[@]}"
-
-            else
-              local moduleIndex=0
-              for cachedPath in "${g_module_paths[@]}"; do
-                if [[ "$cachedPath" == "$pathAfter" ]]; then
-                  g_module_inited["$moduleIndex"]=1
-                  doRecreateCache+=("$cachedPath")
-                  break
-                fi
-
-                moduleIndex=$(( "$moduleIndex" + 1 ))
-              done
-            fi
+          if (( $ret )); then
+            dieMsg="Unrecoverable error by checkout $revision for module $moduleName ($modulePath)"
           else
-            git submodule update -- "$localPath"
-            ret=$?
+
+            if [[ "$modulePath" != "/" ]]; then
+              read legoMode modeImplicit < <( get_lego_mode "1" "$parentFilePath" )
+
+              if [[ "$legoMode" != "versioned" || "$modeImplicit" == "1" ]]; then
+                legoMode="solo"
+              fi
+              persist_attain_hint "0" "$moduleName" "$revision" "$refType" "$legoMode"
+              ret=$?
+            fi
           fi
-
-          index=$(( $index + 1 ))
-        done
-
-#      set +x
-
-        if (( "${#doRecreateCache[@]}" )); then
-          recreate_modules_cache "${doRecreateCache[@]}"
         fi
 
-        # remove folders of deleted modules
-        if (( "${#deletedModules[@]}" )); then
-          index=0
+        if (( ! "$ret" )); then
+          local index=0
+          local doUpdateInit=0
+          local doAppendNewModule=0
+          local recreatedModules=()
 
-          for deleted in "${deletedModules[@]}"; do
-            for before in "${modulesBefore[@]}"; do
-              if [[ "$before" == "$deleted" ]]; then
-                rm -rf "${modulePathsBefore[$index]}" &>/dev/null
-                break
+          local pathAfter
+
+          for pathAfter in "${modulePathsAfter[@]}"; do
+            local localPath="${modulesAfter[$index]}"
+            local afterName="${modulesNamesAfter[$index]}"
+            doUpdateInit=0
+            local doRecreateCache=0
+
+            initialized=$(module_info "$pathAfter" "initialized")
+
+            if [[ -z "$initialized" || "$initialized" == 0 ]]; then
+              git submodule update --init -- "$localPath"
+              ret=$?
+              if [[ -z "$initialized" ]]; then
+                # 'module' is an external array is being used in investigate_module function
+                local module=("$afterName")
+                module+=("$localPath")
+                local subModulePath="$modulePath"
+                [[ "${subModulePath:(-1)}" != "/" ]] && subModulePath+="/"
+                subModulePath+="$afterName"
+                investigate_module "$afterName" "$localPath" "$subModulePath"
+
+                cache_module_descriptor "${module[@]}"
+
+              else
+                update_module_cache "$pathAfter" "g_module_inited" 1
+                doRecreateCache=1
               fi
-            done
+
+              if (( "${#postBlobModules[@]}" )); then
+                local blobIndex=0
+                for blobModule in "${postBlobModules[@]}"; do
+
+                  if [[ "$pathAfter" == "$blobModule" ]]; then
+                    local blobRef="${postBlobRefs[$blobIndex]}"
+                    update_module_cache "$pathAfter" "g_checkout_refnames" "$blobRef"
+                    doRecreateCache=1
+                  fi
+
+                  blobIndex=$(( "$blobIndex" + 1 ))
+                done
+              fi
+              if (( "$doRecreateCache" )); then
+                recreatedModules+=("$pathAfter")
+              fi
+
+            fi
 
             index=$(( $index + 1 ))
           done
-        fi
 
-        unset modulesBefore
-        unset modulePathsBefore
-        unset modulesAfter
-        unset modulesNamesAfter
-        unset modulePathsAfter
-        unset hashesAfter
-        unset addedModules
-        unset deletedModules
-        unset movedModules
+          if (( "${#recreatedModules[@]}" )); then
+            recreate_modules_cache "${recreatedModules[@]}"
+          fi
 
-        if [ -f .gitmodules ]; then
-          while read -a module; do
-            local subModule="${module[0]}"
-            local localPath="${module[1]}"
-            subRepoPath="$levelPath/$localPath"
+          if [ -f .gitmodules ]; then
+            if (( ! "$topLevelModule" )); then
+              parentRefName="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
+              parentRefTypeIndex="${MODULE_STATUS[$MS_DETACHED]}"
+              parentRefType="${G_REFTYPE_TOKENS[$parentRefTypeIndex]}"
+            fi
+            while read -a module; do
+              local subModule="${module[0]}"
+              local localPath="${module[1]}"
+              subRepoPath="$levelPath/$localPath"
 
-            local subModulePath="$modulePath"
-            [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
-            subModulePath+="$subModule"
-            checkout_level "-" "$subModule" "$subModulePath" "$subRepoPath" "$parentRefname" "$parentRefType" "$levelPath"
+              local subModulePath="$modulePath"
+              [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
+              subModulePath+="$subModule"
 
-          done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+              checkout_level "-" "-" "$subModule" "$subModulePath" "$subRepoPath" "$parentRefName" "$parentRefType" "$localPath"
+
+            done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+          fi
         fi
       fi
+    else
+      die "$dieMsg"
     fi
-  else
-    die "$dieMsg"
+    popd &>/dev/null
   fi
-  popd &>/dev/null
+#if [[ $4 == "/" ]]; then
+#  set +x
+#fi
 }  ## of checkout_level
 
 
@@ -363,7 +519,8 @@ checkout_level () {
 cmd_default() {
 
   local modulePath=$(resolve_module_path "$initialPath" ".")
-  read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
+  read moduleName moduleFilePath moduleLocalPath < <(module_info "$modulePath" "name" "path")
+  local parentFilePath
 
   local dieMsg
   local skippedModules=()
@@ -380,25 +537,29 @@ cmd_default() {
   if [[ "$modulePath" != "/" ]]; then
     pushd ${moduleFilePath} &>/dev/null
     module_up
-  fi
+    parentFilePath=$( pwd &>/dev/null )
 
-  read refName refType isExists fullRefname < <( evaluate_refname "$revision" "" "1")
+    read parentRefName parentRefType < <( evaluate_refname )
+    ret=$?
 
-  if [[ "$modulePath" != "/" ]]; then
     popd &>/dev/null
   fi
 
-  if (( ! "${isExists:-0}" )); then
-    die "Incorrect revision '$revision' in module '$moduleName'"
-  fi
+  if (( ! $ret )); then
+    read refName refType isExists distinctRefName fullRefname < <( evaluate_refname "$revision" "1")
+    ret=$?
 
-  if [[ "$refType" == "branch" ]]; then
-    implicitAutoAttain=1
+    if (( ! $ret )) && (( ! "${isExists:-0}" )); then
+      die "Incorrect revision '$revision' in module '$moduleName'"
+    else
+      if [[ "$refType" != "branch" ]]; then
+        attainOnCheckout=0
+      fi
+      checkout_level "$refName" "$refType" "$moduleName" "$modulePath" "$moduleFilePath" "$parentRefName" "$parentRefType" "$moduleLocalPath"
+      ret=$?
+    fi
   fi
-
-  checkout_level "$revision" "$moduleName" "$modulePath" "$moduleFilePath" "$refName" "$refType"
-  ret=$?
 
   umbrella_finalize
-  exit ${ret}
+  exit "$ret"
 }

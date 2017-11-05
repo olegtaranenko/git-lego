@@ -190,7 +190,10 @@ cmd_default() {
   if [[ -z "$branchName" ]]; then
     read branchName type < <( evaluate_refname )
   fi
+
+#  checkout_level "$branchName" "branch" "$moduleName" "$modulePath"  "$moduleFilePath"
   update_level "$moduleFilePath" "$moduleName" "$modulePath" "." "$branchName"
+
 
   umbrella_finalize
   exit ${ret}

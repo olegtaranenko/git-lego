@@ -113,9 +113,29 @@ done
 typeset oneLine
 
 function show_current_module_status {
+
+  managed_or_pinned() {
+    local managedAlias
+    case "$1" in
+      0)
+        managedAlias+=", managed${managedRefname:+ as $managedRefname}"
+        ;;
+      1|2)
+        managedAlias+=", pinned${managedRefname:+ to $managedRefname}"
+        ;;
+    esac
+
+    echo "$managedAlias"
+  }
+
+
 #echo "$FUNCNAME()" $@ >&2
 #echo "$FUNCNAME(): subRepoPath=$1 subModule=$2 modulePath=$3 refname=$4 reftype=$5 " >&2
 #printf "%s,\n" "${MODULE_STATUS[@]}"
+
+#if [[ $2 == "viatra" ]]; then
+#  set -x
+#fi
   local filePath="$1"
   local moduleName="$2"
   local modulePath="$3"
@@ -123,7 +143,6 @@ function show_current_module_status {
   local parentReftype="$5"
 
   local verboseMsg=([1]="path: $filePath")
-#  [[ $moduleName == macosx ]] && set -x
   oneLine="$modulePath"
   verboseMsg+=("url: "$(get_repo_url))
 
@@ -139,13 +158,13 @@ function show_current_module_status {
 #  [[ $modulePath == / ]] && set +x
 
   # two below variables are defined to cmd_default()
-  (( ${MODULE_STATUS[$MS_DETACHED]} )) && detached=${MODULE_STATUS[$MS_DETACHED]}
-  (( ${MODULE_STATUS[$MS_COMMITABLE]} )) && commitable=${MODULE_STATUS[$MS_COMMITABLE]}
+  (( ${MODULE_STATUS[$MS_DETACHED]} )) && detached="${MODULE_STATUS[$MS_DETACHED]}"
+  (( ${MODULE_STATUS[$MS_COMMITABLE]} )) && commitable="${MODULE_STATUS[$MS_COMMITABLE]}"
 
-  local branchInfo=${MODULE_STATUS[$MS_BRANCH_INFO]}
-  [[ -n ${branchInfo} ]] && [[ $branchInfo != HEAD ]] && oneLine+=", ${branchInfo}"
+  local branchInfo="${MODULE_STATUS[$MS_BRANCH_INFO]}"
+  [[ -n "$branchInfo" ]] && [[ "$branchInfo" != "HEAD" ]] && oneLine+=", $branchInfo"
 
-  if (( ${MODULE_STATUS[$MS_MODIFIED_SUBMODULE]} )); then
+  if (( "${MODULE_STATUS[$MS_MODIFIED_SUBMODULE]}" )); then
     verboseIssues+="${verboseIssues:+ ,}modified (${MODULE_STATUS[$MS_MODIFIED_SUBMODULE]} files)"
     infoIssues+="${infoIssues:+, }Sx${MODULE_STATUS[$MS_MODIFIED_SUBMODULE]}"
   fi
@@ -178,34 +197,25 @@ function show_current_module_status {
     infoIssues+="${infoIssues:+, }Nx${MODULE_STATUS[$MS_UNTRACKED]}"
   fi
 
-  local uninitialized=${MODULE_STATUS[$MS_UNINITIALIZED]}
-  local mismatched=${MODULE_STATUS[$MS_MISMATCHED]}
-  local detached=${MODULE_STATUS[$MS_DETACHED]}
-  local managed=${MODULE_STATUS[$MS_MANAGED]}
-  local unmanaged=${MODULE_STATUS[$MS_UNMANAGED]}
-  local managedRefname=${MODULE_STATUS[$MS_MANAGED_REFNAME]}
-  local moduleRefname=${MODULE_STATUS[$MS_MODULE_REFNAME]}
+  local uninitialized="${MODULE_STATUS[$MS_UNINITIALIZED]}"
+  local mismatched="${MODULE_STATUS[$MS_MISMATCHED]}"
+  local detached="${MODULE_STATUS[$MS_DETACHED]}"
+  local managedIndex="${MODULE_STATUS[$MS_MANAGED_REFTYPE]}"
+  local unmanaged="${MODULE_STATUS[$MS_UNMANAGED]}"
+  local managedRefname="${MODULE_STATUS[$MS_MANAGED_REFNAME]}"
+  local moduleRefname="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
 
   if (( $uninitialized )); then
     oneLine+=", not initialized"
-    verboseMsg+=("The module not initialized yet. 'git-lego init --reconcile' to fix it.")
+#    verboseMsg+=("The module not initialized yet. 'git-lego init --reconcile' to fix it.")
 
-    if (( ! $unmanaged )); then
-      case $managed in
-        0)
-          oneLine+=", managed${managedRefname:+ as $managedRefname}"
-          ;;
-        1|2)
-          oneLine+=", pinned${managedRefname:+ to $managedRefname}"
-          ;;
-      esac
-
+    if (( ! "$unmanaged" )); then
+      oneLine+=$( managed_or_pinned "$managedIndex" )
       verboseMsg+=("Expected, that module should be initialized to $managedRefname")
     fi
 
   else    ## of  (( uninitialized ))
 
-    local managedAlias
     if (( ! $detached )); then
       oneLine+=", $moduleRefname${MODULE_STATUS[$MS_UPSTREAM]:+...${MODULE_STATUS[$MS_UPSTREAM]}}"
       local commits=0
@@ -215,27 +225,21 @@ function show_current_module_status {
   #      (( $commits - 1 )) && oneLine+="s"
     else
       oneLine+=", detached: $moduleRefname"
-      if (( ! $unmanaged )) && [[ $modulePath != "/" ]]; then
-        case $managed in
-          0)
-            managedAlias+='managed as'
-            ;;
-          1|2)
-            managedAlias+='pinned to'
-            ;;
-        esac
+      if (( ! "$unmanaged" )) && [[ "$modulePath" != "/" ]]; then
+        oneLine+=$( managed_or_pinned "$managedIndex" )
       fi
     fi
-    if (( ! ${mismatched:-0} )) && (( ! $unmanaged )) && [[ $modulePath != / ]]; then
-      oneLine+=", OK"
-    elif (( ${mismatched:-0} )); then
-      oneLine+=", mismatched, expected: $managedAlias $managedRefname"
-      if (( $detached > 0 )); then
-        local ahead=${MODULE_STATUS[$MS_UPSTREAM_AHEAD]}
-        local behind=${MODULE_STATUS[$MS_UPSTREAM_BEHIND]}
 
-        if (( $ahead )) ; then oneLine+=", $ahead commit"; (( $ahead > 1 )) && oneLine+="s"; oneLine+=" ahead";
-        elif (( $behind )) ; then oneLine+=", $behind commit"; (( $behind > 1 )) && oneLine+="s"; oneLine+=" behind"; fi
+    if (( ! "${mismatched:-0}" )) && (( ! "$unmanaged" )) && [[ "$modulePath" != "/" ]]; then
+      oneLine+=", OK"
+    elif (( "${mismatched:-0}" )) && (( "$unmanaged" )) ; then
+      oneLine+=", mismatched, expected: $managedRefname"
+      if (( $detached > 0 )); then
+        local ahead="${MODULE_STATUS[$MS_UPSTREAM_AHEAD]}"
+        local behind="${MODULE_STATUS[$MS_UPSTREAM_BEHIND]}"
+
+        if (( "$ahead" )) ; then oneLine+=", $ahead commit"; (( "$ahead" > 1 )) && oneLine+="s"; oneLine+=" ahead";
+        elif (( "$behind" )) ; then oneLine+=", $behind commit"; (( "$behind" > 1 )) && oneLine+="s"; oneLine+=" behind"; fi
       fi
       # TODO verboseMsg
   #      (( $commits - 1 )) && oneLine+="s"
@@ -252,10 +256,6 @@ function show_current_module_status {
 #      verboseMsg+=("Expected, that module should be initialized to ${MODULE_STATUS[$MS_MANAGED_REFNAME]}")
 #    fi
 
-#    if (( $mismatched )) || (( $unmanaged )) ; then
-#      if (( $detached )); then
-#      fi
-#    fi
     local guessedRefnames=()
     local asWellRefs=()
     if [[ -n ${MODULE_STATUS[$MS_GUESSED_BRANCHES]} ]]; then
@@ -278,17 +278,18 @@ function show_current_module_status {
 
     ## show updatable hint
     if [[ ("$parentReftype" == 0 || "$parentReftype" == "branch" ) && -n "$parentRefname" && "$parentRefname" != "$moduleRefname" ]]; then
-      read updatable remoteBranchName isRemote isBranch < <( is_revision_correct "$parentRefname" "1" )
-      if (( "$updatable" )) && (( "$isBranch" )); then
+
+      read isCorrect normalizedRefname isRemote isBranch isTag < <( is_revision_correct "$parentRefname" 1 )
+
+      if (( "$isCorrect" )) && (( "$isBranch" )) && [[ "$modulePath" != "/" ]]; then
         oneLine+=", updatable to $parentRefname"
-        read branchExists isRemote maybeRemoteBranch a b < <(calculate_ab_for_branch "$parentRefname" )
-        if (( "$branchExists" )); then
-          oneLine+=" ["
-          if (( "$isRemote" )); then
-            oneLine+="$maybeRemoteBranch:"
-          fi
-          oneLine+=" $a $b commit(s)]"
+
+        read a b < <(calculate_ab_for_branch "$normalizedRefname")
+        oneLine+=" ["
+        if (( "$isRemote" )); then
+          oneLine+="$normalizedRefname:"
         fi
+        oneLine+=" $a $b commit(s)]"
       fi
     fi
 
@@ -306,6 +307,10 @@ function show_current_module_status {
   if (( $verbose > 1 )) && [ -n ${args} ]; then
     git status ${args}
   fi
+
+#if [[ $2 == "viatra" ]]; then
+#  set +x
+#fi
 }
 
 
