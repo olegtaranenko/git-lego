@@ -49,7 +49,8 @@ EOF
 typeset verbose=0
 typeset afterDash=()
 typeset stopOptions=0
-typeset initialPath commitMessage commitTemplate doRecursive=0 reuse doAppendUntracked=1
+typeset initialPath commitMessage commitTemplate doRecursive=0 reuse
+typeset doAppendUntracked=1
 #set -x
 
 ################################ PARAMETERS PARSING ################################
@@ -80,16 +81,15 @@ while [[ -n $1 ]]; do
       #getopts emulation -am...
       lastOption=${1:(-1)}
       if [[ $lastOption == "m" ]]; then
-        args+=("\"$2"\")
+        args+=("$2")
         commitMessage=$2
         shift
       elif [[ $lastOption == "t" ]]; then
-        args+=("\"$2"\")
+        args+=("$2")
         commitTemplate=$2
         shift
       elif [[ $lastOption == "c" || $lastOption == "C"  || $lastOption == "F" ]]; then
-        args+=("\"$2"\")
-#        reuse=$2
+        args+=("$2")
         shift
 #      else
         # TODO ?? change behaviour for -a|--add option
@@ -148,17 +148,19 @@ done
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 function prepare_commit_level() {
+echo "$FUNCNAME()" $@ >&2
+pwd >&2
   local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local moduleName="$2"
+  local modulePath=$3
+
   local repoBranch
   local ret=0   # return code, 0 - the repo is syncronized
   local childRet # child return code
-  local modulePath=$3
 
   ## TODO changed params order
   module_porcelain_status "${modulePath}" commit
-
   local applied=1
   if (( ${MODULE_STATUS[$MS_COMMITABLE]} )); then
     drop_to_affected ${levelPath}
@@ -173,7 +175,6 @@ function prepare_commit_level() {
   if (( $applied )); then
     skippedModules+=(${moduleName})
   fi
-
   if [ -f .gitmodules ]; then
     while read -a module; do
       childRet=0
@@ -191,7 +192,8 @@ function prepare_commit_level() {
 #      (( $stopMachine > 2 )) && exit 3
       prepare_commit_level "${subRepoPath}" "${subModule}" "${subModulePath}"
       childRet=$?
-      (( $childRet > $ret )) && ret = ${childRet}
+
+      (( $childRet > $ret )) && ret=${childRet}
       popd  &>/dev/null
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
@@ -216,18 +218,16 @@ cmd_default() {
     if (( $affected )); then
       if [[ -z ${commitMessage} && -n ${onEmptyMessage} ]]; then
        args+=('--message' )
-       args+=(" \"${onEmptyMessage:0:(${#onEmptyMessage}-2)})\"")
+       args+=(" ${onEmptyMessage:0:(${#onEmptyMessage}-2)})")
       fi
 
     #cat ${globals[$G_AFFECTED_MODULES]}
 
       while read -a module; do
-        cd ${module[$MFS_FULL_PATH]}
+        cd "${module[$MFS_FULL_PATH]}"
         level_verbose_about_to ${module[@]}
-    #    echo "git commit ${args[@]} ${#args[@]}"
+        (( "$doAppendUntracked" )) && git add . -A
 
-        (( $doAppendUntracked )) && git add . -A
-#echo "${args[@]}" >&2
         git commit "${args[@]}"
       done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
     fi

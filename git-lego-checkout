@@ -363,10 +363,7 @@ checkout_level () {
 #    echo "to delete: ${deletedModules[@]}" >&2
 
 
-  #  prepare_checkout_level "$revision" "$moduleName" "$modulePath" "$parentRefname" "$parentRefType"
-  #  ret=$?
-
-    module_porcelain_status "${modulePath}" checkout
+   module_porcelain_status "${modulePath}" checkout
 
     if [[ "$revision" == "-" && "$attainOnCheckout" == 1 ]]; then
       local type
@@ -518,7 +515,7 @@ checkout_level () {
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
 
-  local modulePath=$(resolve_module_path "$initialPath" ".")
+  local modulePath=$( resolve_module_path "$initialPath" "." )
   read moduleName moduleFilePath moduleLocalPath < <(module_info "$modulePath" "name" "path")
   local parentFilePath
 

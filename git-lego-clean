@@ -92,11 +92,9 @@ while [[ -n $1 ]]; do
   esac
   shift
 done
-#set +x
 
 declare modesMask=0
 
-#set -x
 if (( ! $cleanSolo )) && (( ! $cleanVersioned )); then
   currentMode="${g_lego_mode}"
   case $currentMode in
@@ -164,10 +162,10 @@ clean_level() {
         pushd "${subRepoPath}" &>/dev/null
         clean_level "$subRepoPath" "$moduleName" "$modulePath"
         childRet=$?
+        popd  &>/dev/null
 
-        (( $childRet > $ret )) && ret = ${childRet}
+        (( $childRet > $ret )) && ret="$childRet"
       fi
-      popd  &>/dev/null
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
 }
@@ -184,7 +182,7 @@ cmd_default() {
   typeset modulePath=$(resolve_module_path "${initialPath}" /)
   read moduleName moduleFilePath < <(module_info "${modulePath}" "name" "path")
 
-  pushd ${moduleFilePath} &>/dev/null
+  pushd "$moduleFilePath" &>/dev/null
   clean_level "${moduleFilePath}" "${modulePath}"
   popd &>/dev/null
 

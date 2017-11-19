@@ -35,7 +35,7 @@ g_checkout_refnames=()
 # But in command it can be explicit given, ie. 'git checkout master macosx' - both 'master' and 'macosx'
 # are potential initial paths. Rough resolving whether the potential path is real one is done in umbrella_bootstrap.
 #
-g_potential_init_paths=()
+#g_potential_init_paths=()
 
 declare -a G_MANAGED_TOKENS=("refname")
 declare -a G_REFTYPE_TOKENS=("branch" "pinned" "sha")
@@ -534,7 +534,7 @@ get_possible_tag_unsafe() {
     # format HEAD detached at 23a34b or HEAD detached at refs/heads/master
     local parsedLength="${#output[@]}"
     tag="${output[$parsedLength-1]}"
-  done < <(git status --long -uno | grep "HEAD detached at")
+  done < <(git status --long -uno | grep -E "HEAD detached (at|from)")
 
   if [[ "${tag#refs/}" != "$tag" || "${tag#heads/}" != "$tag"  ]]; then
     result="$tag"
@@ -1275,7 +1275,6 @@ function module_porcelain_status() {
               # TODO do this at bootstrap
               assign_status_item "$arrName" $( git rev-parse --short "$moduleSha" ) "$MS_MODULE_REFNAME"
               ;;
-
             branch\.head)
               if [[ "${output[1]}" == "(detached)" ]]; then
                 read moduleRefname moduleRefTypeIndex < <( get_possible_tag_unsafe "$plainSha" )
@@ -1320,11 +1319,14 @@ function module_porcelain_status() {
           ;;
         \?)
           local entryName="${output[0]}" #.gitmodule or .gitlego
-          if [[ ${entryName} == \.gitmodules  || ${entryName} == \.gitlego ]]; then
+          if [[ "$entryName" == ".gitmodules"  || "$entryName" == ".gitlego" ]]; then
             increase_status_item "$arrName" "$MS_MODIFIED_SUBMODULE"
             assign_status_item "$arrName" 1 "$MS_COMMITABLE"
           else
             increase_status_item "$arrName" "$MS_UNTRACKED"
+            if [[ "$caller" == "commit" ]] && (( "$doAppendUntracked" )); then
+              assign_status_item "$arrName" 1 "$MS_COMMITABLE"
+            fi
           fi
           ;;
 
@@ -2041,8 +2043,8 @@ function _m_pwd() {
 
 
 function _m_git_dir() {
-  local url=$(git rev-parse --git-dir)
-  echo ${url}
+  local url=$( git rev-parse --git-dir 2>/dev/null )
+  echo "$url"
 }
 
 
@@ -2658,12 +2660,10 @@ global_parse_args() {
               potential_subcommand="$arg"
             else
               raw_args+=("$arg")
-              g_potential_init_paths+=("$arg")
             fi
           fi
         else
           raw_args+=("$arg")
-          g_potential_init_paths+=("$arg")
         fi
       ;;
     esac
@@ -2711,6 +2711,9 @@ main() {
   if type get_default_init_path >/dev/null 2>&1; then
     defInitPath=$(get_default_init_path)
   fi
+
+  # variable initialPath is set usually in subcommand script
+  # by parsing arguments
   modulePath=$( resolve_module_path "$initialPath" "$defInitPath" )
   read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
 
@@ -2721,9 +2724,9 @@ main() {
 	# In this case it should define dispatch_subaction function and echo'ing required action.
 	# If dispatch_subaction returns empty string - default is using
 	if type "dispatch_subaction" >/dev/null 2>&1; then
-		local dispatched=$(dispatch_subaction "$@")
-		if [[ -n ${dispatched} ]]; then
-		  SUBACTION=${dispatched}
+		local dispatched=$( dispatch_subaction "$@" )
+		if [[ -n "$dispatched" ]]; then
+		  SUBACTION="$dispatched"
 		fi
 	fi
 
