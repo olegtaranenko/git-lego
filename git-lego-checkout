@@ -70,6 +70,11 @@ typeset commit=0 doForce=0
 #typeset fallbacks=()
 typeset initialPath
 
+typeset modulePath
+typeset moduleName
+typeset moduleFilePath
+typeset moduleLocalPath
+
 # possible values for update-heads option
 #   parent - update sibling
 #   mananged - for versioned version only, update
@@ -511,50 +516,101 @@ checkout_level () {
 }  ## of checkout_level
 
 
+prepare_checkout_level() {
+#echo "$FUNCNAME()" $@ >&2
+  local ret=0
+
+  local moduleName="$1"
+  local modulePath="$2"
+  local levelFilePath="$3"
+  local moduleLocalPath="${4:-.}"
+
+  pushd "$levelFilePath" &>/dev/null
+  module_porcelain_status "$modulePath" "noguess"
+
+  if (( "${MODULE_STATUS[$MS_COMMITABLE]}" )) || (( "${MODULE_STATUS[$MS_UNTRACKED]}" )) ; then
+    if [[ "$modulePath" != "/" ]]; then
+      dirtyModules+=("$moduleName")
+    fi
+    ret=1
+  fi
+
+  if [ -f .gitmodules ]; then
+    while read -a module; do
+      local childRet=0
+      local subModule="${module[0]}"
+      local localPath="${module[1]}"
+      subRepoPath="$levelFilePath/$localPath"
+
+      local subModulePath="$modulePath"
+      [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
+      subModulePath+="$subModule"
+
+      prepare_checkout_level "$subModule" "$subModulePath" "$subRepoPath" "$localPath"
+      childRet=$?
+      (( "$childRet" > "$ret" )) && ret="$childRet"
+
+    done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+  fi
+
+  popd &>/dev/null
+  return "$ret"
+}
+
 
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
 
-  local modulePath=$( resolve_module_path "$initialPath" "." )
-  read moduleName moduleFilePath moduleLocalPath < <(module_info "$modulePath" "name" "path")
+#  local modulePath=$( resolve_module_path "$initialPath" "." )
+#  read moduleName moduleFilePath moduleLocalPath < <(module_info "$modulePath" "name" "path")
   local parentFilePath
 
   local dieMsg
   local skippedModules=()
+  local dirtyModules=()
   local affected=0
   local vetoed=0
   ret=0
 
-  cd ${moduleFilePath}
+  cd "$moduleFilePath"
 
   if [[ -z "$moduleFilePath" ]]; then
     see_help "Wrong module specification"
   fi
 
-  if [[ "$modulePath" != "/" ]]; then
-    pushd ${moduleFilePath} &>/dev/null
-    module_up
-    parentFilePath=$( pwd &>/dev/null )
+  prepare_checkout_level "$moduleName" "$modulePath" "$moduleFilePath" "$moduleLocalPath"
+  vetoed=$?
 
-    read parentRefName parentRefType < <( evaluate_refname )
-    ret=$?
+  if (( ! "$vetoed" )); then
 
-    popd &>/dev/null
-  fi
+    if [[ "$modulePath" != "/" ]]; then
+      pushd ${moduleFilePath} &>/dev/null
+      module_up
+      parentFilePath=$( pwd &>/dev/null )
 
-  if (( ! $ret )); then
-    read refName refType isExists distinctRefName fullRefname < <( evaluate_refname "$revision" "1")
-    ret=$?
-
-    if (( ! $ret )) && (( ! "${isExists:-0}" )); then
-      die "Incorrect revision '$revision' in module '$moduleName'"
-    else
-      if [[ "$refType" != "branch" ]]; then
-        attainOnCheckout=0
-      fi
-      checkout_level "$refName" "$refType" "$moduleName" "$modulePath" "$moduleFilePath" "$parentRefName" "$parentRefType" "$moduleLocalPath"
+      read parentRefName parentRefType < <( evaluate_refname )
       ret=$?
+
+      popd &>/dev/null
     fi
+
+    if (( ! $ret )); then
+      read refName refType isExists distinctRefName fullRefname < <( evaluate_refname "$revision" "1")
+      ret=$?
+
+      if (( ! $ret )) && (( ! "${isExists:-0}" )); then
+        die "Incorrect revision '$revision' in module '$moduleName'"
+      else
+        if [[ "$refType" != "branch" ]]; then
+          attainOnCheckout=0
+        fi
+        checkout_level "$refName" "$refType" "$moduleName" "$modulePath" "$moduleFilePath" "$parentRefName" "$parentRefType" "$moduleLocalPath"
+        ret=$?
+      fi
+    fi
+  else
+    local dirties="'${dirtyModules[@]}'"
+    die "git-lego detected ${dirties:-some} module(s) have not committed changes. Please stash or commit your changes before continue. Use git-lego checkout --force to "
   fi
 
   umbrella_finalize

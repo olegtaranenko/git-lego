@@ -9,7 +9,7 @@ set +o posix
   ## 1 - un-success (bad options/... etc)
   ## 2 - unexpected error (wrong code)
   #
-declare ret=0
+#declare ret=0
 
 args=()
 
@@ -168,12 +168,18 @@ pwd >&2
 
     if (( ! $applied )); then
       affected=1
-      [[ -z ${commitMessage} ]] && onEmptyMessage+="${moduleName}, "
+      if [[ -z "$commitMessage" && "$modulePath" != "/" ]]; then
+        onEmptyMessage+="${moduleName}, "
+      fi
     fi
   fi
 
   if (( $applied )); then
     skippedModules+=(${moduleName})
+  else
+    if [[ -z ${commitMessage} && "$modulePath" != "/" ]]; then
+      onEmptyMessage+="${moduleName}, "
+    fi
   fi
   if [ -f .gitmodules ]; then
     while read -a module; do
@@ -208,36 +214,40 @@ cmd_default() {
   typeset affected=0
   typeset onEmptyMessage
   typeset skippedModules=()
-  [[ -z ${commitMessage} ]] && onEmptyMessage="commit for ${globals[$G_ROOT_NAME]}, affected modules: "
+  [[ -z "$commitMessage" ]] && onEmptyMessage="commit for ${globals[$G_ROOT_NAME]}, affected modules: "
 
-  if (( $initialized )) && (( $managed )); then
+  if (( "$initialized" )) && (( "$managed" )); then
 
     pushd ${moduleFilePath} &>/dev/null
+
     prepare_commit_level "${moduleFilePath}" "${moduleName}" "${modulePath}"
+    vetoed=$?
 
-    if (( $affected )); then
-      if [[ -z ${commitMessage} && -n ${onEmptyMessage} ]]; then
-       args+=('--message' )
-       args+=(" ${onEmptyMessage:0:(${#onEmptyMessage}-2)})")
+    if (( ! "$vetoed" )); then
+      if (( "$affected" )); then
+        if [[ -z "$commitMessage" && -n "$onEmptyMessage" ]]; then
+          args+=('--message' )
+          args+=(" ${onEmptyMessage:0:(${#onEmptyMessage}-2)})")
+        fi
+
+      #cat ${globals[$G_AFFECTED_MODULES]}
+
+        while read -a module; do
+          cd "${module[$MFS_FULL_PATH]}"
+          level_verbose_about_to ${module[@]}
+          (( "$doAppendUntracked" )) && git add . -A
+
+          git commit "${args[@]}"
+        done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
       fi
-
-    #cat ${globals[$G_AFFECTED_MODULES]}
-
-      while read -a module; do
-        cd "${module[$MFS_FULL_PATH]}"
-        level_verbose_about_to ${module[@]}
-        (( "$doAppendUntracked" )) && git add . -A
-
-        git commit "${args[@]}"
-      done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
     fi
-  fi
 
-  if (( ${#skippedModules} )); then
-    cw_echo "Not affected modules: ${skippedModules[*]}"
-  fi
+    if (( ${#skippedModules} )); then
+      cw_echo "Not affected modules: ${skippedModules[*]}"
+    fi
 
-  popd &>/dev/null
+    popd &>/dev/null
+  fi
   umbrella_finalize
 
 #  exit $ret
