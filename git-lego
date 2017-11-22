@@ -2640,13 +2640,20 @@ global_parse_args() {
   local potential_subcommand
   local found=0 index=0
 
+set -x
 #  local VERSION="0.1"
-  for arg in "$@"
-  do
+  for arg in "$@"; do
     case "$arg" in
+      tag)
+        # preserve using token as an argument
+        if [[ -z "$SUBCOMMAND" ]]; then
+          SUBCOMMAND="generic"
+          GENERIC_ACTION="$arg"
+        fi
+        ;;
       --version)
         SUBCOMMAND="config"
-        break
+#        break ??
         ;;
       -*)
         raw_args+=("$arg")
@@ -2685,7 +2692,7 @@ global_parse_args() {
   if [[ -z "$SUBCOMMAND" && -n "$potential_subcommand" ]]; then
     SUBCOMMAND="$potential_subcommand"
   fi
-
+set +x
 }
 
 #declare moduleName moduleFilePath

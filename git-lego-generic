@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+set +o posix
+
+################################ STANDARD BOOTSTRAP CALL ################################
+umbrella_bootstrap
+
+
+################################ BRANCH-SPECIFIC HELP ################################
+function show_help() {
+cat << EOF
+
+NAME:
+    ${FLAGS_PREFIX} status in git umbrella-managed modules
+
+SYNOPSIS:
+    '${FLAGS_PREFIX} [options] [-v|--verbose]'
+    '${FLAGS_PREFIX} [--force|-f] [--all|-a|--solo|--versioned] [--[no-]recursive|-R|-r] [<module-path>]'
+
+DESCRIPTION:
+
+EXAMPLES:
+
+
+OPTIONS:
+      --help|-h|-\?
+          get this help
+
+EOF
+}
+
+typeset verbose=0
+typeset afterDash=()
+typeset stopOptions=0
+typeset doRecursive=1 doForce=1
+typeset initialPath
+typeset modulePath
+typeset moduleName
+typeset moduleFilePath
+
+################################ PARAMETERS PARSING ################################
+while [[ -n $1 ]]; do
+  noAppendArg=0
+  case $1 in
+    --)
+      stopOptions=1
+      ;;
+
+    --recursive|-r)
+      doRecursive=1
+      ;;
+    --no-recursive|-R)
+      doRecursive=0
+      ;;
+
+    --force|-f)
+      doForce=1
+      ;;
+    --no-force)
+      doForce=0
+      ;;
+
+    *)
+      if (( $stopOptions )); then
+        if [[ -z ${1%%-*} ]]; then
+          die "after '--' additional options ($1) are not allowed "
+        else
+          afterDash+=("$1")
+        fi
+      elif [[ -z ${1%%-*} ]]; then
+        args+=($1)
+      elif [[ -z ${initialPath} ]]; then
+        initialPath=$1
+      else
+        die "wrong parameter '$1'"
+      fi
+      ;;
+  esac
+  shift
+done
+
+################################ SCRIPT SPECIFIC METHODS ################################
+
+
+generic_level() {
+echo "$FUNCNAME()" $@ >&2
+  local levelPath="$1"
+  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+
+  local moduleName="$2"
+  local modulePath="$3"
+
+  local ret=0   # return code
+  local childRet # child return code
+
+  shift 3
+
+  git "$GENERIC_ACTION" "${args[@]}"
+
+  set -x
+  pwd >&2
+
+  if [ -f .gitmodules ]; then
+    while read -a module; do
+      childRet=0
+      local moduleName="${module[0]}"
+      local localPath="${module[1]}"
+      local subRepoPath="${levelPath}"/"${localPath}"
+      if [[ ${modulePath:(-1)} != "/" ]]; then
+        modulePath+="/"
+      fi
+
+      modulePath+="$moduleName"
+
+      read initialized < <( module_info ${modulePath} initialized )
+
+      if (( $initialized )) ; then
+
+        pushd "${subRepoPath}" &>/dev/null
+        generic_level "$subRepoPath" "$moduleName" "$modulePath" "${args[@]}"
+        childRet=$?
+        popd  &>/dev/null
+
+        (( $childRet > $ret )) && ret="$childRet"
+      fi
+    done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+  fi
+}
+
+
+################################ MAIN SCRIPT LOGIC ################################
+#
+# callback to detect what command should be called
+#
+#dispatch_subaction() {
+#  echo clean
+#}
+cmd_default() {
+#  typeset modulePath=$(resolve_module_path "$initialPath" /)
+#  read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
+
+  local ret=0
+  pushd "$moduleFilePath" &>/dev/null
+  generic_level "$moduleFilePath" "$moduleName" "$modulePath"
+  popd &>/dev/null
+
+  umbrella_finalize
+  return "$ret"
+}
