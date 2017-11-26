@@ -196,7 +196,7 @@ cmd_default() {
     if (( $affected )); then
       while read -a module; do
         cd ${module[$MFS_FULL_PATH]}
-        pwd
+#        pwd
         level_verbose_about_to ${module[@]}
     #    echo "git push ${args[@]} ${#args[@]}"
         git push "${args[@]}"

@@ -786,11 +786,11 @@ function drop_to_affected() {
     local moduleName="${module[$MFS_MODULE_NAME]}"
     if [[ "$path" == "${module[$MFS_FULL_PATH]}" || "$path" == "${module[$MFS_MODULE_PATH]}" ]]; then
       found=1
-      if (( ${#afterDash[@]} )); then
+      if (( "${#afterDash[@]}" )); then
         found=0
         for branch in "${afterDash[@]}"; do
           # exact comparison, not matching
-          if [ "${moduleName}" == "$branch" ]; then
+          if [ "$moduleName" == "$branch" ]; then
             found=1
             break
           fi
@@ -1022,7 +1022,21 @@ function module_info () {
   done
 
   (( ${#results[@]} )) && echo ${results[@]}
-  return ${ret}
+  return "$ret"
+}
+
+
+git_editor() {
+  local ret=0
+	if test -z "${GIT_EDITOR:+set}"
+	then
+		GIT_EDITOR="$(git var GIT_EDITOR)" || return $?
+	fi
+
+	eval "$GIT_EDITOR" '"$@"'
+	ret=$?
+
+	return "$ret"
 }
 
 
@@ -2640,17 +2654,16 @@ global_parse_args() {
   local potential_subcommand
   local found=0 index=0
 
-set -x
 #  local VERSION="0.1"
   for arg in "$@"; do
     case "$arg" in
-      tag)
-        # preserve using token as an argument
-        if [[ -z "$SUBCOMMAND" ]]; then
-          SUBCOMMAND="generic"
-          GENERIC_ACTION="$arg"
-        fi
-        ;;
+#      tag)
+#        # preserve using token as an argument
+#        if [[ -z "$SUBCOMMAND" ]]; then
+#          SUBCOMMAND="generic"
+#          GENERIC_ACTION="$arg"
+#        fi
+#        ;;
       --version)
         SUBCOMMAND="config"
 #        break ??
@@ -2692,7 +2705,6 @@ set -x
   if [[ -z "$SUBCOMMAND" && -n "$potential_subcommand" ]]; then
     SUBCOMMAND="$potential_subcommand"
   fi
-set +x
 }
 
 #declare moduleName moduleFilePath
@@ -2717,18 +2729,20 @@ main() {
 	. "$GITLEGO_DIR/git-lego-$SUBCOMMAND"
 
   local defInitPath="."
-  if type get_default_init_path >/dev/null 2>&1; then
-    defInitPath=$(get_default_init_path)
+  if type default_init_path_callback >/dev/null 2>&1; then
+    defInitPath=$( default_init_path_callback "$SUBCOMMAND" "${raw_args[@]}" )
   fi
 
   # variable initialPath is set usually in subcommand script
   # by parsing arguments
+#  set -x
   modulePath=$( resolve_module_path "$initialPath" "$defInitPath" )
-  read moduleName moduleFilePath moduleLocalPath < <(module_info "$modulePath" "name" "path")
-#  read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
+  if [[ -n "$modulePath" ]]; then
+    read moduleName moduleFilePath moduleLocalPath moduleInitialized moduleGitDir < <( module_info "$modulePath" "name" "path" "local" "initialized" "gitdir")
+  	splash "$modulePath"
+  fi
+#  set +x
 
-#	echo "$initialPath" "$moduleName" "$moduleFilePath" >&2
-	splash "$modulePath"
 	SUBACTION="default"
 	# Particular script can figure out a specific action depends on arguments or other circumstances.
 	# In this case it should define dispatch_subaction function and echo'ing required action.

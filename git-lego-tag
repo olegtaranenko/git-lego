@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+set +o posix
+
+################################ STANDARD BOOTSTRAP CALL ################################
+umbrella_bootstrap
+
+
+################################ BRANCH-SPECIFIC HELP ################################
+function show_help() {
+cat << EOF
+
+NAME:
+    ${FLAGS_PREFIX} status in git umbrella-managed modules
+
+SYNOPSIS:
+    '${FLAGS_PREFIX} [options] [-v|--verbose]'
+    '${FLAGS_PREFIX} [--force|-f] [--all|-a|--solo|--versioned] [--[no-]recursive|-R|-r] [<module-path>]'
+
+DESCRIPTION:
+
+EXAMPLES:
+
+
+OPTIONS:
+      --help|-h|-\?
+          get this help
+
+EOF
+}
+
+typeset verbose=0
+typeset afterDash=()
+typeset stopOptions=0
+typeset doRecursive=0 
+typeset doDelete=0 
+typeset doForce=0
+
+typeset initialPath
+typeset modulePath
+typeset moduleName
+typeset moduleFilePath 
+typeset moduleInitialized
+typeset moduleGitDir
+
+typeset tagName=""
+typeset tagCommit
+typeset message
+typeset messageDefined=0
+typeset messageRequired=0
+typeset affectedModules=()
+typeset emptyMsgNotAllowed="Empty message not allowed"
+typeset tagMissedMsg="Tag name is missed"
+
+#set -x
+################################ PARAMETERS PARSING ################################
+while [[ -n $1 ]]; do
+  noAppendArg=0
+  case $1 in
+    --)
+      stopOptions=1
+      ;;
+
+    --message|-m)
+      messageDefined=1
+#      message="$2"
+      shift
+      if [[ -n "$1" ]]; then
+        args+=("\"$1\"")
+      fi
+      ;;
+
+    --delete|-d)
+      doDelete=1
+      args+=("$1")
+      ;;
+
+    --recursive|-r)
+      doRecursive=1
+      ;;
+    --no-recursive|-R)
+      doRecursive=0
+      ;;
+
+    --force|-f)
+      doForce=1
+      args+=("$1")
+      ;;
+    --no-force)
+      doForce=0
+      ;;
+
+    --local-user=*)
+      messageRequired=1
+      args+=("$1")
+      ;;
+    -u)
+      messageRequired=1
+      args+=("$1")
+      shift
+      if [[ -z "$1" ]]; then
+        die "keyid for signing missed"
+      fi
+      args+=("$1")
+      ;;
+
+    --annotate|-a|--sign|-s)
+      messageRequired=1
+      args+=("$1")
+      ;;
+
+
+    *)
+      if (( "$stopOptions" )); then
+        if [[ -z ${1%%-*} ]]; then
+          die "after '--' additional options ($1) are not allowed "
+        else
+          afterDash+=("$1")
+        fi
+      elif [[ -z ${1%%-*} ]]; then
+        args+=($1)
+        # detect -m option inside of ie. -am
+        if (( ! "$messageDefined" )) ; then
+          messageDefined=$( echo "$1" | grep -c m 2>/dev/null )
+          if (( "$messageDefined" )); then
+            shift
+            if [[ -z "$1" ]]; then
+               die "$emptyMsgNotAllowed"
+            fi
+            args+=("\"$1\"")
+          fi
+        fi
+      elif [[ -z "$tagName" ]]; then
+        tagName=$1
+      elif [[ -z "$initialPath" ]]; then
+        initialPath="$1"
+      elif [[ -z "$tagCommit" ]]; then
+        tagCommit="$1"
+      else
+        die "wrong parameter '$1'"
+      fi
+      ;;
+  esac
+  shift
+done
+#set +x
+################################ SCRIPT SPECIFIC METHODS ################################
+
+tag_level() {
+#set -x
+  local levelFilePath="$1"
+  [[ -z ${levelFilePath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+
+  local moduleName="$2"
+  local modulePath="$3"
+
+  local ret=0   # return code
+  local childRet=0 # child return code
+
+  while read -a module; do
+    cd "${module[$MFS_FULL_PATH]}"
+    git tag ${tagName}${tagCommit:+ $tagCommit} "${args[@]}"
+#    persist_att
+    childRet=$?
+
+    if (( "$childRet" > "$ret" )) ; then
+      ret="$childRet"
+      break
+    fi
+  done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
+
+  return "$ret"
+}
+
+
+prepare_tag_level() {
+#echo "$FUNCNAME()" $@ >&2
+#pwd >&2
+  local levelFilePath="$1"
+  [[ -z ${levelFilePath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+
+  local moduleName="$2"
+  local modulePath="$3"
+
+  local ret=0            # return code
+  local affected=0
+  local applied=1
+
+  local tagExists=$( git tag -l | grep -Ec "^$tagName$" 2>/dev/null )
+  ret=$?
+
+  if (( ! "$doDelete" )) && (( "$tagExists" )); then
+    dieMsg="Tag '$tagName' already exists in module '$moduleName' (at least), use --force to override it"
+    ret=1
+  else
+    if [[ "$tagExists" == 0 && "$doDelete" == 0 ]] || [[ "$tagExists" == 1 && "$doDelete" == 1  ]]; then
+      drop_to_affected "$levelFilePath"
+      applied=$?
+
+      if (( ! "$applied" )); then
+        affectedModules+=("$moduleName")
+        affected=1
+      fi
+    fi
+  fi
+
+  if [[ "$affected" == 1 || "$doDelete" == 1 ]] && (( ! "$ret" )); then
+
+    if [[ -f .gitmodules && ( "$doRecursive" || "$doDelete" ) ]] ; then
+      while read -a module; do
+        local childRet=0       # child return code
+        local moduleName="${module[0]}"
+        local localPath="${module[1]}"
+
+        local subRepoPath="${levelFilePath}"/"${localPath}"
+        local subModulePath="$modulePath"
+        [[ "${subModulePath:(-1)}" != "/" ]] && subModulePath+="/"
+        subModulePath+="$moduleName"
+        read initialized managed < <( module_info "$subModulePath" "initialized" "managed" )
+
+        if (( "$initialized" )); then
+          pushd "${subRepoPath}" &>/dev/null
+          prepare_tag_level "$subRepoPath" "$moduleName" "$subModulePath"
+          childRet=$?
+          popd  &>/dev/null
+
+          (( "$childRet" > "$ret" )) && ret="$childRet"
+        fi
+      done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+    fi
+  fi
+
+  return "$ret"
+}
+
+
+
+_default_init_path_callback_() {
+#set -x
+  local path="."
+  local pathIsFirst
+
+  # git-lego tag v0.1 .
+  # support 'git-lego tag module_name -a tag' format
+  if [[ -n "$tagCommit" && -n "$initialPath" && "$tagCommit" != "$initialPath" ]]; then
+    pathIsFirst=$( module_info "$tagCommit" "name" )
+    if [[ -n "$pathIsFirst" ]]; then
+      local pathIsSecond=$( module_info "$initialPath" "name" )
+      if [[ -z "$pathIsSecond" ]]; then
+        #swap tag and path
+        pathIsFirst="$tagCommit"
+        tagCommit="$initialPath"
+        initialPath="$pathIsFirst"
+        path="$initialPath"
+      fi
+    fi
+  elif [[ -z "$tagCommit" && -n "$initialPath" ]]; then
+    pathIsFirst=$( module_info "$initialPath" "name" )
+    if [[ -z "$pathIsFirst" ]]; then
+      tagCommit="$initialPath"
+      unset initialPath
+#      path="$initialPath"
+    fi
+  fi
+  echo "$path"
+#set +x
+}
+
+################################ MAIN SCRIPT LOGIC ################################
+#
+# callback to detect what command should be called
+#
+#dispatch_subaction() {
+#  echo clean
+#}
+cmd_default() {
+
+  local ret=0
+#set -x
+
+  if [[ -z "$moduleFilePath" ]]; then
+    _default_init_path_callback_ &>/dev/null
+    typeset modulePath=$( resolve_module_path "." )
+    read moduleName moduleFilePath moduleLocalPath moduleInitialized moduleGitDir < <( module_info "$modulePath" "name" "path" "local" "initialized" "gitdir")
+  fi
+
+#  echo "tagName=$tagName" "tagCommit=$tagCommit" "initialPath=$initialPath"
+
+  if (( ! "${#tagName}" )); then
+    dieMsg="$tagMissedMsg"
+    ret=1
+  fi
+#  echo "arguments: $tagName $tagCommit ${args[@]}"
+
+  if (( "$moduleInitialized" )) && (( ! "$ret" )) ; then
+    cd "$moduleFilePath"
+    prepare_tag_level "$moduleFilePath" "$moduleName" "$modulePath"
+    ret=$?
+
+    if (( "$messageRequired" )) && (( ! "$messageDefined" )) ; then
+      local editMsgFile="${globals[$G_SCRIPT_TMP_DIRECTORY]}/COMMIT_EDITMSG"
+      eAffected=$( IFS=','; echo "${affectedModules[*]}" )
+
+      cat << EOT >> "$editMsgFile"
+# ${0##*/}: Affected modules
+#   $eAffected
+# Write a message for tag:
+#   $tagName
+# Lines starting with '#' will be ignored.
+EOT
+
+      git_editor "$editMsgFile"
+      ret=$?
+
+      if (( ! $ret )); then
+        message=$( cat "$editMsgFile" | grep -vE "^#.*$" )
+        if (( ! "${#message}" )); then
+          dieMsg="$emptyMsgNotAllowed"
+          ret=1
+        else
+          echo "$message" > "$editMsgFile"
+          args+=("-F")
+          args+=("$editMsgFile")
+        fi
+      fi
+    fi
+    if (( ! "$ret" )) && (( "${#affectedModules[@]}" )); then
+      tag_level "$moduleFilePath" "$moduleName" "$modulePath"
+      ret=$?
+    fi
+  fi
+
+  if (( "$ret" )) && (( "${#dieMsg}" )); then
+    cw_echo "$dieMsg"
+  fi
+  umbrella_finalize
+  return "$ret"
+}

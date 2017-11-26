@@ -96,9 +96,6 @@ echo "$FUNCNAME()" $@ >&2
 
   git "$GENERIC_ACTION" "${args[@]}"
 
-  set -x
-  pwd >&2
-
   if [ -f .gitmodules ]; then
     while read -a module; do
       childRet=0

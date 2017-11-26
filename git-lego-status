@@ -357,7 +357,7 @@ function status_level() {
   return $ret
 }
 
-get_default_init_path() {
+default_init_path_callback() {
   echo "/";
 }
 
