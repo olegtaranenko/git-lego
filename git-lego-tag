@@ -28,9 +28,11 @@ OPTIONS:
 EOF
 }
 
+typeset args=()
 typeset verbose=0
 typeset afterDash=()
 typeset stopOptions=0
+typeset doCheckout=0 
 typeset doRecursive=0 
 typeset doDelete=0 
 typeset doForce=0
@@ -63,6 +65,7 @@ while [[ -n $1 ]]; do
     --message|-m)
       messageDefined=1
 #      message="$2"
+      args+=("$1")
       shift
       if [[ -n "$1" ]]; then
         args+=("\"$1\"")
@@ -72,6 +75,10 @@ while [[ -n $1 ]]; do
     --delete|-d)
       doDelete=1
       args+=("$1")
+      ;;
+
+    --checkout|-c)
+      doCheckout=1
       ;;
 
     --recursive|-r)
@@ -136,7 +143,7 @@ while [[ -n $1 ]]; do
       elif [[ -z "$tagCommit" ]]; then
         tagCommit="$1"
       else
-        die "wrong parameter '$1'"
+        die "unknown parameter: '$1'"
       fi
       ;;
   esac
@@ -157,16 +164,52 @@ tag_level() {
   local childRet=0 # child return code
 
   while read -a module; do
+    local subModulePath="${module[$MFS_MODULE_PATH]}"
+    local subModuleName="${module[$MFS_MODULE_NAME]}"
     cd "${module[$MFS_FULL_PATH]}"
     git tag ${tagName}${tagCommit:+ $tagCommit} "${args[@]}"
-#    persist_att
     childRet=$?
+
+    local actionDone
+    if (( ! "$doDelete" )); then
+      actionDone="added to"
+    else
+      actionDone="removed from"
+    fi
+    cw_echo "Tag '$tagName' $actionDone '$subModulePath'"
 
     if (( "$childRet" > "$ret" )) ; then
       ret="$childRet"
       break
+    else
+
+      if [[ "$subModulePath" != "/" ]]; then
+        if (( "$doCheckout" )); then
+          local legoMode modeImplicit
+          local parentModulePath=$( get_module_path_up "$subModulePath" )
+          read legoMode modeImplicit < <( module_info "$parentModulePath" "lego_mode" "lego_mode_implicit" )
+          if (( ! "$doDelete" )); then
+            if [[ "$legoMode" != "solo" ]] && [[ "$legoMode" != "versioned" ]] ; then
+              legoMode="solo"
+            fi
+            persist_attain_hint "1" "$subModuleName" "$tagName" "pinned" "$legoMode"
+          else
+            local section="submodule.$subModuleName"
+            local key="refname"
+            local possibleTag=$( get_lego_setting_mode "$key" "$section" "$legoMode" )
+            if [[ "$possibleTag" == "refs/tags/$tagName" ]]; then
+              wipe_lego_setting_at_mode "$key" "$section" "$legoMode" ".."
+            fi
+          fi
+        fi
+      else
+        if (( ! "$doDelete" )) && (( "$doCheckout" )); then
+          git checkout "$tagName"
+        fi
+      fi
+
     fi
-  done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
+  done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2>/dev/null || tail -r))
 
   return "$ret"
 }
@@ -188,11 +231,11 @@ prepare_tag_level() {
   local tagExists=$( git tag -l | grep -Ec "^$tagName$" 2>/dev/null )
   ret=$?
 
-  if (( ! "$doDelete" )) && (( "$tagExists" )); then
+  if (( ! "$doDelete" )) && (( "$tagExists" )) && (( ! "$doRecursive" )) && (( ! "$doForce" )); then
     dieMsg="Tag '$tagName' already exists in module '$moduleName' (at least), use --force to override it"
     ret=1
   else
-    if [[ "$tagExists" == 0 && "$doDelete" == 0 ]] || [[ "$tagExists" == 1 && "$doDelete" == 1  ]]; then
+    if [[ ( "$tagExists" == 0 || "$doForce" == 1 ) && "$doDelete" == 0 ]] || [[ "$tagExists" == 1 && "$doDelete" == 1  ]]; then
       drop_to_affected "$levelFilePath"
       applied=$?
 
@@ -203,9 +246,8 @@ prepare_tag_level() {
     fi
   fi
 
-  if [[ "$affected" == 1 || "$doDelete" == 1 ]] && (( ! "$ret" )); then
-
-    if [[ -f .gitmodules && ( "$doRecursive" || "$doDelete" ) ]] ; then
+  if (( "$doRecursive" )) && (( ! "$ret" )); then
+    if [[ -f .gitmodules && "$doRecursive" ]]; then
       while read -a module; do
         local childRet=0       # child return code
         local moduleName="${module[0]}"

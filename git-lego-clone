@@ -191,8 +191,10 @@ cmd_default() {
     read branchName type < <( evaluate_refname )
   fi
 
-#  checkout_level "$branchName" "branch" "$moduleName" "$modulePath"  "$moduleFilePath"
-  update_level "$moduleFilePath" "$moduleName" "$modulePath" "." "$branchName"
+  typeset attainOnCheckout=1
+  typeset updateManagedRef=0
+  checkout_level "$branchName" "branch" "$moduleName" "$modulePath"  "$moduleFilePath"
+#  update_level "$moduleFilePath" "$moduleName" "$modulePath" "." "$branchName"
 
 
   umbrella_finalize

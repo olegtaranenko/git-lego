@@ -46,7 +46,7 @@ typeset doDetain=0
 
 # attain to current state
 # TODO add config setting
-typeset doCurrent=1
+typeset doCurrent=0
 
 typeset autoAttain=$(get_lego_setting "autoAttain")
 autoAttain=$(READ_boolean ${autoAttain} 1) # 1 === true
@@ -57,6 +57,9 @@ typeset initialPath doRecursive=1 doForce=0
 typeset explicitModules=() explicitRefs=() explicitTypes=()
 
 typeset reference referenceType
+
+typeset warnDoForce=()
+#typeset WARN_FORCE="Modules ${warnDoForce[*]} can be re-attained, use 'git-lego attain ... --force' option to apply"
 
 typeset BAD_EXPLICIT_PARAM="Wrong format of explicit module -> reference parameter."
 typeset WRONG_FORMAT_REF="Wrong format of explicit reference"
@@ -183,10 +186,6 @@ while [[ -n $1 ]]; do
         else
           explicitModules+=($1)
         fi
-#      elif [[ -z ${1%%-*} ]]; then
-#        args+=($1)
-#      elif [[ -z ${reference} ]]; then
-#        reference=$1
       elif [[ -z ${initialPath} ]]; then
         initialPath=$1
       else
@@ -234,7 +233,8 @@ fi
 #  
 #
 is_module_attainable() {
-echo "$FUNCNAME()" $@ >&2
+#echo "$FUNCNAME()" $@ >&2
+#set -x
   local moduleName="$1"
   local modulePath="$2"
   local parentRefName="$3"
@@ -249,9 +249,11 @@ echo "$FUNCNAME()" $@ >&2
 
   local uninitialized="${MODULE_STATUS[$MS_UNINITIALIZED]}"
 
-  local moduleAffected="$doCurrent"
+  local moduleAffected=0
 
   if (( ! "$uninitialized" )) && [[ "$modulePath" != "/" ]]; then
+
+    moduleAffected="$doCurrent"
     # from settings
     local moduleAutoAttain="$autoAttain"
     if [[ -n "$paramAutoAttain" ]]; then
@@ -267,6 +269,7 @@ echo "$FUNCNAME()" $@ >&2
 
     local guessedRefNames=()
     local refIndex=0
+
     for refName in "${explicitRefs[@]}"; do
       local refType="${explicitTypes[$refIndex]}"
       read currentRefName currentRefType exists distinctRefName fullRefName < <( evaluate_refname "$refName" "1" "$refType")
@@ -274,16 +277,17 @@ echo "$FUNCNAME()" $@ >&2
       if (( ! "$ret" )) && (( "$exists" )); then
         case "$currentRefType" in
           branch)
+            # DO NOT QUITE
             guessedRefNames=(${MODULE_STATUS[$MS_GUESSED_BRANCHES]})
             ;;
           pinned)
+            # DO NOT QUITE
             guessedRefNames=(${MODULE_STATUS[$MS_GUESSED_TAGS]})
             ;;
           sha)
             moduleAffected=1
             ;;
         esac
-
         if (( "${#guessedRefNames[@]}" )); then
           for guessed in "${guessedRefNames[@]}"; do
             if [[ "$guessed" == "$currentRefName" ]]; then
@@ -310,6 +314,7 @@ echo "$FUNCNAME()" $@ >&2
   fi
   echo "${explicits[@]}"
   return "$ret"
+#set +x
 }
 
 
@@ -339,17 +344,16 @@ attain_module_mode() {
 
   local alreadyAttained=0
 
-  if [[ "$uninitialized" == 0 && "$unmanaged" == 0 && "$doForce" == 0 ]]; then
+  if [[ "$uninitialized" == 0 && "$unmanaged" == 0 ]]; then
     alreadyAttained=1
   fi
 
-  if (( ! $alreadyAttained )); then
-    read affected explicitRef explicitType < <( is_module_attainable "$@" )
-    ret=$?
-  fi
-  if (( ! "$ret" )) ; then
-    if (( "$affected" )) && (( ! "$alreadyAttained" )); then
+  read affected explicitRef explicitType < <( is_module_attainable "$@" )
+  ret=$?
 
+#  set -x
+  if (( ! "$ret" )) ; then
+    if (( "$affected" )) && [[ "$alreadyAttained" == 1 || "$doForce" == 1 ]] ; then
       if [[ "$modulePath" != "/" && "$uninitialized" != 1 ]]; then
 
         if [[ -n "$explicitRef" && -n "$explicitType" ]]; then
@@ -384,10 +388,18 @@ attain_module_mode() {
           fi
         fi
       fi
-    elif [[ "$modulePath" != "/" ]]; then
-      cw_echo "Module $moduleName skipped"
+    else
+      if [[ "$modulePath" != "/" ]]; then
+        cw_echo "Module $moduleName skipped"
+
+        if (( "$alreadyAttained" )) && (( "$affected" )); then
+          warnDoForce+=("$moduleName")
+        fi
+      fi
+
     fi
   fi
+
   return "$ret"
 }
 
@@ -454,7 +466,6 @@ attain_level() {
 
 
 ################################ MAIN SCRIPT LOGIC ################################
-
 cmd_default() {
   #
   ## Exit code of the script
@@ -464,9 +475,11 @@ cmd_default() {
   #
   local ret=0
 
-  typeset modulePath=$(resolve_module_path "$initialPath" ".")
-
-  read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
+#set -x
+#  typeset modulePath=$(resolve_module_path "$initialPath" ".")
+#
+#  read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
+#set +x
 
 #  splash "$globals[$G_ROOT_DIR]" "$globals[$G_LEGO_MODE_IMPLICIT]"
 
@@ -495,10 +508,13 @@ cmd_default() {
   attain_level "$moduleName" "$moduleFilePath" "$modulePath" "$refName" "$refType"
   ret=$?
 
+  if (( "${#warnDoForce[@]}" )); then
+    IFS=","; cw_echo "Modules ${warnDoForce[*]} can be re-attained, use 'git-lego attain ... --force' option to apply"
+  fi
   if (( "$verbose" )) && [[ -n "$warnMsg" ]]; then
     cw_verbose "$warnMsg"
   fi
 
   umbrella_finalize
-  return $ret
+  return "$ret"
 }

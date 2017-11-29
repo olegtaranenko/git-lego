@@ -9,8 +9,6 @@ set +o posix
   #
 declare ret=0
 
-args=()
-
 ################################ STANDARD BOOTSTRAP CALL ################################
 umbrella_bootstrap
 
@@ -43,12 +41,22 @@ OPTIONS:
 EOF
 }
 
+typeset args=()
 typeset verbose=0
+typeset doRecursive=1
+typeset doForce=0
+
+typeset initialPath
+typeset modulePath
+typeset moduleName
+typeset moduleFilePath
+typeset moduleInitialized
+typeset moduleGitDir
+
 typeset initialPath
 typeset afterDash=()
 typeset stopOptions=0
-typeset fetchBefore=1
-
+typeset fetchBefore=0
 #set -x
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
@@ -62,11 +70,24 @@ while [[ -n $1 ]]; do
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
       ;;
 
+    --recursive|-r)
+      doRecursive=1
+      ;;
+    --no-recursive|-R)
+      doRecursive=0
+      ;;
+
     --fetch|-f)
       fetchBefore=1
       ;;
     --no-fetch|-F)
       fetchBefore=0
+      ;;
+
+    --tags|--mirror)
+      doRecursive=1
+      doForce=1
+      args+=("$1")
       ;;
 
     --)
@@ -80,18 +101,18 @@ while [[ -n $1 ]]; do
           afterDash+=($1)
         fi
       elif [[ -z ${1%%-*} ]]; then
-        args+=($1)
-      elif [[ -z ${initialPath} ]]; then
+        args+=("$1")
+      elif [[ -z "$initialPath" ]]; then
         initialPath="$1"
       else
-        die "error in parameters [$1]"
+        die "unknown parameter: '$1'"
       fi
       ;;
   esac
   shift
 done
 
-#echo "args: ${args}"
+echo "args: ${args[@]}"
 #set +x
 
 
@@ -104,21 +125,19 @@ done
 #
 
 function prepare_push_level() {
-#echo "$FUNCNAME() $@" >&2
+echo "$FUNCNAME() $@" >&2
+pwd >&2
 
   local levelPath="$1"
+  [[ -z "$levelPath" ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local moduleName="$2"
   local modulePath="$3"
-  local parentPushable=$4
-
-  local currentPushable=0
-  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local ret=0
   local childRet # child modules return code
 
-  if (( $fetchBefore )); then
+  if (( "$fetchBefore" )); then
     cw_verbose "About to fetch from remote..."
-    if (( $verbose == 2 )); then
+    if (( "$verbose" == 2 )); then
       git fetch
     else
       git fetch &> /dev/null
@@ -126,104 +145,99 @@ function prepare_push_level() {
     (( $? )) && panic "Something wrong with git fetch"
   fi
 
-  module_porcelain_status "${modulePath}" push
+  module_porcelain_status "$modulePath" "push"
 
   local applied=1
 #  echo "$MODULE_STATUS[@]"
-  if (( ${MODULE_STATUS[$MS_DETACHED]} )); then
-    die "Push is peeled rejected as module '$moduleName' is detached."
-  elif [[ 1 == ${MODULE_STATUS[$MS_PUSHABLE]}  &&  ${MODULE_STATUS[$MS_DETACHED]} == 0 ]]; then
-    currentPushable=1
-    drop_to_affected ${levelPath}
+#  if (( "${MODULE_STATUS[$MS_DETACHED]}" )) && (( ! "$doRecursive" )); then
+#    die "Push is peeled rejected as module '$moduleName' is detached."
+#  el
+#set -x
+  if [[ ("${MODULE_STATUS[$MS_PUSHABLE]}" == 1 || "$doForce" == 1 ) && "${MODULE_STATUS[$MS_DETACHED]}" == 0 ]]; then
+#    currentPushable=1
+    drop_to_affected "$levelPath"
     applied=$?
     # 0 means applied, 1 - not
     # if applied == 1, the module is pushable but not applied - dangerous for upper modules,
     # they should not be pushed. Otherwise other developers will pull upper module with undefined
     # commit for submodule
-    (( $applied )) && (( $parentPushable > 0 )) && ret=1
-  else
-    currentPushable=-1
   fi
 
-  if (( $applied )); then
-    skippedModules+=(${moduleName})
+  if [[ "$applied" != 0 || "${MODULE_STATUS[$MS_DETACHED]}" != 0 ]]; then
+    skippedModules+=("$moduleName")
   fi
 
-  if [ -f .gitmodules ]; then
+  if [ -f .gitmodules ] && (( "$doRecursive" )); then
     while read -a module; do
       childRet=0
-      subModule="${module[0]}"
-      checkBranch=$(git config --file .gitmodules --get submodule."${subModule}".branch)
+      subModuleName="${module[0]}"
       localPath="${module[1]}"
-      subRepoPath="${levelPath}"/"${localPath}"
+      subRepoPath="$levelPath/$localPath"
 
-      pushd "${subRepoPath}" &>/dev/null
-      modulePath="$3" #/$subModule"
-      if [[ ${modulePath:(-1)} != "/" ]]; then
-        modulePath+="/"
-      fi
-      modulePath+="$subModule"
+      subModulePath="$modulePath"
+      [[ "${subModulePath:(-1)}" != "/" ]] && subModulePath+="/"
+      subModulePath+="$subModuleName"
 
-      prepare_push_level "${subRepoPath}" "${subModule}" "${modulePath}" "${currentPushable}"
+      pushd "$subRepoPath" &>/dev/null
+      prepare_push_level "$subRepoPath" "$subModuleName" "$subModulePath"
       childRet=$?
 
-      (( $childRet > $ret )) && ret=${childRet}
+      (( "$childRet" > "$ret" )) && ret="$childRet"
       popd  &>/dev/null
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
 
-  return ${ret}
+  return "$ret"
 }
 
 
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
-  typeset modulePath=$(resolve_module_path "${initialPath}" /)
-  read moduleName moduleFilePath < <(module_info "${modulePath}" "name" "path")
+#  typeset modulePath=$(resolve_module_path "${initialPath}" /)
+#  read moduleName moduleFilePath < <(module_info "${modulePath}" "name" "path")
   typeset skippedModules=()
   typeset affected=0
   typeset vetoed=0
 
-  pushd ${moduleFilePath} &>/dev/null
-  #set -x
-  prepare_push_level "${moduleFilePath}" "${moduleName}" "${modulePath}" "0"
+#  set -x
+  pushd "$moduleFilePath" &>/dev/null
+  prepare_push_level "$moduleFilePath" "$moduleName" "$modulePath"
   ret=$?
 
   (( $ret )) && vetoed=1
 
-  wasPushed=0
-  if (( ! $vetoed )); then
-    if (( $affected )); then
-      while read -a module; do
-        cd ${module[$MFS_FULL_PATH]}
+  local wasPushed=()
+  if (( ! $vetoed )) ; then
+
+    while read -a module; do
+      cd "${module[$MFS_FULL_PATH]}"
 #        pwd
-        level_verbose_about_to ${module[@]}
-    #    echo "git push ${args[@]} ${#args[@]}"
-        git push "${args[@]}"
-        if (( $? )); then
-          panic $(pwd)
-          panic "Unexpected error 'git push' command"
-        fi
-        wasPushed+=(module[$MFS_MODULE_NAME])
-      done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
-    fi
+      level_verbose_about_to "${module[@]}"
+  #    echo "git push ${args[@]} ${#args[@]}"
+      git push "${args[@]}"
+      if (( $? )); then
+        panic $( pwd )
+        panic "Unexpected error 'git push' command"
+      fi
+      wasPushed+=("${module[$MFS_MODULE_NAME]}")
+    done < <(cat ${globals[$G_AFFECTED_MODULES]}  | (tac 2>/dev/null || tail -r))
   else
     mainWarn="Request to push is rejected. "
-    (( $verbose )) && mainWarn+="Use '${FLAGS_PREFIX} -v' to figure out the reason."
-    (( 1 == $verbose )) && mainWarn+="'${FLAGS_PREFIX} -v -v' to get more detailed information."
+    (( "$verbose" )) && mainWarn+="Use '${FLAGS_PREFIX} -v' to figure out the reason."
+    (( 1 == "$verbose" )) && mainWarn+="'${FLAGS_PREFIX} -v -v' to get more detailed information."
 
-    cw_echo  ${mainWarn} \
+    cw_echo  "$mainWarn" \
     "Some mutual dependent repositories will not be pushed, but required." \
     "Pushing at current state will break consistence of modules hierarchy."
   fi
 
-  (( ! ${#wasPushed[@]} )) && cw_echo "Push not happens"
-
-  if (( ${#skippedModules} )); then
+  if (( ! "${#wasPushed[@]}" )); then
+    cw_echo "No modules was pushed"
+  elif (( "${#skippedModules[@]}" )); then
     cw_echo "Not affected modules: ${skippedModules[*]}"
   fi
 
   popd &>/dev/null
   umbrella_finalize
-  exit ${ret}
+  exit "$ret"
 }

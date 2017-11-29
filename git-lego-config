@@ -29,6 +29,12 @@ OPTIONS:
 EOF
 }
 
+# defined in git-lego::main()
+typeset initialPath
+typeset modulePath
+typeset moduleName
+typeset moduleFilePath
+
 typeset currentLegoMode
 typeset verbose=0
 typeset doForce=0
@@ -267,11 +273,11 @@ reconcile_level() {
 
     if [[ -n "$key" ]]; then
       wipe_lego_setting_at_mode "$key" "$section" "$modeFrom"
-      if (( $copyFrom )); then
+      if (( "$copyFrom" )) && (( ! "$doModeUnset" )); then
         set_module_meta_mode "$key" "$referenceFrom" "$section" "." "$modeTo"
       fi
 
-      if (( $doModeUnset )); then
+      if (( "$doModeUnset" )); then
         wipe_lego_setting_at_mode "$key" "$section" "$modeTo"
       fi
     fi
@@ -308,12 +314,14 @@ cmd_parameter() {
 
 ## Just show current
 cmd_legomode() {
-#  echo "$FUNCNAME() setLegoMode=$nextLegoMode" >&2
+  echo "$FUNCNAME() initialPath=$initialPath" >&2
   local currentMode
   local investigated
   local hint
 
   local doEcho=$1
+
+  cd "$moduleFilePath" >/dev/null
 
   if (( $showLegoMode )) ; then
     local currentMode=$( get_lego_setting "mode")

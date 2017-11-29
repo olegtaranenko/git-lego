@@ -148,8 +148,8 @@ done
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 function prepare_commit_level() {
-echo "$FUNCNAME()" $@ >&2
-pwd >&2
+#echo "$FUNCNAME()" $@ >&2
+#pwd >&2
   local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local moduleName="$2"
