@@ -98,6 +98,7 @@ prepare_fetch_level () {
   local modulePath="$1"
   local moduleName="$2"
   local levelPath="$3"
+  local wrongRepo=0
 
   pushd "${levelPath}" &>/dev/null
 

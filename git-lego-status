@@ -54,6 +54,9 @@ typeset moduleFilePath
 
 typeset afterDash=()
 typeset stopOptions=0
+
+# TODO add setting 
+typeset doAttainableOptions=0
 #set -x
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
@@ -65,6 +68,13 @@ while [[ -n $1 ]]; do
       ;;
     -v|--verbose)
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
+      ;;
+
+    --attainable|-o)
+      doAttainableOptions=1
+      ;;
+    --no-attainable|-O)
+      doAttainableOptions=0
       ;;
 
     --)
@@ -112,29 +122,37 @@ done
 #
 typeset oneLine
 
-function show_current_module_status {
 
-  managed_or_pinned() {
-    local managedAlias
-    local refinedName
+managed_or_pinned() {
+#echo "$FUNCNAME()" $@ >&2
+  local result=""
+  local refinedName
+  local managedRefname="$2" 
+  local moduleRefname="$3" 
+  local detached="$4"
+
+  if [[ "$detached" > 0 ]]; then
+#    set -x
+    result+=", detached: $moduleRefname"
+  fi
+  
+  if [[ -n "$managedRefname" ]]; then
     case "$1" in
       0)
-        managedAlias+=", managed${managedRefname:+ as $managedRefname}"
+        result+=", managed${managedRefname:+ as $managedRefname}"
         ;;
       1|2)
-        if [[ "$1" == 1 ]]; then
-          refinedName="${managedRefname#refs/tags/}"
-        else
-          refinedName="$managedRefname"
-        fi
-        managedAlias+=", pinned${refinedName:+ to $refinedName}"
+        refinedName="${managedRefname#refs/tags/}"
+        result+=", pinned${refinedName:+ to $refinedName}"
         ;;
     esac
+  fi
 
-    echo "$managedAlias"
-  }
+  echo "$result"
+}
 
 
+function show_current_module_status {
 #echo "$FUNCNAME()" $@ >&2
 #echo "$FUNCNAME(): subRepoPath=$1 subModule=$2 modulePath=$3 refname=$4 reftype=$5 " >&2
 #printf "%s,\n" "${MODULE_STATUS[@]}"
@@ -159,9 +177,7 @@ function show_current_module_status {
   local verboseIssues infoIssues
 
   # gather all additional fine information into $MODULE_STATUS global array
-#  [[ $modulePath == / ]] && set -x
   module_porcelain_status "$modulePath" status
-#  [[ $modulePath == / ]] && set +x
 
   # two below variables are defined to cmd_default()
   (( "${MODULE_STATUS[$MS_DETACHED]}" )) && detached="${MODULE_STATUS[$MS_DETACHED]}"
@@ -203,9 +219,13 @@ function show_current_module_status {
     infoIssues+="${infoIssues:+, }Nx${MODULE_STATUS[$MS_UNTRACKED]}"
   fi
 
+#set -x
   local uninitialized="${MODULE_STATUS[$MS_UNINITIALIZED]}"
   local mismatched="${MODULE_STATUS[$MS_MISMATCHED]}"
   local detached="${MODULE_STATUS[$MS_DETACHED]}"
+#  local unreachable="${MODULE_STATUS[$MS_UNREACHABLE]}"
+#  local dangled="${MODULE_STATUS[$MS_DANGLED]}"
+  local detachedFrom="${MODULE_STATUS[$MS_DETACHED_FROM]}"
   local managedIndex="${MODULE_STATUS[$MS_MANAGED_REFTYPE]}"
   local unmanaged="${MODULE_STATUS[$MS_UNMANAGED]}"
   local managedRefname="${MODULE_STATUS[$MS_MANAGED_REFNAME]}"
@@ -213,72 +233,77 @@ function show_current_module_status {
 
   local ahead="${MODULE_STATUS[$MS_UPSTREAM_AHEAD]}"
   local behind="${MODULE_STATUS[$MS_UPSTREAM_BEHIND]}"
+#set +x
 
   if (( "$uninitialized" )); then
     oneLine+=", not initialized"
 #    verboseMsg+=("The module not initialized yet. 'git-lego init --reconcile' to fix it.")
     if (( ! "$unmanaged" )); then
-      oneLine+=$( managed_or_pinned "$managedIndex" )
+      oneLine+=$( managed_or_pinned "$managedIndex" "$managedRefname" )
       verboseMsg+=("Expected, that module should be initialized to $managedRefname")
     fi
   else    ## of  (( uninitialized ))
-
     if (( ! "$detached" )); then
-      oneLine+=", $moduleRefname${MODULE_STATUS[$MS_UPSTREAM]:+...${MODULE_STATUS[$MS_UPSTREAM]}}"
-      local commits=0
-      if (( "$ahead" )) ; then oneLine+=", $ahead ahead"; commits=1; fi
-      if (( "$behind" )) ; then oneLine+=", $behind behind"; commits=1; fi
-      (( "$commits" )) && oneLine+=" commit(s)"
-  #      (( $commits - 1 )) && oneLine+="s"
+      local upstream="${MODULE_STATUS[$MS_UPSTREAM]}"
+      oneLine+=", $moduleRefname${upstream:+...$upstream}"
     else
-      # TODO compensate git bug where git status --long shows incorrect tag name, if second git checkout tag points to same commit
-      oneLine+=", detached: $moduleRefname"
-      if (( ! "$unmanaged" )) && [[ "$modulePath" != "/" ]]; then
-        oneLine+=$( managed_or_pinned "$managedIndex" )
-      fi
+      oneLine+=$( managed_or_pinned "$managedIndex" "$managedRefname" "$moduleRefname" "$detached")
     fi
 
-    if (( ! "${mismatched:-0}" )) && (( ! "$unmanaged" )) && [[ "$modulePath" != "/" ]]; then
-      oneLine+=", OK"
-    elif (( "${mismatched:-0}" )) && (( "$unmanaged" )) ; then
-      oneLine+=", mismatched, expected: $managedRefname"
-      if (( "$detached" > 0 )); then
-
-        if (( "$ahead" )) ; then oneLine+=", $ahead commit"; (( "$ahead" > 1 )) && oneLine+="s"; oneLine+=" ahead";
-        elif (( "$behind" )) ; then oneLine+=", $behind commit"; (( "$behind" > 1 )) && oneLine+="s"; oneLine+=" behind"; fi
-      fi
-      # TODO verboseMsg
-  #      (( $commits - 1 )) && oneLine+="s"
+#    if [[ -n "$dangled" ]] ; then
+#      oneLine+=", dangled"
+#    fi
+    if [[ -n "$detachedFrom" ]]; then
+      oneLine+=", dangled from $detachedFrom"
     fi
 
     if (( "$unmanaged" )); then
       oneLine+=", unmanaged"
-  #      TODO verboseMsg+=("You need to run either 'git-lego checkout <branch-name>' or 'git-lego init [--reconcile|--pin]' to make those consent.")
+  #      TODO verboseMsg+=("")
+    else
+      if (( ! "${mismatched:-0}" )) && [[ "$modulePath" != "/" ]] ; then
+        oneLine+=", OK"
+      elif (( "${mismatched:-0}" )) ; then
+        oneLine+=", mismatched"
 
-    fi
-
-#    if [[ -n ${MODULE_STATUS[$MS_MANAGED_REFNAME]} ]]; then
-#      oneLine+="${MODULE_STATUS[$MS_MANAGED_REFNAME]:+, expected:${MODULE_STATUS[$MS_MANAGED_REFNAME]}}"
-#      verboseMsg+=("Expected, that module should be initialized to ${MODULE_STATUS[$MS_MANAGED_REFNAME]}")
-#    fi
-
-    local guessedRefnames=()
-    local asWellRefs=()
-    if [[ -n ${MODULE_STATUS[$MS_GUESSED_BRANCHES]} ]]; then
-      guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_BRANCHES]})
-      asWellRefs=()
-      calculate_as_well_refnames "$managedRefname"
-      if (( "${#asWellRefs[@]}" )); then
-        oneLine+=", attainable to: ${asWellRefs[@]}"
+        if (( ! "$detached" )); then
+          oneLine+=", expected: $managedRefname"
+        fi
+        # TODO verboseMsg
       fi
     fi
 
-    if [[ -n ${MODULE_STATUS[$MS_GUESSED_TAGS]} ]]; then
-      guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_TAGS]})
-      asWellRefs=()
-      calculate_as_well_refnames "$managedRefname"
-      if (( "${#asWellRefs[@]}" )); then
-        oneLine+=", pinnable to: ${asWellRefs[@]}"
+    if (( "$ahead" )) ; then
+      oneLine+=", $ahead commit"
+      (( "$ahead" > 1 )) && oneLine+="s"
+      oneLine+=" ahead";
+    fi
+
+    if (( "$behind" )) ; then
+      oneLine+=", $behind commit"
+      (( "$behind" > 1 )) && oneLine+="s"
+      oneLine+=" behind";
+    fi
+
+    if (( "$doAttainableOptions" )); then
+      local guessedRefnames=()
+      local asWellRefs=()
+      if [[ -n ${MODULE_STATUS[$MS_GUESSED_BRANCHES]} ]]; then
+        guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_BRANCHES]})
+        asWellRefs=()
+        calculate_as_well_refnames "$managedRefname"
+        if (( "${#asWellRefs[@]}" )); then
+          oneLine+=", attainable to: ${asWellRefs[@]}"
+        fi
+      fi
+
+      if [[ -n ${MODULE_STATUS[$MS_GUESSED_TAGS]} ]]; then
+        guessedRefnames=(${MODULE_STATUS[$MS_GUESSED_TAGS]})
+        asWellRefs=()
+        calculate_as_well_refnames "$managedRefname"
+        if (( "${#asWellRefs[@]}" )); then
+          oneLine+=", pinnable to: ${asWellRefs[@]}"
+        fi
       fi
     fi
 
@@ -299,12 +324,11 @@ function show_current_module_status {
       fi
     fi
 
-    if (( ${#infoIssues} )) ; then
-      verboseIssues="issues: "$verboseIssues" paths"
+    if (( "${#infoIssues}" )) ; then
+      verboseIssues="issues: $verboseIssues paths"
       verboseMsg+=("$verboseIssues")
-      oneLine+=", dirty: "${infoIssues}
+      oneLine+=", dirty: $infoIssues"
     fi
-
   fi     ##(( $uninitialized ))
 
   verboseMsg[0]=${oneLine}
@@ -346,17 +370,20 @@ function status_level() {
       subRepoPath="$levelPath/$localPath"
 
       pushd "$subRepoPath" &>/dev/null
+      ret=$?
 
-      local modulePath="$3" #/$subModule"
-      [[ ${modulePath:(-1)} != "/" ]] && modulePath+="/"
-      modulePath+="$subModule"
+      if (( ! "$ret" )); then
+        local modulePath="$3" #/$subModule"
+        [[ ${modulePath:(-1)} != "/" ]] && modulePath+="/"
+        modulePath+="$subModule"
 
-      status_level "$subRepoPath" "$subModule" "$modulePath" "$moduleRefname" "$moduleReftype"
-      childRet=$?
-      if [[ ${childRet} > ${ret} ]] ; then
-        ret=${childRet}
+        status_level "$subRepoPath" "$subModule" "$modulePath" "$moduleRefname" "$moduleReftype"
+        childRet=$?
+        if [[ "$childRet" > $ret ]] ; then
+          ret=${childRet}
+        fi
+        popd  &>/dev/null
       fi
-      popd  &>/dev/null
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
 

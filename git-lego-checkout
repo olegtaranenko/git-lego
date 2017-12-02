@@ -163,43 +163,49 @@ fi
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 prepare_checkout_level() {
-#echo "$FUNCNAME()" $@ >&2
+echo "$FUNCNAME()" $@ >&2
   local ret=0
 
   local moduleName="$1"
   local modulePath="$2"
   local levelFilePath="$3"
   local moduleLocalPath="${4:-.}"
+  local wrongRepo=0
 
+set -x
   pushd "$levelFilePath" &>/dev/null
-  module_porcelain_status "$modulePath" "noguess"
+  wrongRepo=$?
+set +x
 
-  if (( "${MODULE_STATUS[$MS_COMMITABLE]}" )) || (( "${MODULE_STATUS[$MS_UNTRACKED]}" )) ; then
-#    if [[ "$modulePath" != "/" ]]; then
+  if (( ! $wrongRepo )); then
+    module_porcelain_status "$modulePath" "noguess"
+
+    if [[ ( "${MODULE_STATUS[$MS_COMMITABLE]}" == 1 || "${MODULE_STATUS[$MS_UNTRACKED]}" == 1 ) && "$doForce" == 0 ]] ; then
       dirtyModules+=("$moduleName")
-#    fi
-    ret=1
+      ret=1
+    fi
+
+    if [ -f .gitmodules ]; then
+      while read -a module; do
+        local subModule="${module[0]}"
+        local localPath="${module[1]}"
+        subRepoPath="$levelFilePath/$localPath"
+
+        local subModulePath="$modulePath"
+        [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
+        subModulePath+="$subModule"
+
+        prepare_checkout_level "$subModule" "$subModulePath" "$subRepoPath" "$localPath"
+        set -x
+        ret=$?
+        (( "$ret" )) && break
+        set +x
+
+      done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+    fi
+
+    popd &>/dev/null
   fi
-
-  if [ -f .gitmodules ]; then
-    while read -a module; do
-      local childRet=0
-      local subModule="${module[0]}"
-      local localPath="${module[1]}"
-      subRepoPath="$levelFilePath/$localPath"
-
-      local subModulePath="$modulePath"
-      [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
-      subModulePath+="$subModule"
-
-      prepare_checkout_level "$subModule" "$subModulePath" "$subRepoPath" "$localPath"
-      childRet=$?
-      (( "$childRet" > "$ret" )) && ret="$childRet"
-
-    done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
-  fi
-
-  popd &>/dev/null
   return "$ret"
 }
 
@@ -218,8 +224,7 @@ cmd_default() {
   local skippedModules=()
   local dirtyModules=()
   local affected=0
-  local vetoed=0
-  ret=0
+  local ret=0
 
   cd "$moduleFilePath"
 
@@ -228,9 +233,9 @@ cmd_default() {
   fi
 
   prepare_checkout_level "$moduleName" "$modulePath" "$moduleFilePath" "$moduleLocalPath"
-  vetoed=$?
+  ret=$?
 
-  if (( ! "$vetoed" )); then
+  if (( ! "$ret" )); then
 
     if [[ "$modulePath" != "/" ]]; then
       pushd "$moduleFilePath" &>/dev/null
@@ -255,7 +260,7 @@ cmd_default() {
         else
           updateManagedRef=1
         fi
-        checkout_level "$refName" "$refType" "$moduleName" "$modulePath" "$moduleFilePath" "$parentRefName" "$parentRefType" "$moduleLocalPath"
+        checkout_level "$refName" "$refType" "$moduleName" "$modulePath" "$moduleFilePath" "$parentRefName" "$parentRefType" "$moduleLocalPath" "$parentFilePath"
         ret=$?
       fi
     fi

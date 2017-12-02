@@ -11,8 +11,6 @@ set +o posix
   #
 #declare ret=0
 
-args=()
-
 ################################ STANDARD BOOTSTRAP CALL ################################
 umbrella_bootstrap
 
@@ -45,28 +43,56 @@ OPTIONS:
 EOF
 }
 
-#echo  "${cwRoot} ${gitDir}"
+typeset args=()
+
 typeset verbose=0
 typeset afterDash=()
 typeset stopOptions=0
-typeset initialPath commitMessage commitTemplate doRecursive=0 reuse
+
+typeset initialPath
+typeset modulePath
+typeset moduleName
+typeset moduleFilePath
+typeset moduleInitialized
+
+typeset doRecursive=0 doForce=0
+typeset doAmend=0
+typeset doForceAmend=0
+typeset warningAmend=()
+typeset commitMessage commitTemplate
 typeset doAppendUntracked=1
+
+typeset messageDefined=0
+typeset messageRequired=1
+typeset allowEmptyMessage=0
 #set -x
 
 ################################ PARAMETERS PARSING ################################
-while [[ -n $1 ]]; do
+while [[ -n "$1" ]]; do
   noAppendArg=0
-  case $1 in
+  case "$1" in
     -h|-\?|--help)
       show_help
       exit
       ;;
     -v|--verbose)
-      verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
+      verbose=$(("$verbose" + 1)) # Each -v argument adds 1 to verbosity.
       ;;
 
-    --)
-      stopOptions=1
+    --amend)
+      doAmend=1
+      args+=("$1")
+      ;;
+
+    --force|-f)
+      doForce=1
+      ;;
+    --no-force)
+      doForce=0
+      ;;
+    -ff)
+      doForce=1
+      doForceAmend=1
       ;;
 
     --recursive|-r)
@@ -76,25 +102,52 @@ while [[ -n $1 ]]; do
       doRecursive=0
       ;;
 
-    -[amFtscC]*)
+    -[amFtscC]+)
       args+=($1)
       #getopts emulation -am...
       lastOption=${1:(-1)}
-      if [[ $lastOption == "m" ]]; then
-        args+=("$2")
-        commitMessage=$2
+      if [[ "$lastOption" == "m" ]]; then
+        args+=("\"$2\"")
+        commitMessage="$2"
+        messageDefined=1
         shift
-      elif [[ $lastOption == "t" ]]; then
+      elif [[ "$lastOption" == "t" ]]; then
         args+=("$2")
-        commitTemplate=$2
+        commitTemplate="$2"
         shift
-      elif [[ $lastOption == "c" || $lastOption == "C"  || $lastOption == "F" ]]; then
+      elif [[ "$lastOption" == "c" || "$lastOption" == "C"  || "$lastOption" == "F" ]]; then
         args+=("$2")
         shift
-#      else
-        # TODO ?? change behaviour for -a|--add option
-        # in umbrella it will add untracked files as well
       fi
+      ;;
+
+    --message)
+      args+=("$1")
+      args+=("\"$2\"")
+      commitMessage="$2"
+      messageDefined=1
+      shift
+      ;;
+    --message=*)
+      commitMessage="${1#*=}"
+      [[ -z "$commitMessage" ]] && messageDefined=0
+      args+=("\"$1\"")
+      ;;
+    --allow-empty-message)
+      messageRequired=0
+      allowEmptyMessage=1
+      ;;
+
+
+    --template)
+      args+=("$1")
+      commitTemplate="$2"
+      shift
+      ;;
+    --template=*)
+      commitTemplate="${1#*=}"
+      [ -z "$commitTemplate" ] && die "template is not given $1"
+      args+=($1)
       ;;
 
     --append-untracked|-u)
@@ -104,28 +157,10 @@ while [[ -n $1 ]]; do
       doAppendUntracked=0
       ;;
 
-    --message)
-      args+=($1)
-      args+=("\"$2\"")
-      commitMessage=$2
-      shift
-      ;;
-    --message=*)
-      commitMessage=${1#*=}
-      [[ -z ${commitMessage} ]] && die "message is not given $1"
-      args+=("\"$1\"")
+    --)
+      stopOptions=1
       ;;
 
-    --template)
-      args+=($1)
-      commitTemplate=$2
-      shift
-      ;;
-    --template=*)
-      commitTemplate=${1#*=}
-      [ -z ${commitTemplate} ] && die "template is not given $1"
-      args+=($1)
-      ;;
     *)
       if (( $stopOptions )); then
         if [[ -z ${1%%-*} ]]; then
@@ -134,7 +169,17 @@ while [[ -n $1 ]]; do
           afterDash+=($1)
         fi
       elif [[ -z ${1%%-*} ]]; then
-        args+=($1)
+        args+=("$1")
+        if (( ! "$messageDefined" )) ; then
+          messageDefined=$( echo "$1" | grep -c m 2>/dev/null )
+          if (( "$messageDefined" )); then
+            shift
+            if [[ -z "$1" ]]; then
+               die "$emptyMsgNotAllowed"
+            fi
+            args+=("\"$1\"")
+          fi
+        fi
       elif [[ -z ${initialPath} ]]; then
         initialPath=$1
       else
@@ -153,102 +198,142 @@ function prepare_commit_level() {
   local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
   local moduleName="$2"
-  local modulePath=$3
+  local modulePath="$3"
 
   local repoBranch
   local ret=0   # return code, 0 - the repo is syncronized
-  local childRet # child return code
+  local ret # child return code
 
-  ## TODO changed params order
-  module_porcelain_status "${modulePath}" commit
+  module_porcelain_status "$modulePath" "commit"
   local applied=1
-  if (( ${MODULE_STATUS[$MS_COMMITABLE]} )); then
-    drop_to_affected ${levelPath}
-    applied=$?
 
-    if (( ! $applied )); then
-      affected=1
-      if [[ -z "$commitMessage" && "$modulePath" != "/" ]]; then
-        onEmptyMessage+="${moduleName}, "
+  if [[ "${MODULE_STATUS[$MS_COMMITABLE]}" == 1 ]]; then
+    if [[ "${MODULE_STATUS[$MS_DETACHED]}" == 0  || "$doForce" == 1 ]]; then
+
+      if (( "$doAmend" )) && (( "${MODULE_STATUS[$MS_UPSTREAM_AHEAD]}" == 0 )) && (( ! "$doForceAmend" )); then
+        warningAmend+=("$moduleName")
+        ret=1
+      else
+        drop_to_affected "$levelPath"
+        applied=$?
+
+        if (( ! "$applied" )); then
+          affectedModules+=("$moduleName")
+#          affected=1
+#          if [[ -z "$commitMessage" && "$modulePath" != "/" ]]; then
+#            onEmptyMessage+="$moduleName, "
+#          fi
+        fi
       fi
+    else
+      warningDetached+=("$moduleName")
     fi
   fi
 
   if (( $applied )); then
-    skippedModules+=(${moduleName})
-  else
-    if [[ -z ${commitMessage} && "$modulePath" != "/" ]]; then
-      onEmptyMessage+="${moduleName}, "
-    fi
+    skippedModules+=("$moduleName")
   fi
-  if [ -f .gitmodules ]; then
+
+  if [ -f .gitmodules ] && (( ! "$ret" )); then
     while read -a module; do
-      childRet=0
       subModule="${module[0]}"
       localPath="${module[1]}"
       subRepoPath="${levelPath}"/"${localPath}"
 
       pushd "${subRepoPath}" &>/dev/null
       local subModulePath="$3" #/$subModule"
-      if [[ ${subModulePath:(-1)} != "/" ]]; then
-        subModulePath+="/"
-      fi
-      subModulePath+="$subModule"
-#      stopMachine=$(( $stopMachine + 1 ))
-#      (( $stopMachine > 2 )) && exit 3
-      prepare_commit_level "${subRepoPath}" "${subModule}" "${subModulePath}"
-      childRet=$?
+      [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
 
-      (( $childRet > $ret )) && ret=${childRet}
+      subModulePath+="$subModule"
+      prepare_commit_level "$subRepoPath" "$subModule" "$subModulePath"
+      ret=$?
+
+      if (( "$ret" )) ; then
+        break
+      fi
       popd  &>/dev/null
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
+
+  return "$ret"
 }
 
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
-  typeset modulePath=$(resolve_module_path "${initialPath}" ".")
 
-  read moduleName moduleFilePath initialized managed < <(module_info "${modulePath}" "name" "path" "initialized" "managed")
-
-  typeset affected=0
+  typeset affectedModules=()
   typeset onEmptyMessage
   typeset skippedModules=()
-  [[ -z "$commitMessage" ]] && onEmptyMessage="commit for ${globals[$G_ROOT_NAME]}, affected modules: "
+  typeset warningDetached=()
+  local ret=0
 
-  if (( "$initialized" )) && (( "$managed" )); then
+#  [[ -z "$commitMessage" ]] && onEmptyMessage="commit for ${globals[$G_ROOT_NAME]}, affected modules: "
 
-    pushd ${moduleFilePath} &>/dev/null
+  if (( "$moduleInitialized" )) ; then
 
-    prepare_commit_level "${moduleFilePath}" "${moduleName}" "${modulePath}"
-    vetoed=$?
+    cd "$moduleFilePath" &>/dev/null
 
-    if (( ! "$vetoed" )); then
-      if (( "$affected" )); then
-        if [[ -z "$commitMessage" && -n "$onEmptyMessage" ]]; then
-          args+=('--message' )
-          args+=(" ${onEmptyMessage:0:(${#onEmptyMessage}-2)})")
+    prepare_commit_level "$moduleFilePath" "$moduleName" "$modulePath"
+    ret=$?
+
+    local backIFS=IFS; IFS=","
+    if (( "${#warningDetached}" )); then
+      cw_echo "To commit detached dirty module(s) use --force option: ${warningDetached[*]}"
+      ret=1
+    fi
+
+    if (( "${#warningAmend}" )); then
+      cw_echo "--amend option should not to be used for module(s): ${warningAmend[*]}"
+      ret=1
+    fi
+    IFS="$backIFS"
+
+    if (( ! "$ret" ))&& (( "${#affectedModules[@]}" )); then
+
+    if (( "$messageRequired" )) && (( ! "$messageDefined" )) && (( ! "$allowEmptyMessage" )); then
+      local editMsgFile="${globals[$G_SCRIPT_TMP_DIRECTORY]}/COMMIT_EDITMSG"
+      eAffected=$( IFS=',' echo "${affectedModules[*]}" )
+
+      cat << EOT >> "$editMsgFile"
+commit via ${0##*/}, affected modules:  $eAffected
+# Lines starting with '#' will be ignored.
+EOT
+
+      git_editor "$editMsgFile"
+      ret=$?
+
+      if (( ! $ret )); then
+        message=$( cat "$editMsgFile" | grep -vE "^#.*$" )
+        if (( ! "${#message}" )); then
+          dieMsg="$emptyMsgNotAllowed"
+          ret=1
+        else
+          echo "$message" > "$editMsgFile"
+          args+=("-F")
+          args+=("$editMsgFile")
         fi
-
-      #cat ${globals[$G_AFFECTED_MODULES]}
-
-        while read -a module; do
-          cd "${module[$MFS_FULL_PATH]}"
-          level_verbose_about_to ${module[@]}
-          (( "$doAppendUntracked" )) && git add . -A
-
-          git commit "${args[@]}"
-        done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
       fi
     fi
 
-    if (( ${#skippedModules} )); then
+      while read -a module; do
+        cd "${module[$MFS_FULL_PATH]}"
+        level_verbose_about_to ${module[@]}
+
+        (( "$doAppendUntracked" )) && git add . -A
+
+        git commit "${args[@]}"
+
+      done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
+    fi
+
+
+    IFS=","
+    if (( "${#skippedModules}" )); then
       cw_echo "Not affected modules: ${skippedModules[*]}"
     fi
 
-    popd &>/dev/null
   fi
   umbrella_finalize
 
-#  exit $ret
+  exit "$ret"
 }

@@ -53,7 +53,6 @@ autoAttain=$(READ_boolean ${autoAttain} 1) # 1 === true
 typeset paramAutoAttain implicitAutoAttain=0
 
 typeset initialPath doRecursive=1 doForce=0
-
 typeset explicitModules=() explicitRefs=() explicitTypes=()
 
 typeset reference referenceType
@@ -414,6 +413,7 @@ attain_level() {
 
   local legoMode="${g_lego_mode}"
   local ret=0
+  local wrongRepo=0
 
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
 
@@ -421,45 +421,49 @@ attain_level() {
   local childRet # sub-lever return code
 
   pushd "$levelPath" &>/dev/null
-  attain_module_mode "$parentName" "$modulePath" "$refName" "$refType"
-  ret=$?
+  wrongRepo=$?
 
-  if (( ! $ret )); then
+  if (( ! $wrongRepo )); then
+    attain_module_mode "$parentName" "$modulePath" "$refName" "$refType"
+    ret=$?
 
-    local detached="${MODULE_STATUS[$MS_DETACHED]}"
-    local refName="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
-    local refType="${G_REFTYPE_TOKENS[$detached]}"
+    if (( ! $ret )); then
 
-    if [ -f .gitmodules ]; then
-      while read -a module; do
-        childRet=0
-        local moduleName="${module[0]}"
-        local localPath="${module[1]}"
-        local subModuleFilePath="$levelPath"/"$localPath"
+      local detached="${MODULE_STATUS[$MS_DETACHED]}"
+      local refName="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
+      local refType="${G_REFTYPE_TOKENS[$detached]}"
 
-        local subModulePath="$modulePath"
-        if [[ ${subModulePath:(-1)} != "/" ]]; then
-          subModulePath+="/"
-        fi
-        subModulePath+="$moduleName"
+      if [ -f .gitmodules ]; then
+        while read -a module; do
+          childRet=0
+          local moduleName="${module[0]}"
+          local localPath="${module[1]}"
+          local subModuleFilePath="$levelPath"/"$localPath"
 
-        local initialized=$( module_info "${subModulePath}" "initialized" )
+          local subModulePath="$modulePath"
+          if [[ ${subModulePath:(-1)} != "/" ]]; then
+            subModulePath+="/"
+          fi
+          subModulePath+="$moduleName"
 
-        if (( $initialized )) ; then
+          local initialized=$( module_info "${subModulePath}" "initialized" )
 
-          attain_level "$moduleName" "$subModuleFilePath" "$subModulePath" "$refName" "$refType"
-          local childRet=$?
+          if (( $initialized )) ; then
 
-          (( "$childRet" > "$ret" )) && ret="$childRet"
-        else
-          ret=1
-          warnMsg="One or more modules are uninitialized!"
-        fi
-      done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+            attain_level "$moduleName" "$subModuleFilePath" "$subModulePath" "$refName" "$refType"
+            local childRet=$?
+
+            (( "$childRet" > "$ret" )) && ret="$childRet"
+          else
+            ret=1
+            warnMsg="One or more modules are uninitialized!"
+          fi
+        done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+      fi
     fi
-  fi
 
-  popd  &>/dev/null
+    popd  &>/dev/null
+  fi
 
   return "$ret"
 }

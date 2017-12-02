@@ -57,6 +57,13 @@ typeset initialPath
 typeset afterDash=()
 typeset stopOptions=0
 typeset fetchBefore=0
+typeset tagOptionGiven=0
+
+typeset doFixDangled=0
+typeset dangledBranch
+typeset dangledModules=()
+typeset tagsModules=()
+typeset legoRemote=${globals[$G_LEGO_REMOTE]}
 #set -x
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
@@ -77,10 +84,18 @@ while [[ -n $1 ]]; do
       doRecursive=0
       ;;
 
-    --fetch|-f)
+    --force|-f)
+      doForce=1
+#      args+=("$1")
+      ;;
+    --no-force)
+      doForce=0
+      ;;
+
+    --fetch)
       fetchBefore=1
       ;;
-    --no-fetch|-F)
+    --no-fetch)
       fetchBefore=0
       ;;
 
@@ -88,6 +103,20 @@ while [[ -n $1 ]]; do
       doRecursive=1
       doForce=1
       args+=("$1")
+      if [[ "$1" == "--tags" ]]; then
+        tagOptionGiven=1
+      fi
+      ;;
+
+    --fix-dangled|-d)
+      doFixDangled=1
+      ;;
+    --no-fix-dangled|-D)
+      doFixDangled=0
+      ;;
+    --fix-dangled=*)
+      dangledBranch="${1#*=}"
+      [[ -z "$dangledBranch" ]] && die "missed branch for dangling fix"
       ;;
 
     --)
@@ -125,8 +154,7 @@ echo "args: ${args[@]}"
 #
 
 function prepare_push_level() {
-echo "$FUNCNAME() $@" >&2
-pwd >&2
+echo "$FUNCNAME() $@" >&2; pwd >&2
 
   local levelPath="$1"
   [[ -z "$levelPath" ]] && panic "$FUNCNAME()... parameter 'path' is required"
@@ -137,7 +165,7 @@ pwd >&2
 
   if (( "$fetchBefore" )); then
     cw_verbose "About to fetch from remote..."
-    if (( "$verbose" == 2 )); then
+    if (( "$verbose" )); then
       git fetch
     else
       git fetch &> /dev/null
@@ -147,25 +175,35 @@ pwd >&2
 
   module_porcelain_status "$modulePath" "push"
 
-  local applied=1
-#  echo "$MODULE_STATUS[@]"
-#  if (( "${MODULE_STATUS[$MS_DETACHED]}" )) && (( ! "$doRecursive" )); then
-#    die "Push is peeled rejected as module '$moduleName' is detached."
-#  el
-#set -x
-  if [[ ("${MODULE_STATUS[$MS_PUSHABLE]}" == 1 || "$doForce" == 1 ) && "${MODULE_STATUS[$MS_DETACHED]}" == 0 ]]; then
-#    currentPushable=1
-    drop_to_affected "$levelPath"
-    applied=$?
-    # 0 means applied, 1 - not
-    # if applied == 1, the module is pushable but not applied - dangerous for upper modules,
-    # they should not be pushed. Otherwise other developers will pull upper module with undefined
-    # commit for submodule
+  local notApplied=1
+set -x
+  local moduleRefname="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
+  local detached="${MODULE_STATUS[$MS_DETACHED]}"
+  
+  local managedRefname="${MODULE_STATUS[$MS_MANAGED_REFNAME]}"
+  local managedReftype="${MODULE_STATUS[$MS_MANAGED_REFTYPE]}"
+  local pushable="${MODULE_STATUS[$MS_UPSTREAM_AHEAD]}"
+  local detachedFrom="${MODULE_STATUS[$MS_DETACHED_FROM]}"
+  
+
+  if [[ "$pushable" > 0  && ("$detached" == 0  || "$doForce" == 1 ) ]]; then
+    if [[ -n "$detachedFrom" && "$detached" > 0 && "$managedReftype" == 1 ]]; then
+      dangledModules+=("$moduleName")
+      tagsModules+=("$moduleName")
+      dangledBranch=${dangledBranch:-__detached__}
+      git checkout -B "$dangledBranch"
+      ret=$?
+      (( ! "$ret" )) && ( git commit -am "advance detached module" ; ret=$? )
+      (( ! "$ret" )) && ( git tag -f "$moduleRefname" ; ret=$? )
+
+    fi
+    (( ! "$ret" )) && drop_to_affected "$levelPath"; notApplied=$?
   fi
 
-  if [[ "$applied" != 0 || "${MODULE_STATUS[$MS_DETACHED]}" != 0 ]]; then
+  if (( "$notApplied" )); then
     skippedModules+=("$moduleName")
   fi
+set +x
 
   if [ -f .gitmodules ] && (( "$doRecursive" )); then
     while read -a module; do
@@ -193,33 +231,57 @@ pwd >&2
 
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
-#  typeset modulePath=$(resolve_module_path "${initialPath}" /)
-#  read moduleName moduleFilePath < <(module_info "${modulePath}" "name" "path")
   typeset skippedModules=()
   typeset affected=0
-  typeset vetoed=0
+  local ret=0
 
 #  set -x
   pushd "$moduleFilePath" &>/dev/null
   prepare_push_level "$moduleFilePath" "$moduleName" "$modulePath"
   ret=$?
-
-  (( $ret )) && vetoed=1
-
+  
   local wasPushed=()
-  if (( ! $vetoed )) ; then
-
+  if (( ! $ret )) ; then
     while read -a module; do
+      local tagsOption
+      moduleName="${module[$MFS_MODULE_NAME]}"
+
       cd "${module[$MFS_FULL_PATH]}"
+
 #        pwd
       level_verbose_about_to "${module[@]}"
-  #    echo "git push ${args[@]} ${#args[@]}"
-      git push "${args[@]}"
-      if (( $? )); then
+
+      if [[ "${#tagsModules[@]}" && "$tagOptionGiven" == 0 ]]; then
+        unset tagsOption
+        for tagsModule in "${tagsModules[@]}"; do
+          if [[ "$tagsModule" == "$moduleName" ]]; then
+            tagsOption="--tags"
+            break
+          fi 
+        done
+      fi
+
+      echo "git push ${args[@]}${tagsOption:+ $tagsOption}"
+      
+      git push "${args[@]}${tagsOption:+ $tagsOption}"
+      ret=$?
+
+      if (( "$ret" )); then
         panic $( pwd )
         panic "Unexpected error 'git push' command"
+      else
+        wasPushed+=("${module[$MFS_MODULE_NAME]}")
+
+        if [[ "${#dangledModules[@]}" ]]; then
+          for dangledModule in "${dangledModules[@]}"; do
+            if [[ "$dangledModule" == "$moduleName" ]]; then
+              git branch -D "$dangledBranch"
+              git remote "${globals[$G_LEGO_REMOTE]}" ":$dangledBranch"
+              break
+            fi 
+          done
+        fi
       fi
-      wasPushed+=("${module[$MFS_MODULE_NAME]}")
     done < <(cat ${globals[$G_AFFECTED_MODULES]}  | (tac 2>/dev/null || tail -r))
   else
     mainWarn="Request to push is rejected. "

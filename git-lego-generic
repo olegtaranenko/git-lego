@@ -91,6 +91,7 @@ generic_level() {
 
   local ret=0   # return code
   local childRet # child return code
+  local wrongRepo=0
 
   shift 3
 
