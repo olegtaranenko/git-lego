@@ -253,7 +253,7 @@ function show_current_module_status {
 #    if [[ -n "$dangled" ]] ; then
 #      oneLine+=", dangled"
 #    fi
-    if [[ -n "$detachedFrom" ]]; then
+    if [[ -n "$detachedFrom" && "${mismatched:-0}" == 1 ]]; then
       oneLine+=", dangled from $detachedFrom"
     fi
 

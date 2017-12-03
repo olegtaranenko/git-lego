@@ -57,8 +57,9 @@ typeset initialPath
 typeset afterDash=()
 typeset stopOptions=0
 typeset fetchBefore=0
-typeset tagOptionGiven=0
+typeset pushAllTags=0
 typeset remoteParam branchParam
+typeset explicitTagName wrongTag=0
 
 typeset doFixDangled=0
 typeset dangledBranch="__detached__"
@@ -67,8 +68,12 @@ typeset dangledRefs=()
 typeset tagsModules=()
 typeset noUpstreamModules=()
 typeset noUpstreamBranches=()
+typeset plainPushModules=()
+typeset remoteExplicitTagModules=()
+
 typeset legoRemote="${globals[$G_LEGO_REMOTE]}"
 ################################ PARAMETERS PARSING ################################
+#set -x
 while [[ -n $1 ]]; do
   (( $stopOptions )) && [[ -z ${1%%-*}  ]] && die "after '--' additional options ($1) are not allowed "
   case $1 in
@@ -105,11 +110,25 @@ while [[ -n $1 ]]; do
     --tags|--mirror)
       doRecursive=1
       doForce=1
-#      args+=("$1")
       if [[ "$1" == "--tags" ]]; then
-        tagOptionGiven=1
+        pushAllTags=1
       fi
       ;;
+
+		--tag)
+			case $2 in
+        '' | -*)
+          wrongTag=1
+          ;;
+        *)
+			    explicitTagName="$2"
+          shift
+          ;;
+			esac
+			;;
+		--tag=*)
+			explicitTagName="${1#--tag=}"
+			;;
 
     --fix-dangled|-d)
       doFixDangled=1
@@ -152,8 +171,15 @@ if [[ -n "$remoteParam" || -n "$branchParam" ]]; then
   die "Parameters possible remote and/or branch not supported by git-lego"
 fi
 
+if (( "$wrongTag" )); then
+  die "Wrong tag name"
+fi
+
+if [[ -n "$explicitTagName" && "$pushAllTags" == 1 ]]; then
+  die "Options --tag=$explicitTagName and --tags are not compatible"
+fi
+
 echo "args: ${args[@]}"
-#set +x
 
 
 ################################ SCRIPT SPECIFIC METHODS ################################
@@ -190,25 +216,30 @@ function prepare_push_level() {
 
   local moduleRefname="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
   local detached="${MODULE_STATUS[$MS_DETACHED]}"
-  
+  local mismatched="${MODULE_STATUS[$MS_MISMATCHED]}"
+
   local managedRefname="${MODULE_STATUS[$MS_MANAGED_REFNAME]}"
   local managedReftype="${MODULE_STATUS[$MS_MANAGED_REFTYPE]}"
   local upstream="${MODULE_STATUS[$MS_UPSTREAM]}"
   local upstreamAhead="${MODULE_STATUS[$MS_UPSTREAM_AHEAD]}"
   local detachedFrom="${MODULE_STATUS[$MS_DETACHED_FROM]}"
 
+  local checkDropAffected=0
+  local tagsAlreadyAdded=0
+
   if [[ -z "$upstream" && "$detached" == 0 ]]; then
     noUpstreamModules+=("$moduleName")
     noUpstreamBranches+=("$moduleRefname")
-
+    checkDropAffected=1
   elif [[ "$upstreamAhead" > 0  && ("$detached" == 0  || "$doForce" == 1 ) ]]; then
-    if [[ -n "$detachedFrom" && "$detached" > 0 && "$managedReftype" == 1 ]]; then
+    checkDropAffected=1
+    if [[ -n "$detachedFrom" && "$detached" > 0 && "$managedReftype" == 1 && "$mismatched" == 1 ]]; then
+      tagsAlreadyAdded=1
       local tagName="${managedRefname#refs/}"
       tagName="${tagName#tags/}"
 
       dangledModules+=("$moduleName")
       dangledRefs+=("$tagName")
-      tagsModules+=("$moduleName")
 
       noUpstreamModules+=("$moduleName")
       noUpstreamBranches+=("$dangledBranch")
@@ -217,13 +248,45 @@ function prepare_push_level() {
       ret=$?
       (( ! "$ret" )) && ( git tag -f "$tagName" ; ret=$? )
     fi
-    if (( ! "$ret" )); then
-      drop_to_affected "$levelPath"
-      notApplied=$?
+  fi
+
+  if (( "$pushAllTags" )); then
+    if (( "$checkDropAffected" )) ; then
+      plainPushModules+=("$moduleName")
+    elif (( ! "$tagsAlreadyAdded" )); then
+      checkDropAffected=1
+    fi
+  elif [[ -n "$explicitTagName" ]]; then
+    local tagRef="refs/tags/$explicitTagName"
+    read -a existsLocal < <( git show-ref --tags | grep -E "\s$tagRef\$" )
+
+    if [[ -n "{$existsLocal[0]}" ]]; then
+      local addToTagsModules=1
+      checkDropAffected=1
+      local remoteTagExists=0
+      read -a existsRemote < <( git ls-remote --tags | grep -E "\s$tagRef\$" )
+
+      if [[ -n "{$existsRemote[0]}" ]]; then
+        if [[ "{$existsRemote[0]}" != "{$existsLocal[0]}" ]]; then
+          remoteTagExists=1
+        else
+          addToTagsModules=0
+        fi
+      fi
+
+      if (( "$addToTagsModules" )); then
+        remoteExplicitTagModules+=("$remoteTagExists")
+        tagsModules+=("$moduleName")
+      fi
     fi
   fi
 
-  if (( ! "$notApplied" )); then
+  if (( ! "$ret" )) && (( "$checkDropAffected" )); then
+    drop_to_affected "$levelPath"
+    notApplied=$?
+  fi
+
+  if (( "$notApplied" )); then
     skippedModules+=("$moduleName")
   fi
 
@@ -258,13 +321,12 @@ cmd_default() {
   local ret=0
   local index
 
-#  set -x
   pushd "$moduleFilePath" &>/dev/null
   prepare_push_level "$moduleFilePath" "$moduleName" "$modulePath"
   ret=$?
   
   local wasPushed=()
-  if (( ! $ret )) ; then
+  if (( ! $ret )) && [ -f ${globals["$G_AFFECTED_MODULES"]} ]; then
     while read -a module; do
       local moreOptions=()
 
@@ -272,7 +334,6 @@ cmd_default() {
 
       cd "${module[$MFS_FULL_PATH]}"
       level_verbose_about_to "${module[@]}"
-
       index=0
       for noUpstreamModule in "${noUpstreamModules[@]}"; do
         if [[ "$noUpstreamModule" == "$moduleName" ]]; then
@@ -284,27 +345,29 @@ cmd_default() {
         index=$(( "$index" + 1 ))
       done
 
-#      if [[ "${#tagsModules[@]}" && "$tagOptionGiven" == 0 ]]; then
-#        unset tagsOption
-#        for tagsModule in "${tagsModules[@]}"; do
-#          if [[ "$tagsModule" == "$moduleName" ]]; then
-#            tagsOption="--tags"
-#            break
-#          fi
-#        done
-#      fi
+      local doPlainPushOption=1
+      if [[ "${#plainPushModules[@]}" > 0 && "$pushAllTags" == 1 ]]; then
+        doPlainPushOption=0
 
+        for plainPushModule in "${plainPushModules[@]}"; do
+          if [[ "$plainPushModule" == "$moduleName" ]]; then
+            doPlainPushOption=1
+            break
+          fi
+        done
+      fi
+
+      if (( "$doPlainPushOption" )); then
 #      echo "git push ${args[@]} ${moreOptions[@]}"
-
-      git push ${args[@]} ${moreOptions[@]}
-      ret=$?
+        git push ${args[@]} ${moreOptions[@]}
+        ret=$?
+      fi
 
       if (( "$ret" )); then
         pwd >&2
         panic "'git push ${args[@]} ${moreOptions[@]}' failed"
       else
         wasPushed+=("${module[$MFS_MODULE_NAME]}")
-        local tagsArePushed=0
         if (( "${#dangledModules[@]}" )) ; then
           index=0
           for dangledModule in "${dangledModules[@]}"; do
@@ -312,29 +375,42 @@ cmd_default() {
               local tagName="${dangledRefs[$index]}"
               git checkout "$tagName"
               git push "$legoRemote" ":$tagName"
-              git push "$legoRemote" --tags
+              git push "$legoRemote" "$tagName"
               git branch -D "$dangledBranch"
               git push "$legoRemote" ":$dangledBranch"
-              tagsArePushed=1
               break
             fi
             index=$(( "$index" + 1 ))
           done
         fi
-        if (( ! "$tagsArePushed" )) && (( "$tagOptionGiven" )); then
+        if (( "$pushAllTags" )); then
           git push "$legoRemote" --tags
+        else
+          index=0
+          if (( "${#tagsModules[@]}" )) ; then
+            for tagModule in "${tagsModules[@]}"; do
+              if [[ "$tagModule" == "$moduleName" ]]; then
+                local remoteExists="${remoteExplicitTagModules[$index]}"
+                if (( "$remoteExists" )); then
+                  git push "$legoRemote" ":$explicitTagName"
+                fi
+                git push "$legoRemote" "$explicitTagName"
+                break
+              fi
+              index=$(( "$index" + 1 ))
+            done
+          fi
         fi
-
       fi
     done < <(cat ${globals[$G_AFFECTED_MODULES]}  | (tac 2>/dev/null || tail -r))
-  else
-    mainWarn="Request to push is rejected. "
-    (( "$verbose" )) && mainWarn+="Use '${FLAGS_PREFIX} -v' to figure out the reason."
-    (( 1 == "$verbose" )) && mainWarn+="'${FLAGS_PREFIX} -v -v' to get more detailed information."
-
-    cw_echo  "$mainWarn" \
-    "Some mutual dependent repositories will not be pushed, but required." \
-    "Pushing at current state will break consistence of modules hierarchy."
+#  else
+#    mainWarn="Request to push is rejected. "
+#    (( "$verbose" )) && mainWarn+="Use '${FLAGS_PREFIX} -v' to figure out the reason."
+#    (( 1 == "$verbose" )) && mainWarn+="'${FLAGS_PREFIX} -v -v' to get more detailed information."
+#
+#    cw_echo  "$mainWarn" \
+#    "Some mutual dependent repositories will not be pushed, but required." \
+#    "Pushing at current state will break consistence of modules hierarchy."
   fi
 
   if (( ! "${#wasPushed[@]}" )); then

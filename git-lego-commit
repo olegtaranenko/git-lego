@@ -317,7 +317,7 @@ EOT
         fi
       fi
 
-cat ${globals[$G_AFFECTED_MODULES]} >&2
+#cat ${globals[$G_AFFECTED_MODULES]} >&2
 
       while read -a module; do
         cd "${module[$MFS_FULL_PATH]}"

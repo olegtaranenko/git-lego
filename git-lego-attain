@@ -62,6 +62,7 @@ typeset warnDoForce=()
 
 typeset BAD_EXPLICIT_PARAM="Wrong format of explicit module -> reference parameter."
 typeset WRONG_FORMAT_REF="Wrong format of explicit reference"
+#set -x
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
   noAppendArg=0
@@ -200,7 +201,7 @@ while [[ -n $1 ]]; do
     unset reference
   fi
 done
-
+#set +x
 
 if (( ${#explicitModules[@]} )); then
   modulesLen=${#explicitModules[@]}
@@ -340,18 +341,16 @@ echo "$FUNCNAME()" $@ >&2;pwd >&2
   local uninitialized="${MODULE_STATUS[$MS_UNINITIALIZED]}"
   local unmanaged="${MODULE_STATUS[$MS_UNMANAGED]}"
 
-  local alreadyAttained=0
+  local attainable=0
 
   if [[ "$uninitialized" == 0 && "$unmanaged" == 0 ]]; then
-    alreadyAttained=1
+    attainable=1
   fi
-
   read affected explicitRef explicitType < <( is_module_attainable "$@" )
   ret=$?
-
-#  set -x
+#  echo "affected" "$affected" "explicitRef" "$explicitRef" "explicitType" "$explicitType"
   if (( ! "$ret" )) ; then
-    if (( "$affected" )) && [[ "$alreadyAttained" == 1 || "$doForce" == 1 ]] ; then
+    if (( "$affected" )) && [[ "$attainable" == 1 || "$doForce" == 1 ]] ; then
       if [[ "$modulePath" != "/" && "$uninitialized" != 1 ]]; then
 
         if [[ -n "$explicitRef" && -n "$explicitType" ]]; then
@@ -390,7 +389,7 @@ echo "$FUNCNAME()" $@ >&2;pwd >&2
       if [[ "$modulePath" != "/" ]]; then
         cw_echo "Module $moduleName skipped"
 
-        if (( "$alreadyAttained" )) && (( "$affected" )); then
+        if (( "$attainable" )) && (( "$affected" )); then
           warnDoForce+=("$moduleName")
         fi
       fi
@@ -425,7 +424,7 @@ echo "$FUNCNAME()" $@ >&2
   if (( ! $wrongRepo )); then
     attain_module_mode "$parentName" "$modulePath" "$refName" "$refType"
     ret=$?
-    if (( ! $ret )); then
+    if (( ! $ret )) && (( "$doRecursive" )); then
 
       local detached="${MODULE_STATUS[$MS_DETACHED]}"
       local refName="${MODULE_STATUS[$MS_MODULE_REFNAME]}"

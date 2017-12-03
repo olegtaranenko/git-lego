@@ -163,7 +163,7 @@ fi
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 prepare_checkout_level() {
-echo "$FUNCNAME()" $@ >&2
+#echo "$FUNCNAME()" $@ >&2
   local ret=0
 
   local moduleName="$1"

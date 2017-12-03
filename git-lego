@@ -1475,10 +1475,6 @@ function module_porcelain_status() {
     fi
 
   fi
-if [[ $1 == "/viatra" ]]; then
-  set +x
-fi
-#  echo "$FUNCNAME(): ${MODULE_STATUS[@]}"
 }
 
 
