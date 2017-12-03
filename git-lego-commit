@@ -107,7 +107,7 @@ while [[ -n "$1" ]]; do
       #getopts emulation -am...
       lastOption=${1:(-1)}
       if [[ "$lastOption" == "m" ]]; then
-        args+=("\"$2\"")
+        args+=("$2")
         commitMessage="$2"
         messageDefined=1
         shift
@@ -123,15 +123,16 @@ while [[ -n "$1" ]]; do
 
     --message)
       args+=("$1")
-      args+=("\"$2\"")
+      args+=("$2")
       commitMessage="$2"
       messageDefined=1
       shift
       ;;
     --message=*)
       commitMessage="${1#*=}"
-      [[ -z "$commitMessage" ]] && messageDefined=0
-      args+=("\"$1\"")
+      messageDefined=1
+      (( ! "$#commitMessage" )) && messageDefined=0
+      args+=("$1")
       ;;
     --allow-empty-message)
       messageRequired=0
@@ -177,7 +178,7 @@ while [[ -n "$1" ]]; do
             if [[ -z "$1" ]]; then
                die "$emptyMsgNotAllowed"
             fi
-            args+=("\"$1\"")
+            args+=("$1")
           fi
         fi
       elif [[ -z ${initialPath} ]]; then
@@ -276,7 +277,7 @@ cmd_default() {
     prepare_commit_level "$moduleFilePath" "$moduleName" "$modulePath"
     ret=$?
 
-    local backIFS=IFS; IFS=","
+    local backIFS="$IFS"; IFS=","
     if (( "${#warningDetached}" )); then
       cw_echo "To commit detached dirty module(s) use --force option: ${warningDetached[*]}"
       ret=1
@@ -286,43 +287,46 @@ cmd_default() {
       cw_echo "--amend option should not to be used for module(s): ${warningAmend[*]}"
       ret=1
     fi
+    local eAffected="${affectedModules[*]}"
+
     IFS="$backIFS"
 
     if (( ! "$ret" ))&& (( "${#affectedModules[@]}" )); then
 
-    if (( "$messageRequired" )) && (( ! "$messageDefined" )) && (( ! "$allowEmptyMessage" )); then
-      local editMsgFile="${globals[$G_SCRIPT_TMP_DIRECTORY]}/COMMIT_EDITMSG"
-      eAffected=$( IFS=',' echo "${affectedModules[*]}" )
+      if (( "$messageRequired" )) && (( ! "$messageDefined" )) && (( ! "$allowEmptyMessage" )); then
+        local editMsgFile="${globals[$G_SCRIPT_TMP_DIRECTORY]}/COMMIT_EDITMSG"
 
-      cat << EOT >> "$editMsgFile"
+        cat << EOT >> "$editMsgFile"
 commit via ${0##*/}, affected modules:  $eAffected
 # Lines starting with '#' will be ignored.
 EOT
 
-      git_editor "$editMsgFile"
-      ret=$?
+        git_editor "$editMsgFile"
+        ret=$?
 
-      if (( ! $ret )); then
-        message=$( cat "$editMsgFile" | grep -vE "^#.*$" )
-        if (( ! "${#message}" )); then
-          dieMsg="$emptyMsgNotAllowed"
-          ret=1
-        else
-          echo "$message" > "$editMsgFile"
-          args+=("-F")
-          args+=("$editMsgFile")
+        if (( ! $ret )); then
+          message=$( cat "$editMsgFile" | grep -vE "^#.*$" )
+          if (( ! "${#message}" )); then
+            dieMsg="$emptyMsgNotAllowed"
+            ret=1
+          else
+            echo "$message" > "$editMsgFile"
+            args+=("-F")
+            args+=("$editMsgFile")
+          fi
         fi
       fi
-    fi
+
+cat ${globals[$G_AFFECTED_MODULES]} >&2
 
       while read -a module; do
         cd "${module[$MFS_FULL_PATH]}"
         level_verbose_about_to ${module[@]}
 
         (( "$doAppendUntracked" )) && git add . -A
-
+set -x
         git commit "${args[@]}"
-
+set +x
       done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
     fi
 

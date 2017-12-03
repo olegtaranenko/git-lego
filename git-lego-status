@@ -56,7 +56,7 @@ typeset afterDash=()
 typeset stopOptions=0
 
 # TODO add setting 
-typeset doAttainableOptions=0
+typeset doHintOptions=0
 #set -x
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
@@ -70,11 +70,11 @@ while [[ -n $1 ]]; do
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
       ;;
 
-    --attainable|-o)
-      doAttainableOptions=1
+    --hint|-t)
+      doHintOptions=1
       ;;
-    --no-attainable|-O)
-      doAttainableOptions=0
+    --no-hint|-T)
+      doHintOptions=0
       ;;
 
     --)
@@ -285,7 +285,7 @@ function show_current_module_status {
       oneLine+=" behind";
     fi
 
-    if (( "$doAttainableOptions" )); then
+    if (( "$doHintOptions" )); then
       local guessedRefnames=()
       local asWellRefs=()
       if [[ -n ${MODULE_STATUS[$MS_GUESSED_BRANCHES]} ]]; then

@@ -172,10 +172,8 @@ echo "$FUNCNAME()" $@ >&2
   local moduleLocalPath="${4:-.}"
   local wrongRepo=0
 
-set -x
   pushd "$levelFilePath" &>/dev/null
   wrongRepo=$?
-set +x
 
   if (( ! $wrongRepo )); then
     module_porcelain_status "$modulePath" "noguess"
@@ -192,14 +190,12 @@ set +x
         subRepoPath="$levelFilePath/$localPath"
 
         local subModulePath="$modulePath"
-        [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
+        [[ "${subModulePath:(-1)}" != "/" ]] && subModulePath+="/"
         subModulePath+="$subModule"
 
         prepare_checkout_level "$subModule" "$subModulePath" "$subRepoPath" "$localPath"
-        set -x
         ret=$?
         (( "$ret" )) && break
-        set +x
 
       done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
     fi
@@ -251,7 +247,6 @@ cmd_default() {
     if (( ! $ret )); then
       read refName refType isExists distinctRefName fullRefname < <( evaluate_refname "$revision" "1")
       ret=$?
-
       if (( ! $ret )) && (( ! "${isExists:-0}" )); then
         die "Incorrect revision '$revision' in module '$moduleName'"
       else

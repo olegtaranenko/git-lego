@@ -1279,7 +1279,7 @@ typeset MODULE_STATUS=()
 #
 function module_porcelain_status() {
 #echo "$FUNCNAME()" $@ >&2 ; pwd >&2
-#if [[ $1 == "/macosx" ]]; then
+#if [[ $1 == "/viatra" ]]; then
 #  set -x
 #fi
 #  local remoteInteraction=0
@@ -1475,9 +1475,9 @@ function module_porcelain_status() {
     fi
 
   fi
-#if [[ $1 == "/macosx" ]]; then
-#  set +x
-#fi
+if [[ $1 == "/viatra" ]]; then
+  set +x
+fi
 #  echo "$FUNCNAME(): ${MODULE_STATUS[@]}"
 }
 
@@ -2706,11 +2706,7 @@ check_ambiguous_lego_mode() {
 #   doForce
 #
 checkout_level () {
-#echo "$FUNCNAME()" $@ >&2
-#pwd >&2
-#if [[ $4 == "//ext/packages/icomoon" ]]; then
-#  set -x
-#fi
+#echo "$FUNCNAME()" $@ >&2; pwd >&2
 
   local ret=0
 
@@ -2783,13 +2779,15 @@ checkout_level () {
 
   if [[ "$initialized" == 1 ]]; then
 
+    # TODO in rare situation checkout reference is missed in the repo, ie. removed tag, etc
+    local missedReference=0
     if [[ -n "$checkoutRef" && "$checkoutRef" != "-" && "$attainOnCheckout" == 1 ]]; then
-      read revision refType < <( evaluate_refname "$checkoutRef" )
+      read revision refType  < <( evaluate_refname "$checkoutRef" )
       ret=$?
+      [[ "$revision" == "$NA" ]] && missedReference=1
     fi
 
-
-    if [[ "$revision" != "-" && "$ret" == 0 && "$attainOnCheckout" == 1 ]]; then
+    if [[ "$revision" != "-" && "$ret" == 0 && "$attainOnCheckout" == 1 && "$missedReference" == 0 ]]; then
       blobRevision=$( get_blob_revision "$revision" "$refType")
       ret=$?
     fi
@@ -2876,6 +2874,8 @@ checkout_level () {
       fi
       moduleIndex=$(( $moduleIndex + 1 ))
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+
+
     if (( ! $noSubmodules )); then
       moduleIndex=0
       local pathAfter pathBefore
@@ -2964,7 +2964,6 @@ checkout_level () {
             if [[ "$legoMode" != "versioned" ]]; then
               legoMode="solo"
             fi
-
             persist_attain_hint "0" "$moduleName" "$revision" "$refType" "$legoMode"
             ret=$?
           fi

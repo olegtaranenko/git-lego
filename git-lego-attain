@@ -318,8 +318,7 @@ is_module_attainable() {
 
 
 attain_module_mode() {
-#echo "$FUNCNAME()" $@ >&2
-#pwd >&2
+echo "$FUNCNAME()" $@ >&2;pwd >&2
   local moduleName="$1"
   local modulePath="$2"
   local parentRefName="$3"
@@ -404,7 +403,7 @@ attain_module_mode() {
 
 
 attain_level() {
-#echo "$FUNCNAME()" $@ >&2
+echo "$FUNCNAME()" $@ >&2
   local parentName="$1"
   local levelPath="$2"
   local modulePath="$3"
@@ -426,7 +425,6 @@ attain_level() {
   if (( ! $wrongRepo )); then
     attain_module_mode "$parentName" "$modulePath" "$refName" "$refType"
     ret=$?
-
     if (( ! $ret )); then
 
       local detached="${MODULE_STATUS[$MS_DETACHED]}"
