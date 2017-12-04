@@ -324,9 +324,9 @@ EOT
         level_verbose_about_to ${module[@]}
 
         (( "$doAppendUntracked" )) && git add . -A
-set -x
+#set -x
         git commit "${args[@]}"
-set +x
+#set +x
       done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
     fi
 
