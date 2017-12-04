@@ -352,7 +352,9 @@ function status_level() {
   local repoBranch
   local ret=0   # return code, 0 - the repo is synchronized
   local childRet # child return code
-
+#if [[ $modulePath == /ext ]]; then
+#set -x
+#fi
   drop_to_affected ${levelPath}
 
   (( ! $? )) && show_current_module_status "$@"

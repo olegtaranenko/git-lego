@@ -118,30 +118,31 @@ EOT
 
 fi
 
-exit
-SCRIPT_DIR=$( dirname $0 )
-GL_PROFILE=~/$SCRIPT_DIR/.profile
 
-(( $verbose )) && echo "profile='${PROFILE}'"
+INSTALL_SCRIPT_DIR=$( dirname $0 )
+cd $INSTALL_SCRIPT_DIR/..
+GL_BIN=$( pwd )
+
 if [[ -e ${PROFILE} ]] || (( $doForce )); then
-  env | grep -s GLORK_HOME > /dev/null
-  if (( ! $? )); then
-    echo "GLORK_HOME environment is already installed to '$GLORK_HOME'" >&2
-  else
-    echo "GLORK_HOME environment is not installed" >&2
-    echo "export GLORK_HOME=~/consistentwork" >> ${PROFILE}
+  if [[ "$doForce" == 1 && -z $PROFILE ]]; then
+    PROFILE="~/.profile"
   fi
-  echo $PATH | grep -E -o -q "$SCRIPT_DIR" > /dev/null
-  if (( $? )); then
-    cat << EOF >> ${PROFILE}
-
-if [[ -d ~/$SCRIPT_DIR && -f ${GL_PROFILE} ]]; then
-  . ${GL_PROFILE}
-fi
-EOF
-
+  echo "Updating profile='${PROFILE}' ... " >&2
+#  env | grep -s GIT_LEGO_HOME > /dev/null
+#  if (( ! $? )); then
+#    echo "GIT_LEGO_HOME environment is already installed to '$GIT_LEGO_HOME'" >&2
+#  else
+#    echo "GIT_LEGO_HOME environment is not installed" >&2
+#    echo "export GIT_LEGO_HOME=$GL_BIN" >> ${PROFILE}
+#  fi
+  alreadyExists=$( echo $PATH | grep -o "$GL_BIN" )
+  if [[ -z "$alreadyExists" ]]; then
+    echo "Update PATH variable to $PROFILE" >&2
+    cat << EOT >> ${PROFILE}
+export PATH="$GL_BIN:\$PATH"
+EOT
   else
-    (( $verbose )) && echo "PATH already in order" >&2
+    echo "Looks like git-lego environment installed int PATH already in $alreadyExists" >&2
   fi
 else
   printf "${PROFILE} not exists. \nTry '${0##*/} --force' to create a bash profile file \nor '${0##*/} --help' for more information\n" >&2
