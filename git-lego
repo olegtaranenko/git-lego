@@ -93,6 +93,10 @@ G_ROOT_DETACHED=8
 
 G_LEGO_MODE=9
 G_LEGO_MODE_IMPLICIT=10
+  # mac or win bash or linux...
+G_PLATFORM=11
+  # optimization for path conversion Win <-> (*)nux
+G_WIN_PATH_PREFIX=12
 
 #################### CONSTANTS for MODULE STATUS (see function module_porcelain_status() ####################
 #
@@ -215,6 +219,65 @@ typeset skipSplash=1
 # warning if message is empty for commit/tag
 typeset emptyMsgNotAllowed="Empty message not allowed"
 
+typeset G_WIN_PREFIX
+declare unameParts=$( uname -s )
+declare platform
+case $unameParts in
+  MINGW*)
+    platform="W"
+    declare -l topLevel=$( git rev-parse --show-toplevel | grep -o -E "^[A-Z]:" )
+    if [[ -z "$topLevel" ]]; then
+      G_WIN_PREFIX="/"
+    else
+      G_WIN_PREFIX="/${topLevel:0:1}"
+    fi
+    show_toplevel() {
+      local ret=0
+      local result=$( git rev-parse --show-toplevel )
+      ret=$?
+      if (( ! "$ret" )); then
+        result=$( echo "$result" | sed -e 's,\\,/,g');
+        ret=$?
+      fi
+      (( ! "$ret" )) && echo "${G_WIN_PREFIX}${result:2}"
+      return "$ret"
+    }
+    git_dir() {
+      local ret=0 exists
+      local result=$( git rev-parse --git-dir ); ret=$?
+      if (( ! "$ret" )); then
+        exists=$( echo "$result" | grep -o -E "^[A-Z]:" )
+      fi
+      if (( ! "$ret" )) && [[ -n "$exists" ]]; then
+        result=$( echo "$result" | sed -e 's,\\,/,g' )
+        ret=$?
+        (( ! "$ret" )) && echo "${G_WIN_PREFIX}${result:2}"
+      else
+        echo "$result"
+      fi
+      return "$ret"
+    }
+    ;;
+  Darwin*)
+    show_toplevel() {
+      local ret=0
+      local result=$( git rev-parse --show-toplevel 2>/dev/null )
+      ret=$?
+      echo "$result"
+      return "$ret"
+    }
+    git_dir() {
+      local ret=0
+      local result=$( git rev-parse --git-dir 2>/dev/null )
+      ret=$?
+      echo "$result"
+      return "$ret"
+    }
+    platform="M"
+    ;;
+esac
+globals["$G_PLATFORM"]=platform
+
 umbrella_bootstrap() {
   local legoRemote=$(get_lego_setting "remote")
   local gitDir
@@ -226,13 +289,13 @@ umbrella_bootstrap() {
 
   _m_not_git_repository; (( $? )) && exit 1
 
-  gitDir=$(git rev-parse --git-dir)
+  gitDir=$(git_dir)
   normalizedGitDir=${gitDir##*/}
   if [[ ${normalizedGitDir} == ".git" ]]; then
-    umbrellaRepoDir=$(git rev-parse --show-toplevel)
+    umbrellaRepoDir=$(show_toplevel)
   else
     pushd "${gitDir%%/.git/*}"  &>/dev/null
-    umbrellaRepoDir=$(git rev-parse --show-toplevel)
+    umbrellaRepoDir=$(show_toplevel)
     popd  &>/dev/null
   fi
 
@@ -738,7 +801,7 @@ function get_repo_name_from_path() {
 
 function get_repo_git_dir() {
   [[ -n "$1" && "$1" != "." ]] && pushd $1 &>/dev/null
-  local url=$(git rev-parse --git-dir)
+  local url=$(git_dir)
   [[ -n "$1" && "$1" != "." ]] && popd  &>/dev/null
   echo "$url"
 }
@@ -1493,8 +1556,8 @@ ref_type_index() {
 
 
 function module_up() {
-  cd $(git rev-parse --show-toplevel)"/.."
-  cd $(git rev-parse --show-toplevel)
+  cd $(show_toplevel)"/.."
+  cd $(show_toplevel)
 }
 
 
@@ -2118,7 +2181,7 @@ function _m_down() {
   ## just like Unix pwd, but for modules hierarchy
   #
 function _m_pwd() {
-  local path=$( git rev-parse --show-toplevel )
+  local path=$( show_toplevel )
   local doCd="$1"
   if (( "$doCd" )); then
     cd "$path"
@@ -2129,8 +2192,7 @@ function _m_pwd() {
 
 
 function _m_git_dir() {
-  local url=$( git rev-parse --git-dir 2>/dev/null )
-  echo "$url"
+  echo $( git_dir)
 }
 
 
@@ -2141,7 +2203,7 @@ function _m_root() {
   local root
 
   if [[ ${rootGitDir} == ".git" ]]; then
-    root=$(git rev-parse --show-toplevel)
+    root=$(show_toplevel)
   else
     root="${gitDir%%/.git/*}"  > /dev/null
   fi
@@ -2569,7 +2631,21 @@ get_blob_revision() {
     git rev-parse --no-revs "tags/$levelRevision"
     local isTag=$?
     if (( ! "$isTag" )) ; then
-      blobRevision="tags/$levelRevision"
+    #
+    # Workaround of bug
+    #
+    # .
+    # $ git cat-file -s --allow-unknown-type tags//extjs-6.5.2:.gitmodules
+    # fatal: Not a valid object name tags\\extjs-6.5.2;.gitmodules
+    #
+    # This bug prevents to define tag and branch with same name
+    #
+    # Same for git config
+    # $ git config --blob heads/master:.gitmodules submodule.icomoon.url
+    # error: unable to resolve config blob 'heads\master;.gitmodules'
+    #
+      blobRevision="$levelRevision"
+#      blobRevision="tags/$levelRevision"
     fi
   fi
   echo "$blobRevision"
