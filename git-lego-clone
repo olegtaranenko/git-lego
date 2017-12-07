@@ -145,7 +145,7 @@ cmd_default() {
   if [[ -z "$repoPath" ]]; then
     while read -d $'\0' fn; do
       lsBefore+=("$fn")
-    done < <( find . -type d -maxdepth 1 -print0 )
+    done < <( find . -maxdepth 1 -type d -print0 )
   fi
   echo "${lsBefore[@]}"
 
@@ -173,9 +173,8 @@ cmd_default() {
         break
       fi
 
-    done < <(find . -type d -maxdepth 1 -print0 )
+    done < <(find . -maxdepth 1 -type d -print0 )
   fi
-
 
   cd "$repoPath"
 

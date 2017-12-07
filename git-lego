@@ -300,7 +300,7 @@ umbrella_bootstrap() {
   fi
 
 #  rm ${cwTmpSubmodules} &>/dev/null
-  pushd ${umbrellaRepoDir} &>/dev/null
+  pushd "$umbrellaRepoDir" &>/dev/null
 
 
 #  local remoteOrigin=$(git remote show)
