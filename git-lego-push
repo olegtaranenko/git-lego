@@ -342,7 +342,7 @@ cmd_default() {
           moreOptions+=("$branch")
           break
         fi
-        index=$(( "$index" + 1 ))
+        index=$(( $index + 1 ))
       done
 
       local doPlainPushOption=1
@@ -380,7 +380,7 @@ cmd_default() {
               git push "$legoRemote" ":$dangledBranch"
               break
             fi
-            index=$(( "$index" + 1 ))
+            index=$(( $index + 1 ))
           done
         fi
         if (( "$pushAllTags" )); then
@@ -397,7 +397,7 @@ cmd_default() {
                 git push "$legoRemote" "$explicitTagName"
                 break
               fi
-              index=$(( "$index" + 1 ))
+              index=$(( $index + 1 ))
             done
           fi
         fi

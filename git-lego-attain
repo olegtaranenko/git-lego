@@ -215,7 +215,7 @@ if (( ${#explicitModules[@]} )); then
     if [[ "$refsLen" > "$modulesLen" ]]; then
       total="$refsLen"
     fi
-    while [[ "$index" < "$total" ]]; do
+    while [[ $index < $total ]]; do
 #      if [[ -z ${explicitModules[@]} ]]; then
 #      fi
       index=$(( $index + 1 ))

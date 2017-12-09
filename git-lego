@@ -1070,7 +1070,7 @@ update_module_cache() {
       ret=0
       break
     fi
-    index=$(( "$index" + 1 ))
+    index=$(( $index + 1 ))
   done
 
   if (( ! "$ret" )); then
@@ -1101,7 +1101,7 @@ function module_info () {
       ret=0
       break
     fi
-    index=$(( "$index" + 1 ))
+    index=$(( $index + 1 ))
   done
 
 
@@ -1548,10 +1548,10 @@ ref_type_index() {
     if [[ "$reftype" == "$managedReftype" ]]; then
       break
     fi
-    index=$(( "$index" + 1 ))
+    index=$(( $index + 1 ))
   done
 
-  echo "$index"
+  echo $index
 }
 
 
@@ -2356,11 +2356,11 @@ clean_module_meta_mask() {
 
   local index=0
   for mode in ${G_LEGO_MODES[@]}; do
-    local bitIndex=$((1 << "$index"))
+    local bitIndex=$((1 << $index))
     if (( $bitIndex & $legoModesMask )); then
       clean_module_meta_mode "$mode" "$moduleName" "$worktree"
     fi
-    index=$(( "$index" + 1))
+    index=$(( $index + 1))
   done
 }
 
@@ -3201,7 +3201,7 @@ global_parse_args() {
       ;;
     esac
     shift;
-    index=$(( "$index" + 1 ))
+    index=$(( $index + 1 ))
   done
 
   if [[ -z "$SUBCOMMAND" ]]; then
