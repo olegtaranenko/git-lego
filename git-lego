@@ -1030,7 +1030,7 @@ function resolve_module_path() {
             (( $? )) && die_cant_resolve "$1" "$quiet"
           ;;
         esac
-        partIndex=$(( "$partIndex" + 1 ))
+        partIndex=$(( $partIndex + 1 ))
       done
     fi
   fi
@@ -1703,16 +1703,6 @@ persist_attain_hint() {
   local ret=0
   local fullRefName="$refName"
 
-  # currently checkout repository to tag or sha reference will not affect to last reflog entry
-  # Last reflog entry is responsible to show 'git show --long' output, if repo is detached
-  # Not clear this is a bug in git core or intended behaviour, currently git version 2.14.2
-  # TODO instead of git checkout add new entry to reflog ?? issues with old git version ??
-  if (( "$doApply" )); then
-    cw_echo "About to update $moduleName to $refName..."
-    git checkout "$refName"
-    ret=$?
-  fi
-
   if (( "$ret" )); then
     dieMsg="$FUNCNAME(): unexpected error by 'git checkout $refName'"
   else
@@ -1735,23 +1725,23 @@ persist_attain_hint() {
       pinned)
         case "$refName" in
           refs/remotes/$remote/*)
-            refType=remote
+#            refType=remote
             # nothing
             ;;
           remotes/$remote/*)
-            refType=remote
+#            refType=remote
             fullRefName="refs/$refName"
             ;;
           $remote/*)
-            refType=remote
+#            refType=remote
             fullRefName="refs/remotes/$refName"
             ;;
           tags/*)
-            refType=tag
+#            refType=tag
             fullRefName="refs/$refName"
             ;;
           *)
-            refType=tag
+#            refType=tag
             fullRefName="refs/tags/$refName"
             ;;
         esac
@@ -1761,6 +1751,21 @@ persist_attain_hint() {
         refType=commit
         ;;
     esac
+
+    # currently checkout repository to tag or sha reference will not affect to last reflog entry
+    # Last reflog entry is responsible to show 'git show --long' output, if repo is detached
+    # Not clear this is a bug in git core or intended behaviour, currently git version 2.14.2
+    # TODO instead of git checkout add new entry to reflog ?? issues with old git version ??
+    if (( "$doApply" )); then
+      local attainRefName="$refName"
+      if [[ "$refType" != "branch"  ]]; then
+        refName="$fullRefName"
+      fi
+      cw_echo "About to update $moduleName to $attainRefName..."
+      git checkout "$attainRefName"
+      ret=$?
+    fi
+
     cw_echo "Module '$moduleName' is attained to $refName $refType"
     set_module_meta_mode "refname" "$fullRefName" "$section" ".." "$mode"
   fi
@@ -2717,42 +2722,17 @@ investigate_lego_mode() {
   local moduleFilePath="${1:-.}"
   local headed
 
-
-#  pushd ${moduleFilePath} &>/dev/null
-
-  local fullRefname=$( git rev-parse --symbolic-full-name HEAD 2>/dev/null )
-#  case "${fullRefname}" in
-#    HEAD|'')
-#      mode="detached"
-#      globals[$G_ROOT_REF]=$( git rev-parse --short HEAD 2>/dev/null )
-#      globals[$G_ROOT_DETACHED]=1
-#      ;;
-#    *)
-#      globals[$G_ROOT_REF]=${fullRefname#refs/heads/}
-#      globals[$G_ROOT_DETACHED]=0
-#  esac
-
   if [[ -z "$mode" ]] ; then
     if [[ -e "$moduleFilePath/.gitlego" ]] ; then
       mode=versioned
     fi
 
     if [[ -e "${moduleFilePath}/.gitmodules" ]] ; then
-
       while read module value; do
-        if [[ "$value" == true ]] && [[ $(get_lego_setting_concrete "refname" "submodule.$module" "." "--local") ]]; then
-#          if (( $( check_ambiguous_lego_mode solo ${mode} ) )) ; then
-#            mode=ambiguous
-#          else
-            mode=solo
-#          fi
-          break
-        fi
-      done < <(git config --get-regexp "submodule.*.active" | sed -E "s/submodule\.(.*)\.active/\1/")
+        mode=solo
+        break
+      done < <(git config --get-regexp "submodule.*.refname" | sed -E "s/submodule\.(.*)\.refname/\1/")
 
-    #else
-    #   TODO if no .gitmodules file -> no submodule -> git-lego ambigious ??
-    #
     fi
   fi
 
@@ -3086,7 +3066,7 @@ checkout_level () {
                     doRecreateCache=1
                   fi
 
-                  blobIndex=$(( "$blobIndex" + 1 ))
+                  blobIndex=$(( $blobIndex + 1 ))
                 done
               fi
               if (( "$doRecreateCache" )); then
@@ -3157,6 +3137,15 @@ EOF
 
 
 declare SUBCOMMAND
+
+# means whether the command is looking for --[no]-pinned command parameter and/or relevant setting
+# Ie. git pull by default skips fetching from pinned repositories
+# 0 means --pinned parameter not relevant to the command. If so, adding --pinned to command paramter causes a warning (or error?) 
+declare pinnedPolicy=1
+# TODO add git-lego setting? pro command ?
+declare pinnedParam
+
+# delegate not recognized (not common) attributes further to command
 declare raw_args=()
 
 global_parse_args() {
@@ -3178,6 +3167,13 @@ global_parse_args() {
       --version)
         SUBCOMMAND="config"
 #        break ??
+        ;;
+      
+      --pinned)
+        pinnedParam=1
+        ;;
+      --no-pinned)
+        pinnedParam=0
         ;;
       -*)
         raw_args+=("$arg")
@@ -3242,6 +3238,14 @@ main() {
   local defInitPath="."
   if type default_init_path_callback >/dev/null 2>&1; then
     defInitPath=$( default_init_path_callback "$SUBCOMMAND" "${raw_args[@]}" )
+  fi
+
+  if type default_pinned_policy >/dev/null 2>&1; then
+    pinnedPolicy=$( default_pinned_policy "$SUBCOMMAND" "${raw_args[@]}" )
+  fi
+
+  if [[ "$pinnedPolicy" == 0 && -n "$pinnedParam" ]]; then
+    cw_echo "Warning command '$SUBCOMMAND' not intended to consume --[no-]pinned parameter"
   fi
 
   # variable initialPath is set usually in subcommand script

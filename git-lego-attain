@@ -233,8 +233,7 @@ fi
 #  
 #
 is_module_attainable() {
-#echo "$FUNCNAME()" $@ >&2
-#set -x
+echo "$FUNCNAME()" $@ >&2
   local moduleName="$1"
   local modulePath="$2"
   local parentRefName="$3"
@@ -277,11 +276,11 @@ is_module_attainable() {
       if (( ! "$ret" )) && (( "$exists" )); then
         case "$currentRefType" in
           branch)
-            # DO NOT QUITE
+            # DO NOT QUOTE
             guessedRefNames=(${MODULE_STATUS[$MS_GUESSED_BRANCHES]})
             ;;
           pinned)
-            # DO NOT QUITE
+            # DO NOT QUOTE
             guessedRefNames=(${MODULE_STATUS[$MS_GUESSED_TAGS]})
             ;;
           sha)
@@ -334,6 +333,9 @@ echo "$FUNCNAME()" $@ >&2;pwd >&2
   local ret=0
 
   module_porcelain_status "$modulePath" "attain"
+if [[ $1 == ci-mac ]]; then
+set -x
+fi
 
   local detached="${MODULE_STATUS[$MS_DETACHED]}"
   local moduleRefType="${G_REFTYPE_TOKENS[$detached]}"
@@ -341,17 +343,18 @@ echo "$FUNCNAME()" $@ >&2;pwd >&2
   local uninitialized="${MODULE_STATUS[$MS_UNINITIALIZED]}"
   local unmanaged="${MODULE_STATUS[$MS_UNMANAGED]}"
 
-  local attainable=0
+#  local attainable=0
+#
+#  if [[ "$uninitialized" == 0 && "$unmanaged" == 1 ]]; then
+#    attainable=1
+#  fi
 
-  if [[ "$uninitialized" == 0 && "$unmanaged" == 0 ]]; then
-    attainable=1
-  fi
   read affected explicitRef explicitType < <( is_module_attainable "$@" )
   ret=$?
 #  echo "affected" "$affected" "explicitRef" "$explicitRef" "explicitType" "$explicitType"
   if (( ! "$ret" )) ; then
-    if (( "$affected" )) && [[ "$attainable" == 1 || "$doForce" == 1 ]] ; then
-      if [[ "$modulePath" != "/" && "$uninitialized" != 1 ]]; then
+    if (( "$affected" )) && [[ "$unmanaged" == 1 || "$doForce" == 1  && "$uninitialized" != 1 ]] ; then
+      if [[ "$modulePath" != "/" ]]; then
 
         if [[ -n "$explicitRef" && -n "$explicitType" ]]; then
           persist_attain_hint "1" "$moduleName" "$explicitRef" "$explicitType" "$legoMode"

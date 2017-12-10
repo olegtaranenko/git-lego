@@ -76,7 +76,7 @@ while [[ -n "$1" ]]; do
       exit
       ;;
     -v|--verbose)
-      verbose=$(("$verbose" + 1)) # Each -v argument adds 1 to verbosity.
+      verbose=$(( $verbose + 1 )) # Each -v argument adds 1 to verbosity.
       ;;
 
     --amend)
