@@ -52,7 +52,12 @@ typeset autoAttain=$(get_lego_setting "autoAttain")
 autoAttain=$(READ_boolean ${autoAttain} 1) # 1 === true
 typeset paramAutoAttain implicitAutoAttain=0
 
-typeset initialPath doRecursive=1 doForce=0
+typeset initialPath
+typeset modulePath
+typeset moduleName
+typeset moduleFilePath
+
+typeset doRecursive=1 doForce=0
 typeset explicitModules=() explicitRefs=() explicitTypes=()
 
 typeset reference referenceType
@@ -203,7 +208,7 @@ while [[ -n $1 ]]; do
 done
 #set +x
 
-if (( ${#explicitModules[@]} )); then
+if (( ${#explicitModules[@]} )) && (( ! "$doDetain" )); then
   modulesLen=${#explicitModules[@]}
   refsLen=${#explicitRefs[@]}
   if (( ! $refsLen )); then
@@ -233,7 +238,7 @@ fi
 #  
 #
 is_module_attainable() {
-echo "$FUNCNAME()" $@ >&2
+#echo "$FUNCNAME()" $@ >&2
   local moduleName="$1"
   local modulePath="$2"
   local parentRefName="$3"
@@ -317,14 +322,40 @@ echo "$FUNCNAME()" $@ >&2
 }
 
 
+detain_module_mode() {
+#echo "$FUNCNAME()" $@ >&2;pwd >&2
+  local moduleName="$1"
+  local modulePath="$2"
+  local legoMode="${3:-$g_lego_mode}"
+
+  if [[ "$legoMode" != "versioned" ]]; then
+    legoMode="solo"
+  fi
+
+  local ret=0
+
+  local section="submodule.$moduleName"
+  local key="refname"
+
+  wipe_lego_setting_at_mode "$key" "$section" "$legoMode" ".."
+
+  if (( $verbose )); then
+    local checkExistsAfterWipe=$( get_lego_setting_mode "$key" "$section" "$legoMode" ".." )
+    if (( $checkExistsAfterWipe )); then
+      cw_verbose "Module $moduleName was not detained"
+    fi
+  fi
+  set +x
+}
+
+
 attain_module_mode() {
-echo "$FUNCNAME()" $@ >&2;pwd >&2
+#echo "$FUNCNAME()" $@ >&2;pwd >&2
   local moduleName="$1"
   local modulePath="$2"
   local parentRefName="$3"
   local parentRefType="$4"
-
-  local legoMode="${g_lego_mode}"
+  local legoMode="${5:-$g_lego_mode}"
 
   if [[ "$legoMode" != "versioned" ]]; then
     legoMode="solo"
@@ -333,21 +364,12 @@ echo "$FUNCNAME()" $@ >&2;pwd >&2
   local ret=0
 
   module_porcelain_status "$modulePath" "attain"
-if [[ $1 == ci-mac ]]; then
-set -x
-fi
 
   local detached="${MODULE_STATUS[$MS_DETACHED]}"
   local moduleRefType="${G_REFTYPE_TOKENS[$detached]}"
 
   local uninitialized="${MODULE_STATUS[$MS_UNINITIALIZED]}"
   local unmanaged="${MODULE_STATUS[$MS_UNMANAGED]}"
-
-#  local attainable=0
-#
-#  if [[ "$uninitialized" == 0 && "$unmanaged" == 1 ]]; then
-#    attainable=1
-#  fi
 
   read affected explicitRef explicitType < <( is_module_attainable "$@" )
   ret=$?
@@ -392,7 +414,7 @@ fi
       if [[ "$modulePath" != "/" ]]; then
         cw_echo "Module $moduleName skipped"
 
-        if (( "$attainable" )) && (( "$affected" )); then
+        if [[ "$uninitialized" == 0 && "$unmanaged" == 0 ]] && (( "$affected" )); then
           warnDoForce+=("$moduleName")
         fi
       fi
@@ -406,13 +428,12 @@ fi
 
 attain_level() {
 echo "$FUNCNAME()" $@ >&2
-  local parentName="$1"
+  local moduleName="$1"
   local levelPath="$2"
   local modulePath="$3"
   local refName="$4"
   local refType="$5"
 
-  local legoMode="${g_lego_mode}"
   local ret=0
   local wrongRepo=0
 
@@ -420,49 +441,52 @@ echo "$FUNCNAME()" $@ >&2
 
   local ret=0   # return code, 0 - OK
   local childRet # sub-lever return code
+  local initialized legoMode
+set -x
+  read initialized legoMode < <( module_info "${modulePath}" "initialized" "lego_mode")
 
-  pushd "$levelPath" &>/dev/null
-  wrongRepo=$?
+  if (( $initialized )) ; then
 
-  if (( ! $wrongRepo )); then
-    attain_module_mode "$parentName" "$modulePath" "$refName" "$refType"
-    ret=$?
-    if (( ! $ret )) && (( "$doRecursive" )); then
+    pushd "$levelPath" &>/dev/null
+    wrongRepo=$?
 
-      local detached="${MODULE_STATUS[$MS_DETACHED]}"
-      local refName="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
-      local refType="${G_REFTYPE_TOKENS[$detached]}"
+    if (( ! $wrongRepo )); then
+      if  (( ! $doDetain )); then
+        attain_module_mode "$moduleName" "$modulePath" "$refName" "$refType" "$legoMode"
+      else
+        detain_module_mode "$moduleName" "$modulePath" "$legoMode"
+      fi
+      ret=$?
 
-      if [ -f .gitmodules ]; then
-        while read -a module; do
-          childRet=0
-          local moduleName="${module[0]}"
-          local localPath="${module[1]}"
-          local subModuleFilePath="$levelPath"/"$localPath"
+      if (( ! $ret )) && (( "$doRecursive" )); then
+        local detached="${MODULE_STATUS[$MS_DETACHED]}"
+        local refName="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
+        local refType="${G_REFTYPE_TOKENS[$detached]}"
 
-          local subModulePath="$modulePath"
-          if [[ ${subModulePath:(-1)} != "/" ]]; then
-            subModulePath+="/"
-          fi
-          subModulePath+="$moduleName"
+        if [ -f .gitmodules ]; then
+          while read -a module; do
+            childRet=0
+            local subModuleName="${module[0]}"
+            local localPath="${module[1]}"
+            local subModuleFilePath="$levelPath"/"$localPath"
 
-          local initialized=$( module_info "${subModulePath}" "initialized" )
+            local subModulePath="$modulePath"
+            if [[ ${subModulePath:(-1)} != "/" ]]; then
+              subModulePath+="/"
+            fi
+            subModulePath+="$subModuleName"
 
-          if (( $initialized )) ; then
-
-            attain_level "$moduleName" "$subModuleFilePath" "$subModulePath" "$refName" "$refType"
+            attain_level "$subModuleName" "$subModuleFilePath" "$subModulePath" "$refName" "$refType"
             local childRet=$?
 
             (( "$childRet" > "$ret" )) && ret="$childRet"
-          else
-            ret=1
-            warnMsg="One or more modules are uninitialized!"
-          fi
-        done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
-      fi
-    fi
 
-    popd  &>/dev/null
+          done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
+        fi
+      fi
+
+      popd  &>/dev/null
+    fi
   fi
 
   return "$ret"
@@ -470,6 +494,17 @@ echo "$FUNCNAME()" $@ >&2
 
 
 ################################ MAIN SCRIPT LOGIC ################################
+#dispatch_subaction() {
+#  if (( "$doDetain" )); then
+#    echo "detain"
+#  fi
+#}
+#
+#cmd_detain() {
+#  local ret=0
+#  return "$ret"
+#}
+
 cmd_default() {
   #
   ## Exit code of the script
@@ -479,20 +514,10 @@ cmd_default() {
   #
   local ret=0
 
-#set -x
-#  typeset modulePath=$(resolve_module_path "$initialPath" ".")
-#
-#  read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
-#set +x
-
-#  splash "$globals[$G_ROOT_DIR]" "$globals[$G_LEGO_MODE_IMPLICIT]"
-
   typeset affected=0
   typeset onEmptyMessage
   typeset skippedModules=()
   typeset warnMsg
-#  typeset initialRefType initialRefName
-  
 
   if [[ -z "$moduleFilePath" ]]; then
     see_help "Wrong module specification"
@@ -503,8 +528,6 @@ cmd_default() {
     module_up
   fi
   read refName refType < <( evaluate_refname )
-#  initialRefType="$refType"
-#  initialRefName="$refName"
   if [[ "$refType" == "branch" ]]; then
     implicitAutoAttain=1
   fi

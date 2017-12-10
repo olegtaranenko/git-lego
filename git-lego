@@ -591,7 +591,7 @@ function splash() {
     legoMode='none'
   fi
   local msg+=", lego mode: $legoMode"
-  if (( "$implicit" )) &&  [[ "$g_lego_mode" != "empty" ]] && [[ "$g_lego_mode" != "detached" ]]; then
+  if (( "$implicit" )) &&  [[ "$legoMode" != "empty" ]] && [[ "$legoMode" != "detached" ]]; then
      msg+=" (guessed)"
   fi
 
@@ -2322,10 +2322,10 @@ clean_git_config_section() {
     if (( $bitIndex & $legoModesMask )); then
       if [[ ${mode} == versioned ]]; then
         fileOption="-f .gitlego"
-        if [[ ${section} == lego ]]; then
+        if [[ "$section" == lego ]]; then
           section=core
         fi
-      elif [[ ${mode} == solo && ${section} == core ]]; then
+      elif [[ ${mode} == solo && "$section" == core ]]; then
         section=lego
       fi
 
@@ -2418,7 +2418,7 @@ wipe_lego_setting_concrete() {
   git ${worktree+ -C $topRelative$worktree} config $fileOption --unset-all "${section}.$key"  &>/dev/null
   ret=$?
 
-  wipe_section_if_empty "$section" "$fileOption"
+  wipe_section_if_empty "$section" "$fileOption" "$worktree"
 
   return "$ret"
 }
@@ -2426,27 +2426,33 @@ wipe_lego_setting_concrete() {
 
 wipe_section_if_empty () {
 #echo "$FUNCNAME()" $@ >&2
-  local section=$1
-  local fileOption=${2:---}
+  local section="$1"
+  local fileOption="${2:---}"
+  local worktree="$3"
 
-  if [[ -z "${fileOption##--*}" &&  ${section} == core ]] ; then
-    section=lego
-  elif [[ -n "${fileOption##--*}" &&  ${section} == lego ]] ; then
-    section=core
+  if [[ -z "${fileOption##--*}" &&  "$section" == "core" ]] ; then
+    section="lego"
+  elif [[ -n "${fileOption##--*}" &&  "$section" == "lego" ]] ; then
+    section="core"
   fi
 
   if [[ "$fileOption" == -- ]]; then
     unset fileOption
   fi
 
-  local keyRe="${section}*"
+  local keyRe="${section}.*"
+  local topRelative
+  if [[ -n "$worktree" ]]; then
+    topRelative=$( git -C "$worktree" rev-parse --show-cdup 2>/dev/null )
+  fi
 
-  local notEmpty=$( git config $fileOption --get-regexp "$keyRe" 2>/dev/null | wc -l )
+  local notEmpty=$( git ${worktree+ -C $topRelative$worktree} config $fileOption --get-regexp "$keyRe" 2>/dev/null | wc -l )
 
   if (( ! $notEmpty )); then
     if [[ "$fileOption" != '-f .gitlego' || -e .gitlego ]]; then
-      git config $fileOption --remove-section "$section" 2>/dev/null
+      git ${worktree+ -C $topRelative$worktree} config $fileOption --remove-section "$section" 2>/dev/null
       read notEmpty fn < <(wc -w .gitlego 2>/dev/null)
+      notEmpty=$(( $notEmpty + 0 ))
       if (( ! "$notEmpty" )); then
         rm -f .gitlego &>/dev/null
       fi
@@ -2490,9 +2496,9 @@ set_lego_setting_concrete() {
     unset worktree
   fi
 
-  if [[ -z "${fileOption##--*}" && ${section} == core ]] ; then
+  if [[ -z "${fileOption##--*}" && "$section" == core ]] ; then
     section="lego"
-  elif [[ -n "${fileOption##--*}" &&  ${section} == lego ]] ; then
+  elif [[ -n "${fileOption##--*}" &&  "$section" == lego ]] ; then
     section="core"
   fi
 
@@ -2566,9 +2572,9 @@ get_lego_setting_concrete() {
     unset worktree
   fi
 
-  if [[ -z "${fileOption##--*}" && ${section} == core ]] ; then
+  if [[ -z "${fileOption##--*}" && "$section" == core ]] ; then
     section=lego
-  elif [[ -n "${fileOption##--*}" &&  ${section} == lego ]] ; then
+  elif [[ -n "${fileOption##--*}" &&  "$section" == lego ]] ; then
     section=core
   fi
 
