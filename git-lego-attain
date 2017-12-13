@@ -56,6 +56,7 @@ typeset initialPath
 typeset modulePath
 typeset moduleName
 typeset moduleFilePath
+typeset moduleLegoMode
 
 typeset doRecursive=1 doForce=0
 typeset explicitModules=() explicitRefs=() explicitTypes=()
@@ -115,9 +116,6 @@ while [[ -n $1 ]]; do
 
     --detain|-d)
       doDetain=1
-      ;;
-    --no-detain|-D)
-      doDetain=0
       ;;
 
     --current|-c)
@@ -326,31 +324,44 @@ detain_module_mode() {
 #echo "$FUNCNAME()" $@ >&2;pwd >&2
   local moduleName="$1"
   local modulePath="$2"
-  local legoMode="${3:-$g_lego_mode}"
-
-  if [[ "$legoMode" != "versioned" ]]; then
-    legoMode="solo"
-  fi
+  local isManaged="$3"
+  local moduleRefName="$4"
+  local legoMode="${5:-$g_lego_mode}"
 
   local ret=0
 
-  local section="submodule.$moduleName"
-  local key="refname"
+  if (( $isManaged )); then
 
-  wipe_lego_setting_at_mode "$key" "$section" "$legoMode" ".."
-
-  if (( $verbose )); then
-    local checkExistsAfterWipe=$( get_lego_setting_mode "$key" "$section" "$legoMode" ".." )
-    if (( $checkExistsAfterWipe )); then
-      cw_verbose "Module $moduleName was not detained"
+    if [[ "$legoMode" != "versioned" ]]; then
+      legoMode="solo"
     fi
+
+
+    local section="submodule.$moduleName"
+    local key="refname"
+
+    wipe_lego_setting_at_mode "$key" "$section" "$legoMode" ".."
+    ret=$?
+    if (( ! $ret)); then
+        cw_echo "Module $moduleName was detained from $moduleRefName at $legoMode scope"
+    fi
+
+    if (( $verbose )); then
+      local checkExistsAfterWipe=$( get_lego_setting_mode "$key" "$section" "$legoMode" ".." )
+      if (( $checkExistsAfterWipe )); then
+        cw_verbose "Module $moduleName was not detained"
+      fi
+    fi
+  else
+    cw_echo "Module $moduleName skipped"
   fi
-  set +x
+
+  return "$ret"
 }
 
 
 attain_module_mode() {
-#echo "$FUNCNAME()" $@ >&2;pwd >&2
+echo "$FUNCNAME()" $@ >&2;pwd >&2
   local moduleName="$1"
   local modulePath="$2"
   local parentRefName="$3"
@@ -427,23 +438,23 @@ attain_module_mode() {
 
 
 attain_level() {
-echo "$FUNCNAME()" $@ >&2
+#echo "$FUNCNAME()" $@ >&2
   local moduleName="$1"
   local levelPath="$2"
   local modulePath="$3"
   local refName="$4"
   local refType="$5"
+  local parentLegoMode="$6"
 
   local ret=0
   local wrongRepo=0
 
-  [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+  [[ -z "$levelPath" ]] && panic "$FUNCNAME()... parameter 'path' is required"
 
   local ret=0   # return code, 0 - OK
   local childRet # sub-lever return code
-  local initialized legoMode
-set -x
-  read initialized legoMode < <( module_info "${modulePath}" "initialized" "lego_mode")
+  local initialized legoMode isManaged moduleRefName
+  read initialized legoMode isManaged moduleRefName < <( module_info "${modulePath}" "initialized" "lego_mode" "managed" "refname" )
 
   if (( $initialized )) ; then
 
@@ -452,9 +463,9 @@ set -x
 
     if (( ! $wrongRepo )); then
       if  (( ! $doDetain )); then
-        attain_module_mode "$moduleName" "$modulePath" "$refName" "$refType" "$legoMode"
+        attain_module_mode "$moduleName" "$modulePath" "$refName" "$refType" "$parentLegoMode"
       else
-        detain_module_mode "$moduleName" "$modulePath" "$legoMode"
+        detain_module_mode "$moduleName" "$modulePath" "$isManaged" "$moduleRefName" "$parentLegoMode"
       fi
       ret=$?
 
@@ -476,7 +487,7 @@ set -x
             fi
             subModulePath+="$subModuleName"
 
-            attain_level "$subModuleName" "$subModuleFilePath" "$subModulePath" "$refName" "$refType"
+            attain_level "$subModuleName" "$subModuleFilePath" "$subModulePath" "$refName" "$refType" "$legoMode"
             local childRet=$?
 
             (( "$childRet" > "$ret" )) && ret="$childRet"
@@ -494,17 +505,6 @@ set -x
 
 
 ################################ MAIN SCRIPT LOGIC ################################
-#dispatch_subaction() {
-#  if (( "$doDetain" )); then
-#    echo "detain"
-#  fi
-#}
-#
-#cmd_detain() {
-#  local ret=0
-#  return "$ret"
-#}
-
 cmd_default() {
   #
   ## Exit code of the script

@@ -1229,9 +1229,13 @@ function is_revision_correct() {
     esac
   fi
 
-
+#  local possibleAmbiguous=0
   if (( ! "$normalized" )); then
-    checkingPlaces+=("")
+    if [[ -z "$refType" || "$refType" == "sha" ]] ; then
+#      possibleAmbiguous=1
+      checkingPlaces+=("")
+
+    fi
     if [[ -z "$refType" || "$refType" == "branch" ]] ; then
       checkingPlaces+=("heads/")
       checkingPlaces+=("$remote/")
@@ -1693,6 +1697,7 @@ function guess_refnames_of_commit() {
 
 
 persist_attain_hint() {
+#echo "$FUNCNAME()" $@ >&2
   local doApply="$1"
   local moduleName="$2"
   local refName="$3"
@@ -1759,7 +1764,7 @@ persist_attain_hint() {
     if (( "$doApply" )); then
       local attainRefName="$refName"
       if [[ "$refType" != "branch"  ]]; then
-        refName="$fullRefName"
+        attainRefName="$fullRefName"
       fi
       cw_echo "About to update $moduleName to $attainRefName..."
       git checkout "$attainRefName"
@@ -3259,7 +3264,8 @@ main() {
 #  set -x
   modulePath=$( resolve_module_path "$initialPath" "$defInitPath" )
   if [[ -n "$modulePath" ]]; then
-    read moduleName moduleFilePath moduleLocalPath moduleInitialized moduleGitDir < <( module_info "$modulePath" "name" "path" "local" "initialized" "gitdir" "")
+    read moduleName moduleFilePath moduleLocalPath moduleInitialized moduleGitDir moduleLegoMode < \
+        <( module_info "$modulePath" "name" "path" "local" "initialized" "gitdir" "lego_mode")
   	splash "$modulePath"
   fi
 #  set +x
