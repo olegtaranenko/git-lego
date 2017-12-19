@@ -3155,6 +3155,11 @@ declare SUBCOMMAND
 declare pinnedPolicy=1
 # TODO add git-lego setting? pro command ?
 declare pinnedParam
+# if pinnedPolicy set to 1, defines pinned value, if parameter not given
+# 1 means command scope will include pinned repositories
+# Note that pinnedPolicy=0 means that command is been acting without any consideration about pinned or not pinned attribute
+# TODO add git-lego setting? pro command ?
+declare pinnedDefault=0
 
 # delegate not recognized (not common) attributes further to command
 declare raw_args=()
@@ -3252,7 +3257,7 @@ main() {
   fi
 
   if type default_pinned_policy >/dev/null 2>&1; then
-    pinnedPolicy=$( default_pinned_policy "$SUBCOMMAND" "${raw_args[@]}" )
+    read pinnedPolicy pinnedDefault < <( default_pinned_policy "$SUBCOMMAND" "${raw_args[@]}" )
   fi
 
   if [[ "$pinnedPolicy" == 0 && -n "$pinnedParam" ]]; then
