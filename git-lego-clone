@@ -22,6 +22,7 @@ typeset doForce=0
 typeset verbose=0
 typeset doInit=0
 typeset branchName wrongBranch branch=0
+typeset nameName wrongName name=0
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
   noAppendArg=0
@@ -54,6 +55,22 @@ while [[ -n $1 ]]; do
 			branchName="${1#--branch=}"
 			;;
 
+		--name)
+			name=1
+			case $2 in
+        '' | -*)
+          wrongName=1
+          ;;
+        *)
+			    nameName=$2
+          shift
+          ;;
+			esac
+			;;
+		--name=*)
+			nameName="${1#--name=}"
+			;;
+
 
     --auto-attach|-a)
       autoAttach=1
@@ -76,6 +93,7 @@ while [[ -n $1 ]]; do
 
     --)
       stopOptions=1
+      args+=("$1")
       ;;
 
     *)
@@ -83,16 +101,22 @@ while [[ -n $1 ]]; do
         if [[ -z ${1%%-*} ]]; then
           die "after '--' additional options ($1) are not allowed "
         else
-          afterDash+=($1)
+          if [[ -z "$repoUrl" ]]; then
+            args+=("$1")
+            repoUrl="$1"
+          elif [[ -z "$repoPath" ]]; then
+            args+=("$1")
+            repoPath="$1"
+          fi
         fi
-      elif [[ -z ${1%%-*} ]]; then
-        args+=($1)
-      elif [[ -z ${repoUrl} ]]; then
-        args+=($1)
-        repoUrl=$1
-      elif [[ -z ${repoPath} ]]; then
-        args+=($1)
-        repoPath=$1
+      elif [[ -z "${1%%-*}" ]]; then
+        args+=("$1")
+      elif [[ -z "$repoUrl" ]]; then
+        args+=("$1")
+        repoUrl="$1"
+      elif [[ -z "$repoPath" ]]; then
+        args+=("$1")
+        repoPath="$1"
       else
         die "error in parameters [$1]"
       fi
@@ -102,42 +126,107 @@ while [[ -n $1 ]]; do
 done
 
 if [[ -z ${repoUrl} ]]; then
-  die "Repo paramenter not recognized"
+  die "Repo parameter not recognized"
 fi
 
 if (( $branch )); then
   if (( $wrongBranch )) || [[ -z $branchName ]] ; then
     die "Wrong branch name"
   else
-    args+=(--branch $branchName)
+    args+=(--branch "$branchName")
   fi
 fi
 
 
+if (( "$name" )); then
+  if (( "$wrongName" )) || [[ -z "$nameName" ]] ; then
+    die "Wrong module name"
+  else
+    # TODO check name for uniqueness before allow make the git submodule add --name
+    args+=(--name "$nameName")
+  fi
+fi
 
-cmd_default() {
-  ################################ LIBRARIES SHARED OVER ALL CW SCRIPTS ################################
+
+################################ MAIN SCRIPT LOGIC ################################
+#
+# callback to detect what command should be called
+#
+typeset parentGitDir
+
+dispatch_subaction() {
+  local parentGitDir=$( git rev-parse --git-dir 2>/dev/null)
+  if [[ -n "$parentGitDir" ]]; then
+    echo "submodule_add"
+  else
+    echo "clone"
+  fi
+}
+
+
+# instead of cloning as a separate repo, redirect to 'git submodule add' and
+# this repo as a submodule in git-lego construction
+cmd_submodule_add() {
+#echo "$FUNCNAME() $@" >&2
+echo "$FUNCNAME() args from command line: ${args[@]}" >&2
+
+  umbrella_bootstrap
+  cmd_default 0
+
+  local ret=$?
+  if (( ! $ret )); then
+    local parentModule=0
+    local index=0
+    local found=0
+
+    for gitDir in "${g_git_dirs[@]}"; do
+
+      if [[ "$gitDir" == "$parentGitDir" ]]; then
+        local parentPath="${g_module_paths[$index]}"
+
+        if [[ "$parentPath" == "/" ]]; then
+          parentModule="root project"
+        else
+          parentModule="'${g_module_name[$index]}'"
+        fi
+        found=1
+
+        break
+      fi
+
+      index=$(( $index + 1 ))
+    done
+
+    cw_echo "Repo $repoUrl was added as a submodule to $parentModule"
+    ### TODO stop working on git clone -> git submodule add...
+    ## there ar a ton of possible improvements, like
+    #    * fix cached arrays for further processing
+    #    * attain after adding
+    #    * checkout with submodules, if added repos has submodules as well
+    #    *
+    #    *
+    #  But all of this not urgent necessary. It can be completed with 'git-lego attain --branch= ...'
+    #  git-lego checkout ...
+    #  etc.
     #
-    ## Exit code of the script
-    ## 0 - success
-    ## 1 - un-success (bad options/... etc)
-    ## 2 - unexpected error (wrong code)
+    # Maybe later...
     #
-  declare ret=0
-
-  #set -x
-
-  # Maybe we trying to cloning inside of the existing branding repo?
-  # Right now it doesn't permitted
-  git rev-parse --git-dir &> /dev/null
-  if (( ! $? )); then
-    # TODO instead of 'cloning' add repo as submodule
-  #  die "It's not permitted to clone inside of an existing git repo. Look in "$(dirname $0)"/Readme.MD for more information"
-    exit 0
+    #
   fi
 
-  #set -x
-#  echo ${args[@]} >&2
+  return "$ret"
+}
+
+
+cmd_clone() {
+#echo "$FUNCNAME() args from command line: ${args[@]}" >&2
+  cmd_default 1
+}
+
+
+cmd_default() {
+  declare ret=0
+  declare doClone="$1"
 
   # no explicit destination repository given
   # take from last created directory
@@ -149,12 +238,23 @@ cmd_default() {
   fi
   echo "${lsBefore[@]}"
 
-  cw_echo "Redirect to 'git clone'"
-  git clone "${args[@]}"
-  ret=$?
+  if (( "$doClone" )); then
+    cw_echo "Redirect to 'git clone'"
+    git clone "${args[@]}"
+    ret=$?
 
-  if (( $ret )); then
-     die "Unrecoverable error by cloning"
+    if (( "$ret" )); then
+       die "Unrecoverable error by 'git clone ${args[@]}'"
+    fi
+
+  else
+    cw_echo "Redirect to 'git submodule add ...'"
+    git submodule add "${args[@]}"
+    ret=$?
+
+    if (( "$ret" )); then
+       die "Unrecoverable error by 'git submodule add ${args[@]}' "
+    fi
   fi
 
   if [[ -z "$repoPath" ]]; then
@@ -176,28 +276,32 @@ cmd_default() {
     done < <(find . -maxdepth 1 -type d -print0 )
   fi
 
-  cd "$repoPath"
 
-  umbrella_bootstrap
+  if (( "$doClone" )); then
+    cd "$repoPath"
 
-  local moduleFilePath="${globals[$G_ROOT_DIR]}"
-  local moduleName="${globals[$G_ROOT_NAME]}"
-  local modulePath="/"
+    umbrella_bootstrap
 
-  splash "$modulePath"
+    local moduleFilePath="${globals[$G_ROOT_DIR]}"
+    local moduleName="${globals[$G_ROOT_NAME]}"
+    local modulePath="/"
 
-  if [[ -z "$branchName" ]]; then
-    read branchName type < <( evaluate_refname )
+    splash "$modulePath"
+
+    if [[ -z "$branchName" ]]; then
+      read branchName type < <( evaluate_refname )
+    fi
+
+    typeset attainOnCheckout=1
+    typeset updateManagedRef=0
+    checkout_level "$branchName" "branch" "$moduleName" "$modulePath"  "$moduleFilePath"
+    ret=$?
   fi
-
-  typeset attainOnCheckout=1
-  typeset updateManagedRef=0
-  checkout_level "$branchName" "branch" "$moduleName" "$modulePath"  "$moduleFilePath"
 #  update_level "$moduleFilePath" "$moduleName" "$modulePath" "." "$branchName"
 
 
   umbrella_finalize
-  exit ${ret}
+  exit "$ret"
 }
 
 cmd_help() {

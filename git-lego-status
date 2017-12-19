@@ -263,7 +263,7 @@ function show_current_module_status {
       oneLine+=", unmanaged"
   #      TODO verboseMsg+=("")
     else
-      if (( ! "${mismatched:-0}" )) && [[ "$modulePath" != "/" ]] ; then
+      if (( ! "${mismatched:-0}" )) && [[ "$modulePath" != "/" ]] && [[ "$detached" == "$managedIndex" || ( "$detached" > 0 && "$managedIndex" > 0 ) ]]; then
         oneLine+=", OK"
       elif (( "${mismatched:-0}" )) ; then
         oneLine+=", mismatched"

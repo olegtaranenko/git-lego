@@ -241,7 +241,7 @@ cmd_default() {
     if [[ "$modulePath" != "/" ]]; then
       pushd "$moduleFilePath" &>/dev/null
       module_up
-      parentFilePath=$( pwd &>/dev/null )
+      parentFilePath=$( pwd 2>/dev/null )
 
       read parentRefName parentRefType < <( evaluate_refname )
       ret=$?
@@ -257,10 +257,13 @@ cmd_default() {
       else
         if [[ "$refType" != "branch" ]]; then
           attainOnCheckout=0
-        else
+        elif [[ "$modulePath" != "/" ]]; then
           updateManagedRef=1
         fi
-        checkout_level "$refName" "$refType" "$moduleName" "$modulePath" "$moduleFilePath" "$parentRefName" "$parentRefType" "$moduleLocalPath" "$parentFilePath"
+
+        checkout_level \
+              "$refName"       "$refType"       "$moduleName"      "$modulePath"     "$moduleFilePath" \
+              "$parentRefName" "$parentRefType" "$moduleLocalPath" "$parentFilePath"
         ret=$?
       fi
     fi

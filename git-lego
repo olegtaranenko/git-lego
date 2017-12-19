@@ -575,7 +575,7 @@ function cw_verbose_stop () {
 
 
 function splash() {
-  (( $skipSplash )) && return
+  (( "$skipSplash" )) && return
 
   local modulePath="$1"
   local projectName="${globals[$G_ROOT_NAME]}"
@@ -591,7 +591,7 @@ function splash() {
     legoMode='none'
   fi
   local msg+=", lego mode: $legoMode"
-  if (( "$implicit" )) &&  [[ "$legoMode" != "empty" ]] && [[ "$legoMode" != "detached" ]]; then
+  if (( "$implicit" )) &&  [[ "$legoMode" != "none" ]] && [[ "$legoMode" != "detached" ]]; then
      msg+=" (guessed)"
   fi
 
@@ -2769,7 +2769,7 @@ check_ambiguous_lego_mode() {
 #   doForce
 #
 checkout_level () {
-#echo "$FUNCNAME()" $@ >&2; pwd >&2
+echo "$FUNCNAME()" $@ >&2; pwd >&2
 
   local ret=0
 
@@ -2789,11 +2789,6 @@ checkout_level () {
   fi
 
   local parentFilePath="$9"
-#  local levelPath=$( pwd 2>/dev/null )
-#  if [[ "$modulePath" != "/" ]]; then
-#    local parentModulePath=$(get_module_path_up "$modulePath")
-#    parentFilePath=$( module_info "$parentModulePath" "full" )
-#  fi
 
   if [[ -z "$parentRefName" && "$revision" != "-" && -n "$revision" ]]; then
     parentRefName="$revision"
@@ -2821,6 +2816,7 @@ checkout_level () {
 
   pushd "$levelPath" &>/dev/null
   ret=$?
+
   (( "$ret" )) && return "$ret"
 
   local modulesBefore=()
@@ -2918,7 +2914,7 @@ checkout_level () {
         module_porcelain_status "$pathBefore" "checkout" "DELETED_STATUS"
         popd  &>/dev/null
 
-        if [[ 0 == ${doForce} && ( 1 == "${DELETED_STATUS[$MS_COMMITABLE]}" || 1 == "${DELETED_STATUS[$MS_UNTRACKED]}" || 1 == "${DELETED_STATUS[$MS_PUSHABLE]}" ) ]]; then
+        if [[ 0 == "$doForce" && ( 1 == "${DELETED_STATUS[$MS_COMMITABLE]}" || 1 == "${DELETED_STATUS[$MS_UNTRACKED]}" || 1 == "${DELETED_STATUS[$MS_PUSHABLE]}" ) ]]; then
           dieMsg+="Module '$before' (maybe others as well) has not committed or not pushed changes, but intended to be deleted as it does not exists in revision '$revision'"
           return 1
         else
@@ -3013,7 +3009,8 @@ checkout_level () {
         refType="${G_REFTYPE_TOKENS[$refTypeIndex]}"
       fi
 
-      if [[ -n "$revision" && "$revision" != "$NA" && -n "$refType" && "$refType" != "-" && (("$refType" != "sha" && "$attainOnCheckout" == 1) || "$topLevelModule" == 1) ]]; then
+      if [[ -n "$revision" && "$revision" != "$NA" && -n "$refType" && "$refType" != "-" && \
+            (("$refType" != "sha" && "$attainOnCheckout" == 1) || "$topLevelModule" == 1) ]]; then
 
         git checkout "$revision"
         ret=$?
@@ -3021,7 +3018,7 @@ checkout_level () {
         if (( $ret )); then
           dieMsg="Unrecoverable error by checkout $revision for module $moduleName ($modulePath)"
         else
-          if [[ "$modulePath" != "/" && "$updateManagedRef" == 1 ]]; then
+          if [[ "$modulePath" != "/" && ( "$updateManagedRef" == 1 || "$topLevelModule" == 1) ]]; then
             read legoMode modeImplicit < <( get_lego_mode "1" "$parentFilePath" )
 
             if [[ "$legoMode" != "versioned" ]]; then
