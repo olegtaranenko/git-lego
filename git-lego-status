@@ -413,10 +413,6 @@ default_init_path_callback() {
   echo "/";
 }
 
-default_pinned_policy() {
-  echo 0
-}
-
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
 

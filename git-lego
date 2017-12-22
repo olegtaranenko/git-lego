@@ -216,7 +216,7 @@ MFS_CHECKOUT_REFNAME=11
 
 typeset skipSplash=1
 
-# warning if message is empty for commit/tag
+# warning text if command's commit/tag message is empty
 typeset emptyMsgNotAllowed="Empty message not allowed"
 
 typeset G_WIN_PREFIX
@@ -258,7 +258,8 @@ case $unameParts in
       return "$ret"
     }
     ;;
-  Darwin*)
+  *)
+#  Darwin*)
     show_toplevel() {
       local ret=0
       local result=$( git rev-parse --show-toplevel 2>/dev/null )
@@ -276,7 +277,9 @@ case $unameParts in
     platform="M"
     ;;
 esac
+
 globals["$G_PLATFORM"]=platform
+
 
 umbrella_bootstrap() {
   local legoRemote=$(get_lego_setting "remote")
@@ -340,10 +343,6 @@ umbrella_bootstrap() {
   module_startup_investigate "${umbrellaRepoName}" "/" ".git" "${umbrellaRepoDir}" "/" 1 "${sha}" 1 "$NA" "$g_lego_mode" "$implicit" "-"
 
 #  cat ${globals[$G_MODULES_FN]} >&2
-#  echo ${g_module_name[@]} >&2
-#  echo ${g_module_inited[@]} >&2
-#  echo "${g_module_lego_modes[@]}" >&2
-#  echo "${g_module_lego_modes_implicit[@]}" >&2
   popd &>/dev/null
 
   skipSplash=0
@@ -437,14 +436,16 @@ function module_startup_investigate() {
     local subModulePath="$modulePath"
     [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
     subModulePath+="$subModule"
+
     investigate_module "$subModule" "$localPath" "$subModulePath" "$legoMode" "$modeImplicit"
 
     pushd "$localPath" &>/dev/null
     ret=$?
     if (( ! "$ret" )); then
       module_startup_investigate "${module[@]}"
-      popd &>/dev/null
     fi
+    popd &>/dev/null
+
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
 
   return "$ret"
@@ -462,9 +463,10 @@ investigate_module() {
   local parentLegoMode="$4"
   local parentModeImplicit="$5"
 
-  local is_initialized=1
-  local moduleStatus=($(git submodule status -- "$localPath"))
+  local isInitialized=1
   local managed=($( resolve_module_managed "$moduleName" "$localPath" "$parentLegoMode" "$parentModeImplicit"))
+
+  local moduleStatus=($(git submodule status -- "$localPath"))
 
   pushd "$localPath" &>/dev/null
 
@@ -473,16 +475,16 @@ investigate_module() {
 
   module+=("$modulePath")                   # MFS_MODULE_PATH=4
 
-  if [[ ${moduleStatus:0:1} == "-" ]]; then
-    is_initialized=0
+  if [[ "${moduleStatus:0:1}" == "-" ]]; then
+    isInitialized=0
   fi
-  module+=("${is_initialized}")             # MFS_MODULE_INITIALIZED=5
-  local statusLine=("${moduleStatus}")
+  module+=("$isInitialized")                # MFS_MODULE_INITIALIZED=5
+  local statusLine=("$moduleStatus")
   local sha="${statusLine[0]}"
   if [[ "${sha:0:1}" == "-" || "${sha:0:1}" == "+" ]]; then
     sha="${sha:1}"
   fi
-  module+=("${sha}")                        # MFS_MODULE_SHA 6
+  module+=("$sha")                          # MFS_MODULE_SHA 6
   module+=("${managed[0]}")                 # MFS_MODULE_MANAGED 7
   module+=("${managed[1]}")                 # MFS_MANAGED_REFNAME 8
   read moduleLegoMode implicit < <( get_lego_mode 1 "${module[$MFS_FULL_PATH]}" )
@@ -2325,16 +2327,16 @@ clean_git_config_section() {
   for mode in ${G_LEGO_MODES[@]}; do
     local bitIndex=$((1 << $index))
     if (( $bitIndex & $legoModesMask )); then
-      if [[ ${mode} == versioned ]]; then
+      if [[ "$mode" == "versioned" ]]; then
         fileOption="-f .gitlego"
-        if [[ "$section" == lego ]]; then
-          section=core
+        if [[ "$section" == "lego" ]]; then
+          section="core"
         fi
-      elif [[ ${mode} == solo && "$section" == core ]]; then
-        section=lego
+      elif [[ "$mode" == "solo" && "$section" == "core" ]]; then
+        section="lego"
       fi
 
-      if [[ $fileOption != '-f .gitlego' || -e .gitlego ]]; then
+      if [[ "$fileOption" != '-f .gitlego' || -e .gitlego ]]; then
         git config ${fileOption} --remove-section "${section}" 2>/dev/null
       fi
     fi
@@ -2397,7 +2399,7 @@ wipe_lego_setting_concrete() {
   [[ -z "$key" ]] && panic "$FUNCNAME() missing parameter 'key'"
   local section="${2:-core}"
   local worktree="${3:-.}"
-  local fileOption="${4---}"
+  local fileOption="${4:---}"
   local ret=0
 
   if [[ "$worktree" == "." ]]; then
@@ -2420,7 +2422,7 @@ wipe_lego_setting_concrete() {
     topRelative=$( git -C "$worktree" rev-parse --show-cdup 2>/dev/null )
   fi
 
-  git ${worktree+ -C $topRelative$worktree} config $fileOption --unset-all "${section}.$key"  &>/dev/null
+  git ${worktree:+ -C $topRelative$worktree} config $fileOption --unset-all "${section}.$key"  &>/dev/null
   ret=$?
 
   wipe_section_if_empty "$section" "$fileOption" "$worktree"
@@ -2451,11 +2453,11 @@ wipe_section_if_empty () {
     topRelative=$( git -C "$worktree" rev-parse --show-cdup 2>/dev/null )
   fi
 
-  local notEmpty=$( git ${worktree+ -C $topRelative$worktree} config $fileOption --get-regexp "$keyRe" 2>/dev/null | wc -l )
+  local notEmpty=$( git ${worktree:+ -C $topRelative$worktree} config $fileOption --get-regexp "$keyRe" 2>/dev/null | wc -l )
 
   if (( ! $notEmpty )); then
     if [[ "$fileOption" != '-f .gitlego' || -e .gitlego ]]; then
-      git ${worktree+ -C $topRelative$worktree} config $fileOption --remove-section "$section" 2>/dev/null
+      git ${worktree:+ -C $topRelative$worktree} config $fileOption --remove-section "$section" 2>/dev/null
       read notEmpty fn < <(wc -w .gitlego 2>/dev/null)
       notEmpty=$(( $notEmpty + 0 ))
       if (( ! "$notEmpty" )); then
@@ -2495,7 +2497,7 @@ set_lego_setting_concrete() {
   local section="$3"
   local mode="$4"
   local worktree="$5"
-  local fileOption="${6---}"
+  local fileOption="${6:---}"
 
   if [[ "$worktree" == "." ]]; then
     unset worktree
@@ -2517,9 +2519,9 @@ set_lego_setting_concrete() {
     topRelative=$( git -C "$worktree" rev-parse --show-cdup 2>/dev/null )
   fi
 #  pwd >&2
-#  echo "git ${worktree+ -C $topRelative$worktree} config $fileOption --replace-all $section.$key $value" >&2
+#  echo "git ${worktree:+ -C $topRelative$worktree} config $fileOption --replace-all $section.$key $value" >&2
 
-  git ${worktree+ -C $topRelative$worktree} config $fileOption --replace-all "$section.$key" "$value"
+  git ${worktree:+ -C $topRelative$worktree} config $fileOption --replace-all "$section.$key" "$value"
   ret=$?
 
   return $ret
@@ -2550,12 +2552,12 @@ get_lego_setting_mode() {
 
 get_lego_setting() {
 #echo "$FUNCNAME()" $@ >&2
-  local key=${1}
-  local section=${2:-core}
-  local worktree=${3:-.}
-  local value=$( get_lego_setting_concrete "$key" "${section}" "$worktree" "-f .gitlego" )
+  local key="$1"
+  local section="${2:-core}"
+  local worktree="${3:-.}"
+  local value=$( get_lego_setting_concrete "$key" "$section" "$worktree" "-f .gitlego" )
 #  [[ -z "$value" && -z ${section##submodule*} ]] && value=$( get_lego_setting_concrete "$1" "${section}" "$worktree" "-f .gitmodules")
-  [[ -z "$value" ]] && value=$( get_lego_setting_concrete "$1" "${section}" "$worktree" )
+  [[ -z "$value" ]] && value=$( get_lego_setting_concrete "$1" "$section" "$worktree" )
 #  [[ -z value ]] || value=$( get_lego_setting_concrete $1 ${section} "$worktree" "--local" } )
 #  [[ -z value ]] && value=$( get_lego_setting_concrete $1 ${section} "$worktree" "--global"} )
 #  [[ -z value ]] && value=$( get_lego_setting_concrete $1 ${section} "$worktree" "--system"} )
@@ -2568,34 +2570,32 @@ get_lego_setting_concrete() {
 #echo "$FUNCNAME()" $@ >&2
 #pwd >&2
   local key="$1"
-  [[ -z $key ]] && panic "$FUNCNAME() missing setting name"
+  [[ -z "$key" ]] && panic "$FUNCNAME() missing setting name"
   local section="${2:-core}"
-  local worktree="${3:-.}"
-  local fileOption="${4---}"
+  local worktree="$3"
+  local fileOption="${4:---}"
 
-  if [[ $worktree == . ]]; then
+  if [[ "$worktree" == "." ]]; then
     unset worktree
   fi
 
-  if [[ -z "${fileOption##--*}" && "$section" == core ]] ; then
-    section=lego
-  elif [[ -n "${fileOption##--*}" &&  "$section" == lego ]] ; then
-    section=core
+
+  if [[ -z "${fileOption##--*}" && "$section" == "core" ]] ; then
+    section="lego"
+  elif [[ -n "${fileOption##--*}" &&  "$section" == "lego" ]] ; then
+    section="core"
   fi
 
-  if [[ $fileOption == -- ]]; then
+  if [[ "$fileOption" == "--" ]]; then
     unset fileOption
   fi
 
-  if [[ -n ${worktree} ]]; then
-    pushd "$worktree" &>/dev/null
+  local topRelative
+  if [[ -n "$worktree" ]]; then
+    topRelative=$( git -C "$worktree" rev-parse --show-cdup 2>/dev/null )
   fi
 
-  echo $(git config ${fileOption} --get "${section}.$key" 2>/dev/null)
-
-  if [[ -n ${worktree} ]]; then
-    popd &>/dev/null
-  fi
+  echo $(git ${worktree:+ -C $topRelative$worktree} config ${fileOption} --get "${section}.$key" 2>/dev/null)
 }
 
 
@@ -2603,6 +2603,7 @@ get_lego_setting_concrete() {
 get_lego_mode() {
   local verbose="${1:-0}"
   local moduleFilePath="${2:-.}"
+
   pushd "$moduleFilePath" &>/dev/null
 
   local mode=$( get_lego_setting "mode")
@@ -2743,7 +2744,6 @@ investigate_lego_mode() {
         mode=solo
         break
       done < <(git config --get-regexp "submodule.*.refname" | sed -E "s/submodule\.(.*)\.refname/\1/")
-
     fi
   fi
 
@@ -3227,6 +3227,41 @@ global_parse_args() {
   fi
 }
 
+
+default_pinned_policy() {
+#echo "$FUNCNAME()" $@ >&2
+  local command="$1"
+
+  local results=()
+  local policy
+  local default
+
+  case "$command" in
+    status)
+      policy=0
+      ;;
+    *)
+      policy=1
+  esac
+
+  results+=("$policy")
+
+  if (( "$policy" )); then
+    case "$command" in
+      commit|checkout)
+        default=1
+        ;;
+      *)
+        default=0
+    esac
+
+    results+=("$default")
+  fi
+
+  echo "${results[@]}"
+}
+
+
 #declare moduleName moduleFilePath
 main() {
 	if [ $# -lt 1 ]; then
@@ -3244,6 +3279,10 @@ main() {
     set -- "${raw_args[@]}"
 	fi
 
+  if type default_pinned_policy >/dev/null 2>&1; then
+    read pinnedPolicy pinnedDefault < <( default_pinned_policy "$SUBCOMMAND" "${raw_args[@]}" )
+  fi
+
   FLAGS_PREFIX="${0##*/} $SUBCOMMAND"
 	# run command
 	. "$GITLEGO_DIR/git-lego-$SUBCOMMAND"
@@ -3251,10 +3290,6 @@ main() {
   local defInitPath="."
   if type default_init_path_callback >/dev/null 2>&1; then
     defInitPath=$( default_init_path_callback "$SUBCOMMAND" "${raw_args[@]}" )
-  fi
-
-  if type default_pinned_policy >/dev/null 2>&1; then
-    read pinnedPolicy pinnedDefault < <( default_pinned_policy "$SUBCOMMAND" "${raw_args[@]}" )
   fi
 
   if [[ "$pinnedPolicy" == 0 && -n "$pinnedParam" ]]; then

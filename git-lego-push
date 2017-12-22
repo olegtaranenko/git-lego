@@ -44,6 +44,7 @@ EOF
 typeset args=()
 typeset verbose=0
 typeset doRecursive=1
+typeset doUpstream=1
 typeset doForce=0
 
 typeset initialPath
@@ -90,6 +91,13 @@ while [[ -n $1 ]]; do
       ;;
     --no-recursive|-R)
       doRecursive=0
+      ;;
+
+    --create-upstream|-u)
+      doUpstream=1
+      ;;
+    --no-create-upstream|-U)
+      doUpstream=0
       ;;
 
     --force|-f)
@@ -228,9 +236,14 @@ function prepare_push_level() {
   local tagsAlreadyAdded=0
 
   if [[ -z "$upstream" && "$detached" == 0 ]]; then
-    noUpstreamModules+=("$moduleName")
-    noUpstreamBranches+=("$moduleRefname")
-    checkDropAffected=1
+    if [[ "$doUpstream" == 1 ]]; then
+      noUpstreamModules+=("$moduleName")
+      noUpstreamBranches+=("$moduleRefname")
+      checkDropAffected=1
+    else
+      ret=1
+      dieMsg="'$moduleName' module has no upstream "
+    fi
   elif [[ "$upstreamAhead" > 0  && ("$detached" == 0  || "$doForce" == 1 ) ]]; then
     checkDropAffected=1
     if [[ -n "$detachedFrom" && "$detached" > 0 && "$managedReftype" == 1 && "$mismatched" == 1 ]]; then
@@ -320,8 +333,10 @@ cmd_default() {
 #  typeset affected=0
   local ret=0
   local index
+  local dieMsg
 
   pushd "$moduleFilePath" &>/dev/null
+
   prepare_push_level "$moduleFilePath" "$moduleName" "$modulePath"
   ret=$?
   
@@ -329,6 +344,7 @@ cmd_default() {
   if (( ! $ret )) && [ -f ${globals["$G_AFFECTED_MODULES"]} ]; then
     while read -a module; do
       local moreOptions=()
+      local upstreamBranch
 
       moduleName="${module[$MFS_MODULE_NAME]}"
 
@@ -338,8 +354,8 @@ cmd_default() {
       for noUpstreamModule in "${noUpstreamModules[@]}"; do
         if [[ "$noUpstreamModule" == "$moduleName" ]]; then
           moreOptions+=("$legoRemote")
-          branch="${noUpstreamBranches[$index]}"
-          moreOptions+=("$branch")
+          upstreamBranch="${noUpstreamBranches[$index]}"
+          moreOptions+=("$upstreamBranch")
           break
         fi
         index=$(( $index + 1 ))
@@ -359,14 +375,21 @@ cmd_default() {
 
       if (( "$doPlainPushOption" )); then
 #      echo "git push ${args[@]} ${moreOptions[@]}"
+        dieMsg="git push ${args[@]} ${moreOptions[@]}"
         git push ${args[@]} ${moreOptions[@]}
         ret=$?
+
+        if (( ! "$ret" )) && (( "$doUpstream" )) && [[ -n "$upstreamBranch" ]]; then
+          dieMsg="git branch --set-upstream-to=origin/$upstreamBranch $upstreamBranch"
+          git branch --set-upstream origin/$upstreamBranch $upstreamBranch
+          ret=$?
+        fi
       fi
 
-      if (( "$ret" )); then
-        pwd >&2
-        panic "'git push ${args[@]} ${moreOptions[@]}' failed"
-      else
+      if (( ! "$ret" )); then
+#        pwd >&2
+#        panic "'$dieMsg' failed"
+#      else
         wasPushed+=("${module[$MFS_MODULE_NAME]}")
         if (( "${#dangledModules[@]}" )) ; then
           index=0
@@ -403,7 +426,13 @@ cmd_default() {
         fi
       fi
     done < <(cat ${globals[$G_AFFECTED_MODULES]}  | (tac 2>/dev/null || tail -r))
+  fi
 #  else
+
+  if (( "$ret" )); then
+    cw_echo "$dieMsg"
+  fi
+
 #    mainWarn="Request to push is rejected. "
 #    (( "$verbose" )) && mainWarn+="Use '${FLAGS_PREFIX} -v' to figure out the reason."
 #    (( 1 == "$verbose" )) && mainWarn+="'${FLAGS_PREFIX} -v -v' to get more detailed information."
@@ -411,12 +440,23 @@ cmd_default() {
 #    cw_echo  "$mainWarn" \
 #    "Some mutual dependent repositories will not be pushed, but required." \
 #    "Pushing at current state will break consistence of modules hierarchy."
-  fi
+#  fi
 
   if (( ! "${#wasPushed[@]}" )); then
     cw_echo "No modules was pushed"
   elif (( "${#skippedModules[@]}" )); then
-    cw_echo "Not affected modules: ${skippedModules[*]}"
+    local modulesCount="${#skippedModules[@]}"
+    local msgSkipped="Not affected modules: "
+    local maxShownModules=5
+
+    if (( $modulesCount > $maxShownModules )); then
+      local rest=$(( $modulesCount - $maxShownModules ))
+      msgSkipped+="${skippedModules[@]:0:$maxShownModules} and $rest others..."
+    else
+      msgSkipped+="${skippedModules[*]}"
+    fi
+
+    cw_echo "$msgSkipped"
   fi
 
   popd &>/dev/null

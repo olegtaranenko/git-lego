@@ -206,13 +206,6 @@ prepare_checkout_level() {
 }
 
 
-default_pinned_policy() {
-echo "$FUNCNAME()" $@ >&2
-
-  echo "1" "1"
-}
-
-
 
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {
