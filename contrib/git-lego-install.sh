@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 
 
-	export POSIXLY_CORRECT=1
+export POSIXLY_CORRECT=1
 
-	FLAGS_PARENT="git flow"
 
 # The sed expression here replaces all backslashes by forward slashes.
 # This helps our Windows users, while not bothering our Unix users.
@@ -114,7 +113,6 @@ if [[ -e ${PROFILE} ]] || (( $doForce )); then
   if [[ "$doForce" == 1 && -z $PROFILE ]]; then
     PROFILE="~/.profile"
   fi
-  echo "Updating profile='${PROFILE}' ... " >&2
 #  env | grep -s GIT_LEGO_HOME > /dev/null
 #  if (( ! $? )); then
 #    echo "GIT_LEGO_HOME environment is already installed to '$GIT_LEGO_HOME'" >&2
@@ -124,6 +122,7 @@ if [[ -e ${PROFILE} ]] || (( $doForce )); then
 #  fi
   alreadyExists=$( echo $PATH | grep -o "$GL_BIN")
   if [[ -z "$alreadyExists" ]]; then
+    echo "Updating profile '${PROFILE}' ... " >&2
     typeset NEW_PATH="$GL_BIN:\$PATH"
     echo "PATH variable updated to $NEW_PATH" >&2
     ts=$( date )
