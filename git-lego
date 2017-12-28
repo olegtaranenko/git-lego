@@ -3151,7 +3151,7 @@ declare SUBCOMMAND
 # 0 means --pinned parameter not relevant to the command. If so, adding --pinned to command paramter causes a warning (or error?) 
 declare pinnedPolicy=1
 # TODO add git-lego setting? pro command ?
-declare pinnedParam
+typeset pinnedParam
 # if pinnedPolicy set to 1, defines pinned value, if parameter not given
 # 1 means command scope will include pinned repositories
 # Note that pinnedPolicy=0 means that command is been acting without any consideration about pinned or not pinned attribute

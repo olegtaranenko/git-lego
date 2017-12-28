@@ -209,7 +209,7 @@ function prepare_commit_level() {
   local applied=1
 
   if [[ "${MODULE_STATUS[$MS_COMMITABLE]}" == 1 ]]; then
-    if [[ "${MODULE_STATUS[$MS_DETACHED]}" == 0  || "$doForce" == 1 ]]; then
+    if [[ "${MODULE_STATUS[$MS_DETACHED]}" == 0  || "$pinnedParam" == 1 ]]; then
 
       if (( "$doAmend" )) && (( "${MODULE_STATUS[$MS_UPSTREAM_AHEAD]}" == 0 )) && (( ! "$doForceAmend" )); then
         warningAmend+=("$moduleName")
@@ -279,7 +279,7 @@ cmd_default() {
 
     local backIFS="$IFS"; IFS=","
     if (( "${#warningDetached}" )); then
-      cw_echo "To commit detached dirty module(s) use --force option: ${warningDetached[*]}"
+      cw_echo "To commit detached dirty module(s) use --pinned option: ${warningDetached[*]}"
       ret=1
     fi
 
@@ -291,7 +291,7 @@ cmd_default() {
 
     IFS="$backIFS"
 
-    if (( ! "$ret" ))&& (( "${#affectedModules[@]}" )); then
+    if (( ! "$ret" )) && (( "${#affectedModules[@]}" )); then
 
       if (( "$messageRequired" )) && (( ! "$messageDefined" )) && (( ! "$allowEmptyMessage" )); then
         local editMsgFile="${globals[$G_SCRIPT_TMP_DIRECTORY]}/COMMIT_EDITMSG"
