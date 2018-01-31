@@ -48,7 +48,14 @@ EOF
 typeset verbose=0
 typeset afterDash=()
 typeset stopOptions=0
-typeset initialPath doRecursive=0 reuse
+typeset doRecursive=0 reuse
+
+typeset initialPath
+typeset modulePath
+typeset moduleName
+typeset moduleFilePath
+typeset moduleInitialized
+typeset moduleGitDir
 #set -x
 
 ################################ PARAMETERS PARSING ################################
@@ -99,27 +106,29 @@ function prepare_pull_level () {
   local modulePath="$1"
   local moduleName="$2"
   local levelPath="$3"
+  local ret=0
 
-  pushd "${levelPath}" &>/dev/null
+  pushd "$levelPath" &>/dev/null
 
-  drop_to_affected ${levelPath}
+  drop_to_affected "$levelPath"
 
   # do recurse call for every sub-repos
   while read -a module; do
     local subModule="${module[0]}"
     local localPath="${module[1]}"
-    local path="${levelPath}"/"${localPath}"
+    local path="$levelPath"/"$localPath"
 
-    local childModulePath="${modulePath}"
-    if [[ ${modulePath:(-1)} != "/" ]]; then
-      local childModulePath+="/"
-    fi
+    local childModulePath="$modulePath"
+    [[ "${modulePath:(-1)}" != "/" ]] && childModulePath+="/"
     childModulePath+="$subModule"
 
-    prepare_pull_level "${childModulePath}" "${subModule}" "${path}"
+    prepare_pull_level "$childModulePath" "$subModule" "$path"
+    ret=$? || "$ret"
+
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
 
   popd &>/dev/null
+  return "$ret"
 
 }  ## of pull_level
 
@@ -127,32 +136,28 @@ function prepare_pull_level () {
 ################################ MAIN SCRIPT LOGIC ################################
 #set -x
 cmd_default() {
-  typeset modulePath=$(resolve_module_path "${initialPath}" "/")
-  read moduleName path < <(module_info "${modulePath}" "name" "path")
   typeset dieMsg
+  typeset affectedModules=()
   typeset skippedModules=()
   typeset affected=0
   typeset vetoed=0
-  #pushd ${path} &>/dev/null
-  cd ${path}
 
-  prepare_pull_level "${modulePath}" "${moduleName}" "${path}"
+  cd "$moduleFilePath"
 
-  if (( $affected )); then
+  prepare_pull_level "$modulePath" "$moduleName" "$moduleFilePath"
+
+  if (( "$affected" )); then
 
     while read -a module; do
-      cd ${module[$MFS_FULL_PATH]}
-      level_verbose_about_to ${module[@]}
+      cd "${module[$MFS_FULL_PATH]}"
+      level_verbose_about_to "${module[@]}"
 
       git pull "${args[@]}"
     done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))
   fi
 
-  if (( ${#skippedModules} )); then
-    cw_echo "Not affected modules: ${skippedModules[*]}"
-  fi
+  cw_show_affected_skipped
 
-  popd &>/dev/null
   umbrella_finalize
 
   exit $ret

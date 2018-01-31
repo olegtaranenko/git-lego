@@ -575,6 +575,32 @@ function cw_verbose_stop () {
   fi
 }
 
+#
+# Print out to console message line of format
+#      git-lego: Not affected modules: abc, def, ... + 5 other(s)
+# External arrays:
+#
+#   affectedModules,  skippedModules
+##
+cw_show_affected_skipped() {
+    if (( ! "${#affectedModules[@]}" )); then
+      cw_echo "No modules was pushed"
+    elif (( "${#skippedModules[@]}" )); then
+      local modulesCount="${#skippedModules[@]}"
+      local msgSkipped="Not affected modules: "
+      local maxShownModules=5
+
+      if (( $modulesCount > $maxShownModules )); then
+        local rest=$(( $modulesCount - $maxShownModules ))
+        msgSkipped+="${skippedModules[@]:0:$maxShownModules} and $rest others..."
+      else
+        msgSkipped+="${skippedModules[*]}"
+      fi
+
+      cw_echo "$msgSkipped"
+    fi
+}
+
 
 function splash() {
   (( "$skipSplash" )) && return
@@ -880,7 +906,8 @@ function level_verbose_about_to {
 #     $afterDash - array, which contains restricted module list, can be given after double dash or some other manner
 #     $affected  - this variable should be defined outside of this function (output variable)
 #
-# TODO take into account --recursive flag
+# TODO take into account --[no]-recursive flag
+# TODO take into account --[no]-pinned flags
 #
 function drop_to_affected() {
   local path=$1

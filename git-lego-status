@@ -176,9 +176,6 @@ function show_current_module_status {
 
   local verboseIssues infoIssues
 
-  # gather all additional fine information into $MODULE_STATUS global array
-  module_porcelain_status "$modulePath" status
-
   # two below variables are defined to cmd_default()
   (( "${MODULE_STATUS[$MS_DETACHED]}" )) && detached="${MODULE_STATUS[$MS_DETACHED]}"
   (( "${MODULE_STATUS[$MS_COMMITABLE]}" )) && commitable="${MODULE_STATUS[$MS_COMMITABLE]}"
@@ -372,9 +369,14 @@ function status_level() {
 #if [[ $modulePath == /ext ]]; then
 #set -x
 #fi
+
+  # gather all additional fine information into $MODULE_STATUS global array
+  module_porcelain_status "$modulePath" status
+
   drop_to_affected "$levelPath"
 
   (( ! $? )) && show_current_module_status "$@"
+
   local managedRefname="${MODULE_STATUS[$MS_MANAGED_REFNAME]}"
   local moduleRefname="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
   local moduleReftype="${MODULE_STATUS[$MS_DETACHED]}"

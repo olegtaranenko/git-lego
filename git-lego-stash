@@ -48,7 +48,14 @@ EOF
 typeset verbose=0
 typeset afterDash=()
 typeset stopOptions=0
-typeset initialPath doRecursive=0 reuse
+typeset doRecursive=0 reuse
+
+typeset initialPath
+typeset modulePath
+typeset moduleName
+typeset moduleFilePath
+typeset moduleInitialized
+typeset moduleGitDir
 #set -x
 
 ################################ PARAMETERS PARSING ################################
@@ -100,9 +107,9 @@ function prepare_stash_level () {
   local moduleName="$2"
   local levelPath="$3"
 
-  pushd "${levelPath}" &>/dev/null
+  pushd "$levelPath" &>/dev/null
 
-  drop_to_affected ${levelPath}
+  drop_to_affected "$levelPath"
 
 #git cat-file -p 5458 | grep -Eo "^author.* [[:digit:]]{10} [+-][[:digit:]]{4}" | sed -E "s/^author.* ([[:digit:]]{10}) [+-][[:digit:]]{4}/\1/"
 
@@ -110,7 +117,7 @@ function prepare_stash_level () {
   while read -a module; do
     local subModule="${module[0]}"
     local localPath="${module[1]}"
-    local path="$levelPath"/"$localPath"
+    local moduleFilePath="$levelPath"/"$localPath"
 
     local childModulePath="$modulePath"
     if [[ ${modulePath:(-1)} != "/" ]]; then
@@ -118,7 +125,7 @@ function prepare_stash_level () {
     fi
     childModulePath+="$subModule"
 
-    prepare_stash_level "${childModulePath}" "${subModule}" "${path}"
+    prepare_stash_level "$childModulePath" "$subModule" "$moduleFilePath"
   done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
 
   popd &>/dev/null
@@ -129,8 +136,6 @@ function prepare_stash_level () {
 ################################ MAIN SCRIPT LOGIC ################################
 #set -x
 cmd_default() {
-#  typeset modulePath=$(resolve_module_path "$initialPath" "/")
-#  read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
   typeset dieMsg
   typeset skippedModules=()
   typeset affected=0
@@ -153,7 +158,7 @@ cmd_default() {
     cw_echo "Not affected modules: ${skippedModules[*]}"
   fi
 
-  popd &>/dev/null
+#  popd &>/dev/null
   umbrella_finalize
 
   exit $ret

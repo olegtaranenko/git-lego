@@ -353,7 +353,6 @@ cmd_default() {
     fi
     IFS="$backIFS"
 
-    local wasPushed=()
     if (( ! $ret )) && [ -f ${globals["$G_AFFECTED_MODULES"]} ]; then
       while read -a module; do
         local moreOptions=()
@@ -413,7 +412,7 @@ cmd_default() {
         fi
 
         if (( ! "$ret" )); then
-          wasPushed+=("${module[$MFS_MODULE_NAME]}")
+          affectedModules+=("${module[$MFS_MODULE_NAME]}")
           if (( "${#dangledModules[@]}" )) ; then
             index=0
             for dangledModule in "${dangledModules[@]}"; do
@@ -465,23 +464,8 @@ cmd_default() {
   #    "Pushing at current state will break consistence of modules hierarchy."
   #  fi
 
-    if (( ! "${#wasPushed[@]}" )); then
-      cw_echo "No modules was pushed"
-    elif (( "${#skippedModules[@]}" )); then
-      local modulesCount="${#skippedModules[@]}"
-      local msgSkipped="Not affected modules: "
-      local maxShownModules=5
-
-      if (( $modulesCount > $maxShownModules )); then
-        local rest=$(( $modulesCount - $maxShownModules ))
-        msgSkipped+="${skippedModules[@]:0:$maxShownModules} and $rest others..."
-      else
-        msgSkipped+="${skippedModules[*]}"
-      fi
-
-      cw_echo "$msgSkipped"
-    fi
-
+    cw_show_affected_skipped
+    
     popd &>/dev/null
   fi
   umbrella_finalize

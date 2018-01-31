@@ -218,7 +218,7 @@ prepare_tag_level() {
 #echo "$FUNCNAME()" $@ >&2
 #pwd >&2
   local levelFilePath="$1"
-  [[ -z ${levelFilePath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+  [[ -z "$levelFilePath" ]] && panic "$FUNCNAME()... parameter 'path' is required"
 
   local moduleName="$2"
   local modulePath="$3"
@@ -274,7 +274,7 @@ prepare_tag_level() {
 }
 
 
-
+# deprecated
 _default_init_path_callback_() {
 #set -x
   local path="."
