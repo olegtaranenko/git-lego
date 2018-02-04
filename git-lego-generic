@@ -82,7 +82,7 @@ done
 
 
 generic_level() {
-#echo "$FUNCNAME()" $@ >&2
+echo "$FUNCNAME()" $@ >&2
   local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
 
@@ -95,30 +95,37 @@ generic_level() {
 
   shift 3
 
-  git "$GENERIC_ACTION" "${args[@]}"
+#  module_porcelain_status "$modulePath" "$GENERIC_ACTION"
+  drop_to_affected "$modulePath"
+  local moduleAffected=$?
 
-  if [ -f .gitmodules ]; then
+  if (( ! "$moduleAffected" )); then
+    git "$GENERIC_ACTION" "$@"
+  else
+    cw_verbose "$GENERIC_ACTION: module $moduleName ($modulePath) skipped..."
+  fi
+
+  if [[ -f .gitmodules && "$doRecursive" == 1 ]]; then
     while read -a module; do
       childRet=0
-      local moduleName="${module[0]}"
+      local subModuleName="${module[0]}"
       local localPath="${module[1]}"
       local subRepoPath="${levelPath}"/"${localPath}"
-      if [[ ${modulePath:(-1)} != "/" ]]; then
-        modulePath+="/"
-      fi
 
-      modulePath+="$moduleName"
+      local subModulePath="$modulePath"
+      [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
+      subModulePath+="$subModuleName"
 
-      read initialized < <( module_info ${modulePath} initialized )
+      read initialized < <( module_info "$subModulePath" "initialized" )
 
-      if (( $initialized )) ; then
+      if (( "$initialized" )) ; then
 
-        pushd "${subRepoPath}" &>/dev/null
-        generic_level "$subRepoPath" "$moduleName" "$modulePath" "${args[@]}"
+        pushd "$subRepoPath" &>/dev/null
+        generic_level "$subRepoPath" "$subModuleName" "$subModulePath" "$@"
         childRet=$?
         popd  &>/dev/null
 
-        (( $childRet > $ret )) && ret="$childRet"
+        (( "$childRet" > "$ret" )) && ret="$childRet"
       fi
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
@@ -136,6 +143,7 @@ cmd_default() {
 #  typeset modulePath=$(resolve_module_path "$initialPath" /)
 #  read moduleName moduleFilePath < <(module_info "$modulePath" "name" "path")
 
+#set -x
   local ret=0
   pushd "$moduleFilePath" &>/dev/null
   generic_level "$moduleFilePath" "$moduleName" "$modulePath"
@@ -143,4 +151,5 @@ cmd_default() {
 
   umbrella_finalize
   return "$ret"
+#set +x
 }

@@ -281,7 +281,37 @@ esac
 globals["$G_PLATFORM"]=platform
 
 
+# means whether the command is looking for --[no]-pinned command parameter and/or relevant setting
+# Ie. git pull by default skips fetching from pinned repositories
+# 0 means --pinned parameter not relevant to the command. If so, adding --pinned to command paramter causes a warning (or error?)
+typeset pinnedPolicy=1
+
+# if pinnedPolicy set to 1, defines pinned value, if parameter not given
+# 1 means command scope will include pinned repositories
+# NOTE that pinnedPolicy=0 means that command is been acting without any consideration about pinned or not pinned attribute
+# NOTE2: this is a hard coded default value per command, if no value in the git config is set
+typeset pinnedDefault=0
+
+
+# TODO add git-lego setting? pro command ?
+typeset pinnedSetting=0
+
+# Effective value of whether or not --[no-]pinned app-wide setting acts.
+# Most priority affected on this value, low to high
+#       1. pinnedDefault, if given in the script code
+#       2. pinnedSetting, if given per module/per command, because it will be retrieve from git config machinery of the current module
+#       3. parameter, if given in the command line
+#
+typeset pinnedFinal
+
+# parameter --[no-]pinned as it set in command line
+# If the parameter --[no-]pinned not given as parameter variable $pinnedParam will be  unset.
+# Use [[ ${pinnedParam:-unset} == "unset" ]] if you need to detect this state
+typeset pinnedParam
+
+
 umbrella_bootstrap() {
+echo "$FUNCNAME() $@" >&2
   local legoRemote=$(get_lego_setting "remote")
   local gitDir
   local umbrellaRepoDir
@@ -583,22 +613,30 @@ function cw_verbose_stop () {
 #   affectedModules,  skippedModules
 ##
 cw_show_affected_skipped() {
-    if (( ! "${#affectedModules[@]}" )); then
-      cw_echo "No modules was pushed"
-    elif (( "${#skippedModules[@]}" )); then
-      local modulesCount="${#skippedModules[@]}"
-      local msgSkipped="Not affected modules: "
-      local maxShownModules=5
+  local affectedCount="${#affectedModules[@]}"
 
-      if (( $modulesCount > $maxShownModules )); then
-        local rest=$(( $modulesCount - $maxShownModules ))
-        msgSkipped+="${skippedModules[@]:0:$maxShownModules} and $rest others..."
-      else
-        msgSkipped+="${skippedModules[*]}"
-      fi
+  if (( ! $affectedCount )); then
+    affectedCount=$(( $(cat ${globals[$G_AFFECTED_MODULES]} | wc -l ) ))
+  fi
 
-      cw_echo "$msgSkipped"
+  echo "affectedCount: $affectedCount"
+
+  if (( ! $affectedCount )); then
+    cw_echo "No modules was affected"
+  elif (( "${#skippedModules[@]}" )); then
+    local modulesCount="${#skippedModules[@]}"
+    local msgSkipped="Not affected modules: "
+    local maxShownModules=5
+
+    if (( $modulesCount > $maxShownModules )); then
+      local rest=$(( $modulesCount - $maxShownModules ))
+      msgSkipped+="${skippedModules[@]:0:$maxShownModules} and $rest others..."
+    else
+      msgSkipped+="${skippedModules[*]}"
     fi
+
+    cw_echo "$msgSkipped"
+  fi
 }
 
 
@@ -899,7 +937,7 @@ function level_verbose_about_to {
 #
 # Returns
 #     0 - module is found and listed in after dash parameters, or after-dash parameters are not set
-#     1 - module is found but not listed in after dash parameters (out-filtered)
+#     1 - module is found but not listed in after dash parameters (out-filtered) or by pinned property
 #     2 - N/A module is not found or wrong argument
 #
 # Globals using
@@ -914,6 +952,7 @@ function drop_to_affected() {
   local found=0
   local ret=1
 
+  # by default use current folder... maybe unsafe working because current folder can differ from modules FULL_PATH
   [[ -z "$path" ]] && path=$( pwd )
 
   while read -a module; do
@@ -933,14 +972,26 @@ function drop_to_affected() {
     fi
 
     if (( "$found" )); then
-      affected=1
-      ret=0
-      echo ${module[@]} >> ${globals[$G_AFFECTED_MODULES]}
-      break
+      local pinnedAffected=1
+      if (( "$pinnedPolicy" )) ; then
+        local detached=${module[$MFS_MODULE_MANAGED]}
+        if (( ! "$pinnedFinal" )) && [[ "$detached" == "pinned" ]]; then
+          pinnedAffected=0
+        fi
+      fi
+
+      if (( "$pinnedAffected" )); then
+        affected=1
+        ret=0
+        echo ${module[@]} >> ${globals[$G_AFFECTED_MODULES]}
+        break
+      else
+        skippedModules+=("${module[$MFS_MODULE_NAME]}")
+        cw_verbose "'$path' skipped because it is pinned and pinnedFinal is set to $pinnedFinal"
+      fi
     fi
-
   done < <(cat ${globals[$G_MODULES_FN]})
-
+set +x
   return "$ret"
 }
 
@@ -1010,6 +1061,7 @@ function get_module_path_down() {
 # 0 - correct path
 # 1 - wrong path
 function resolve_module_path() {
+echo "$FUNCNAME() $@" >&2
   local originPath
   local reminder="$1"
   local default="$2"
@@ -3173,17 +3225,6 @@ EOF
 
 declare SUBCOMMAND
 
-# means whether the command is looking for --[no]-pinned command parameter and/or relevant setting
-# Ie. git pull by default skips fetching from pinned repositories
-# 0 means --pinned parameter not relevant to the command. If so, adding --pinned to command paramter causes a warning (or error?) 
-declare pinnedPolicy=1
-# TODO add git-lego setting? pro command ?
-typeset pinnedParam
-# if pinnedPolicy set to 1, defines pinned value, if parameter not given
-# 1 means command scope will include pinned repositories
-# Note that pinnedPolicy=0 means that command is been acting without any consideration about pinned or not pinned attribute
-# TODO add git-lego setting? pro command ?
-declare pinnedDefault=0
 
 # delegate not recognized (not common) attributes further to command
 declare raw_args=()
@@ -3197,13 +3238,13 @@ global_parse_args() {
 #  local VERSION="0.1"
   for arg in "$@"; do
     case "$arg" in
-#      tag)
-#        # preserve using token as an argument
-#        if [[ -z "$SUBCOMMAND" ]]; then
-#          SUBCOMMAND="generic"
-#          GENERIC_ACTION="$arg"
-#        fi
-#        ;;
+      gc)
+        # preserve using token as an argument
+        if [[ -z "$SUBCOMMAND" ]]; then
+          SUBCOMMAND="generic"
+          GENERIC_ACTION="$arg"
+        fi
+        ;;
       --version)
         SUBCOMMAND="config"
 #        break ??
@@ -3215,6 +3256,7 @@ global_parse_args() {
       --no-pinned)
         pinnedParam=0
         ;;
+
       -*)
         raw_args+=("$arg")
         ;;
@@ -3255,39 +3297,57 @@ global_parse_args() {
 }
 
 
-default_pinned_policy() {
+pinned_metrics() {
 #echo "$FUNCNAME()" $@ >&2
   local command="$1"
 
   local results=()
-  local policy
-  local default
+  local pinnedPolicy
+  local pinnedFinal
+  local localPinnedParam="$pinnedParam"
+  local pinnedSetting
+  local pinnedDefault
 
   case "$command" in
-    status)
-      policy=0
+    status|clone|push)
+      pinnedPolicy=0
       ;;
     *)
-      policy=1
+      pinnedPolicy=1
   esac
 
-  results+=("$policy")
+  results+=("$pinnedPolicy")
 
-  if (( "$policy" )); then
+  if (( "$pinnedPolicy" )); then
     case "$command" in
       commit|checkout)
-        default=1
+        pinnedDefault=1
         ;;
       *)
-        default=0
+        pinnedDefault=0
     esac
-
-    results+=("$default")
   fi
+
+  if [[ "${localPinnedParam:-unset}" != "unset" ]]; then
+    pinnedFinal="$localPinnedParam"
+  else
+      local section="command.${command}"
+      local pinnedSetting=$( get_lego_setting_mode "pinned" "$section" "solo" )
+      if [[ "${pinnedSetting:-unset}" != "unset" ]]; then
+        pinnedFinal="$pinnedSetting"
+      else
+        pinnedFinal="$pinnedDefault"
+      fi
+  fi
+
+  results+=("${pinnedFinal:-2}")
+  results+=("${localPinnedParam:-2}")
+  results+=("${pinnedSetting:-2}")
+
+  results+=("$pinnedDefault")
 
   echo "${results[@]}"
 }
-
 
 #declare moduleName moduleFilePath
 main() {
@@ -3306,15 +3366,18 @@ main() {
     set -- "${raw_args[@]}"
 	fi
 
-  if type default_pinned_policy >/dev/null 2>&1; then
-    read pinnedPolicy pinnedDefault < <( default_pinned_policy "$SUBCOMMAND" "${raw_args[@]}" )
-  fi
-
   FLAGS_PREFIX="${0##*/} $SUBCOMMAND"
-	# run command
+
+	# load main script where
+	#
+	#     1) specific command's parameters are parsing
+	#     2) initialPath is detected
+	#     3) umbrella_bootstrap is called
+	#
 	. "$GITLEGO_DIR/git-lego-$SUBCOMMAND"
 
   local defInitPath="."
+  # if
   if type default_init_path_callback >/dev/null 2>&1; then
     defInitPath=$( default_init_path_callback "$SUBCOMMAND" "${raw_args[@]}" )
   fi
@@ -3323,16 +3386,18 @@ main() {
     cw_echo "Warning command '$SUBCOMMAND' not intended to consume --[no-]pinned parameter"
   fi
 
-  # variable initialPath is set usually in subcommand script
-  # by parsing arguments
-#  set -x
   modulePath=$( resolve_module_path "$initialPath" "$defInitPath" )
   if [[ -n "$modulePath" ]]; then
     read moduleName moduleFilePath moduleLocalPath moduleInitialized moduleGitDir moduleLegoMode < \
         <( module_info "$modulePath" "name" "path" "local" "initialized" "gitdir" "lego_mode")
+
+
+    read pinnedPolicy pinnedFinal pinnedParam pinnedSetting pinnedDefault < <( pinned_metrics "$SUBCOMMAND" "${raw_args[@]}" )
+
+    echo "pinnedPolicy $pinnedPolicy pinnedFinal $pinnedFinal pinnedParam $pinnedParam pinnedSetting $pinnedSetting pinnedDefault $pinnedDefault"
+
   	splash "$modulePath"
   fi
-#  set +x
 
 	SUBACTION="default"
 	# Particular script can figure out a specific action depends on arguments or other circumstances.

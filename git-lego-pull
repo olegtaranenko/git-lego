@@ -110,6 +110,8 @@ function prepare_pull_level () {
 
   pushd "$levelPath" &>/dev/null
 
+  module_porcelain_status "$modulePath" "pull"
+
   drop_to_affected "$levelPath"
 
   # do recurse call for every sub-repos
