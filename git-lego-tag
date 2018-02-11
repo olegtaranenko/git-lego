@@ -5,6 +5,27 @@ set +o posix
 umbrella_bootstrap
 
 
+################################ PARAMETER PARSING HELPERS ##############################
+path_or_revision() {
+  local ret=0
+  local runner="$1"
+
+  local pathOfRunner=$( resolve_module_path "$runner" )
+
+  if  [[ "$pathOfRunner" ]]; then
+    module_info "$pathOfRunner"
+    local notModule=$?
+
+    if (( ! "$notModule" )); then
+      echo "$pathOfRunner"
+      ret=1
+    fi
+  fi
+
+  return "$ret"
+}
+
+
 ################################ BRANCH-SPECIFIC HELP ################################
 function show_help() {
 cat << EOF
@@ -34,18 +55,39 @@ typeset afterDash=()
 typeset stopOptions=0
 typeset doCheckout=0
 typeset doRecursive=0 
-typeset doDelete=0 
 typeset doForce=0
 
-typeset initialPath
+# is defined in git-lego
+#typeset initialPath
+
+# git tag [-a] <tag-name> [<base-commit] [<module-path>]
+# base-commit have to be a refname, sha
+# <module-path> - initialPath
+# set implicitly for $initialPath - HEAD
+typeset baseCommit
+typeset givenBaseCommit=0
+typeset maxParameters=3
+typeset minParameters=0
+# initial path can be set as a global --initial-path=<module-path> command parameter
+typeset numParameters=0
+typeset givenParameters=()
+
 typeset modulePath
 typeset moduleName
 typeset moduleFilePath 
 typeset moduleInitialized
 typeset moduleGitDir
 
-typeset tagName=""
-typeset tagCommit
+typeset tagName
+#without -d -l and other options do set tag
+typeset doTag=0
+#without parameters doing list of all tags
+typeset doList=0
+typeset doDelete=0
+typeset doVerify=0
+# string representation of the 'tag' command
+typeset currentCommand
+
 typeset message
 typeset messageDefined=0
 typeset messageRequired=0
@@ -53,7 +95,7 @@ typeset affectedModules=()
 #typeset emptyMsgNotAllowed="Empty message not allowed" moved to git-lego
 typeset tagMissedMsg="Tag name is missed"
 
-#set -x
+set -x
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
   noAppendArg=0
@@ -74,6 +116,22 @@ while [[ -n $1 ]]; do
     --delete|-d)
       doDelete=1
       args+=("$1")
+      minParameters=1
+      maxParameters=2
+      ;;
+
+    --verify)
+      doVerify=1
+      minParameters=1
+      maxParameters=2
+      args+=("$1")
+      ;;
+
+    --list|-l)
+      doList=1
+      args+=("$1")
+      minParameters=0
+      maxParameters=2
       ;;
 
     --checkout|-c)
@@ -85,6 +143,37 @@ while [[ -n $1 ]]; do
       ;;
     --no-recursive|-R)
       doRecursive=0
+      ;;
+
+    --base-commit=*)
+      if (( ! "${#baseCommit}" )); then
+        baseCommit="${1#--base-commit=}"
+        if [[ -z "$baseCommit" ]]; then
+          die "missed base commit"
+        fi
+        maxParameters=$(( $maxParameters - 1 ))
+        givenBaseCommit=1
+      else
+        die "base commit already defined!"
+      fi
+      ;;
+
+    --base-commit)
+      if (( ! "${#baseCommit}" )); then
+        case "$2" in
+          '')
+            die "missed base commit"
+            ;;
+          *)
+            baseCommit="$2"
+            shift
+            ;;
+        esac
+        maxParameters=$(( $maxParameters - 1 ))
+        givenBaseCommit=1
+      else
+        die "base commit already defined!"
+      fi
       ;;
 
     --force|-f)
@@ -114,7 +203,6 @@ while [[ -n $1 ]]; do
       args+=("$1")
       ;;
 
-
     *)
       if (( "$stopOptions" )); then
         if [[ -z ${1%%-*} ]]; then
@@ -135,22 +223,65 @@ while [[ -n $1 ]]; do
             args+=("\"$1\"")
           fi
         fi
-      elif [[ -z "$tagName" ]]; then
-        tagName=$1
-      elif [[ -z "$initialPath" ]]; then
-        initialPath="$1"
-      elif [[ -z "$tagCommit" ]]; then
-        tagCommit="$1"
       else
-        die "unknown parameter: '$1'"
+        givenParameters+=("$1")
       fi
       ;;
   esac
+
   shift
 done
-#set +x
-################################ SCRIPT SPECIFIC METHODS ################################
 
+if [[ -n "$initialPath" ]]; then
+  maxParameters=$(( $maxParameters - 1 ))
+fi
+
+if (( ${#givenParameters[@]} > $maxParameters ))  || (( ${#givenParameters[@]} < $minParameters )) ; then
+  die_usage "tag" "wrong extra parameters"
+fi
+
+if [[ -z "${givenParameters[0]}" ]]; then
+  doList=1
+  currentCommand="list"
+else
+  commandScore=$(( $doList + $doDelete + $doTag + $doVerify ))
+
+  currentCommand=$( what_command "list delete verify tag")
+  if (( ! "$commandScore" )); then
+    doTag=1
+    currentCommand="tag"
+  elif (( "$commandScore" > 1 )); then
+    die_usage "tag" "incompatible options: $currentCommand"
+  fi
+
+  for theParam in "${givenParameters[@]}"; do
+    unset resolvedToken
+    if [[ -z "$initialPath" ]]; then
+      # only one parameter, either tag or module for list
+      resolvedToken=$( path_or_revision "$theParam" )
+      isPath=$?
+      if (( "$isPath" )); then
+        initialPath="$resolvedToken"
+      else
+        unset resolvedToken
+      fi
+    fi
+
+    if [[ -z "$resolvedToken" ]]; then
+      if [[ -z "$tagName" ]]; then
+        tagName="$theParam"
+      elif [[ -z "$baseCommit" ]]; then
+        baseCommit="$theParam"
+      else
+        die
+      fi
+    fi
+  done
+fi
+
+
+
+################################ SCRIPT SPECIFIC METHODS ################################
 tag_level() {
 #set -x
   local levelFilePath="$1"
@@ -166,7 +297,7 @@ tag_level() {
     local subModulePath="${module[$MFS_MODULE_PATH]}"
     local subModuleName="${module[$MFS_MODULE_NAME]}"
     cd "${module[$MFS_FULL_PATH]}"
-    git tag ${tagName}${tagCommit:+ $tagCommit} "${args[@]}"
+    git tag ${tagName}${baseCommit:+ $tagCommit} "${args[@]}"
     childRet=$?
 
     local actionDone
@@ -273,64 +404,28 @@ prepare_tag_level() {
   return "$ret"
 }
 
-
-# deprecated
-_default_init_path_callback_() {
-#set -x
-  local path="."
-  local pathIsFirst
-
-  # git-lego tag v0.1 .
-  # support 'git-lego tag module_name -a tag' format
-  if [[ -n "$tagCommit" && -n "$initialPath" && "$tagCommit" != "$initialPath" ]]; then
-    pathIsFirst=$( module_info "$tagCommit" "name" )
-    if [[ -n "$pathIsFirst" ]]; then
-      local pathIsSecond=$( module_info "$initialPath" "name" )
-      if [[ -z "$pathIsSecond" ]]; then
-        #swap tag and path
-        pathIsFirst="$tagCommit"
-        tagCommit="$initialPath"
-        initialPath="$pathIsFirst"
-        path="$initialPath"
-      fi
-    fi
-  elif [[ -z "$tagCommit" && -n "$initialPath" ]]; then
-    pathIsFirst=$( module_info "$initialPath" "name" )
-    if [[ -z "$pathIsFirst" ]]; then
-      tagCommit="$initialPath"
-      unset initialPath
-#      path="$initialPath"
-    fi
-  fi
-  echo "$path"
-#set +x
-}
-
 ################################ MAIN SCRIPT LOGIC ################################
 #
 # callback to detect what command should be called
 #
-#dispatch_subaction() {
-#  echo clean
-#}
-cmd_default() {
+dispatch_subaction() {
+  return "$currentCommand"
+}
+
+
+cmd_tag() {
 
   local ret=0
 #set -x
 
-  if [[ -z "$moduleFilePath" ]]; then
-    _default_init_path_callback_ &>/dev/null
-    typeset modulePath=$( resolve_module_path "." )
-    read moduleName moduleFilePath moduleLocalPath moduleInitialized moduleGitDir < <( module_info "$modulePath" "name" "path" "local" "initialized" "gitdir")
-  fi
+  echo "tagName=$tagName" "baseCommit=$baseCommit" "initialPath=$initialPath" "moduleFilePath=$moduleFilePath" "moduleName=$moduleName"
 
-#  echo "tagName=$tagName" "tagCommit=$tagCommit" "initialPath=$initialPath"
+  return 1
 
   if (( ! "${#tagName}" )); then
     dieMsg="$tagMissedMsg"
     ret=1
   fi
-#  echo "arguments: $tagName $tagCommit ${args[@]}"
 
   if (( "$moduleInitialized" )) && (( ! "$ret" )) ; then
     cd "$moduleFilePath"
@@ -364,6 +459,7 @@ EOT
         fi
       fi
     fi
+
     if (( ! "$ret" )) && (( "${#affectedModules[@]}" )); then
       tag_level "$moduleFilePath" "$moduleName" "$modulePath"
       ret=$?

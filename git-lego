@@ -534,13 +534,33 @@ function umbrella_finalize() {
 
 
 warn() { echo "$@" >&2; }
-#die() { warn "$@"; exit 1; }
+
+
+die_usage() {
+  local SUBCOMMAND="$1"
+  local msg="$2"
+
+  if [[ "$msg" ]]; then
+    cw_echo "$msg" >&2
+  fi
+
+  if type ${SUBCOMMAND}_usage >/dev/null 2>&1; then
+    ${SUBCOMMAND}_usage
+  fi
+
+  die "false"
+}
 
 
 function die() {
   local msg="$1"
-  [ -z "${msg}" ] && msg="Something goes wrong."
-  cw_echo "${msg}"
+  if [[ -z "$msg" ]] ; then
+    msg="Something goes wrong."
+  fi
+
+  if [[ "$msg" != "false" ]]; then
+    cw_echo "$msg" >&2
+  fi
   exit 1
 }
 
@@ -582,6 +602,7 @@ function cw_echo() {
     cw_verbose_stop
   fi
 }
+
 
 function cw_verbose_start () {
   cwVerboseContinue=1
@@ -715,6 +736,7 @@ detached_names_type() {
 
   return "$ret"
 }
+
 
 get_reftype_of_refname() {
 #echo "$FUNCNAME()" $@ >&2
@@ -1072,8 +1094,8 @@ echo "$FUNCNAME() $@" >&2
     reminder="$default"
   fi
 
-  if [[ -n ${reminder} ]]; then
-    if [[ -n ${reminder%%/*} && -n ${reminder%%../*} && $reminder != ".." && -n ${reminder%%./*} && $reminder != "." ]]; then
+  if [[ -n "$reminder" ]]; then
+    if [[ -n "${reminder%%/*}" && -n "${reminder%%../*}" && "$reminder" != ".." && -n "${reminder%%./*}" && "$reminder" != "." ]]; then
       reminder="./$reminder"
     fi
 
@@ -1090,7 +1112,7 @@ echo "$FUNCNAME() $@" >&2
       originPath=$(_m_pmd)
     fi
 
-    if (( ! "$ret" )) && (( ${#reminder} )); then
+    if (( ! "$ret" )) && (( "${#reminder}" )); then
       IFS="/" read -a parts <<< $reminder
       local partIndex=1
       for part in "${parts[@]}"; do
@@ -1177,6 +1199,7 @@ function module_info () {
   local index=0
   local ret=1
   local results=()
+
   for mp in "${g_module_paths[@]}"; do
     if [[ "$mp" = "$modulePath" ]]; then
       ret=0
@@ -1378,6 +1401,30 @@ function is_revision_correct() {
   echo "${results[@]}"
   return "$ret"
 }
+
+
+#
+# Function accepts array of variables' list and check out variable are constructed from this list
+# ie. list "delete verbose tag" will cause checking of variables doDelete, then doVerify, then doTag
+# If any variable are defined & is not equals 0, function produce output according to input array items.
+# If for example doTag=1 doDelete=0 doVerbose=1 -> "tag" "verbose" will be echoed
+# Not defined variables are ignored
+#
+what_command() {
+  local ret=()
+
+  for cmd in $@; do
+    local refCmd=do${cmd^}
+    local valCmd=${!refCmd}
+
+    if (( "${valCmd:-0}" )); then
+      ret+=("$cmd")
+    fi
+  done
+
+  echo "${ret[@]}"
+}
+
 
 
 assign_status_item() {
@@ -2157,13 +2204,13 @@ function _m_pmd() {
   IFS="/" read -a names <<< ${gitDir}
 
   for name in ${names[@]}; do
-    if [ ${name} != "modules" -a $name != ".git" ]; then
+    if [[ "$name" != "modules" && "$name" != ".git" ]]; then
       path+=/"$name"
     fi
   done
 
-  [[ -z $path ]] && path="/"
-  echo  "${path}"
+  [[ -z "$path" ]] && path="/"
+  echo  "$path"
 }
 
 
@@ -3249,12 +3296,16 @@ global_parse_args() {
         SUBCOMMAND="config"
 #        break ??
         ;;
-      
+
       --pinned)
         pinnedParam=1
         ;;
       --no-pinned)
         pinnedParam=0
+        ;;
+
+      --initial-path)
+        initialPath="$arg"
         ;;
 
       -*)
@@ -3309,7 +3360,7 @@ pinned_metrics() {
   local pinnedDefault
 
   case "$command" in
-    status|clone|push)
+    status|clone|push|checkout)
       pinnedPolicy=0
       ;;
     *)
@@ -3391,10 +3442,9 @@ main() {
     read moduleName moduleFilePath moduleLocalPath moduleInitialized moduleGitDir moduleLegoMode < \
         <( module_info "$modulePath" "name" "path" "local" "initialized" "gitdir" "lego_mode")
 
-
     read pinnedPolicy pinnedFinal pinnedParam pinnedSetting pinnedDefault < <( pinned_metrics "$SUBCOMMAND" "${raw_args[@]}" )
 
-    echo "pinnedPolicy $pinnedPolicy pinnedFinal $pinnedFinal pinnedParam $pinnedParam pinnedSetting $pinnedSetting pinnedDefault $pinnedDefault"
+#    echo "pinnedPolicy $pinnedPolicy pinnedFinal $pinnedFinal pinnedParam $pinnedParam pinnedSetting $pinnedSetting pinnedDefault $pinnedDefault"
 
   	splash "$modulePath"
   fi
