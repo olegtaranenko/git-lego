@@ -129,7 +129,7 @@ while [[ -n $1 ]]; do
       notAPath=1
       if [[ -z "$initialPath" ]]; then
         initialPath="$1"
-        initialModulePath=$(resolve_module_path "$initialPath" "..." "1")
+        initialModulePath=$( resolve_module_path "$initialPath" "..." 1 )
         notAPath=$?
 
         if (( $notAPath )); then
@@ -142,14 +142,17 @@ while [[ -n $1 ]]; do
         case "$2" in
           '')
             showParameter=1
-          ;;
+            ;;
+
           --unset)
             unsetParameter=1
             shift
-          ;;
+            ;;
+
           --*)
             showParameter=1
-          ;;
+            ;;
+
           *)
             parameterValue="$2"
             shift
@@ -171,7 +174,6 @@ if (( ! "$showLegoMode" )) && [[ -z "$nextLegoMode" ]] ; then
   [[ "$currentLegoMode" == "versioned" ]] && versioned=1
   [[ "$currentLegoMode" == "solo" ]] && solo=1
 fi
-
 
 
 ################################ SCRIPT SPECIFIC METHODS ################################
@@ -393,8 +395,8 @@ cmd_legomode() {
 
 #set -x
 cmd_default() {
-  typeset modulePath=$(resolve_module_path "${initialPath}" "/")
-  read moduleName filePath < <(module_info "${modulePath}" "name" "path")
+#  typeset modulePath=$(resolve_module_path "$initialPath" "/")
+#  read moduleName filePath < <(module_info "$modulePath" "name" "path")
   typeset dieMsg
   typeset skippedModules=()
   typeset affected=0

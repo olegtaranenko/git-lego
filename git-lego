@@ -311,7 +311,7 @@ typeset pinnedParam
 
 
 umbrella_bootstrap() {
-echo "$FUNCNAME() $@" >&2
+#echo "$FUNCNAME() $@" >&2
   local legoRemote=$(get_lego_setting "remote")
   local gitDir
   local umbrellaRepoDir
@@ -534,6 +534,31 @@ function umbrella_finalize() {
 
 
 warn() { echo "$@" >&2; }
+
+die_not_implemented_yet() {
+  die "feature '--$1' not implemented yet"
+}
+
+die_missed_param_value() {
+  die "missed value for $1"
+}
+
+die_parameter_duplicated() {
+  die "parameter $1 duplicated"
+}
+
+die_cant_resolve_module() {
+  local path="$1"
+  local quiet="${2:-0}"
+  local ret=0
+  cantResolve="Can't resolve module path '$1'"
+  if (( ! "$quiet" )); then
+    die "$cantResolve"
+  else
+    ret=1
+  fi
+  return "$ret"
+}
 
 
 die_usage() {
@@ -930,6 +955,50 @@ function get_module_path_up() {
 }
 
 
+# External
+#
+function get_module_path_down() {
+  local path
+  local originPath="$1"
+  local reminder="$2"
+  local pathRest=("$3")
+
+  local currentRest=""
+  local pathSuffixes=("")
+  if (( ${#pathRest[@]} )); then
+    for rest in ${pathRest[@]} ; do
+      currentRest+="/$rest"
+      pathSuffixes+=( "$currentRest" )
+    done
+  fi
+
+  if [[ "${originPath:(-1)}" == "/" ]]; then
+    path="$originPath$reminder"
+  else
+    path="$originPath/$reminder"
+  fi
+
+  local ret=1
+
+  for suffix in "${pathSuffixes[@]}"; do
+    local pathSuffix="$path$suffix"
+    for modulePath in "${g_module_paths[@]}"; do
+      if [[ "$modulePath" == "$pathSuffix" ]]; then
+        ret=0
+        break
+      fi
+    done
+
+    if (( ! "$ret" )); then
+      echo "$path"
+      break
+    fi
+  done
+
+  return "$ret"
+}
+
+
 function level_verbose_about_to {
 
   local path=$4
@@ -1013,7 +1082,7 @@ function drop_to_affected() {
       fi
     fi
   done < <(cat ${globals[$G_MODULES_FN]})
-set +x
+
   return "$ret"
 }
 
@@ -1034,56 +1103,51 @@ function module_descriptor() {
 
 
 
-# External
 #
-function get_module_path_down() {
-  local path
-  local originPath="$1"
-  local reminder="$2"
-  local pathRest=("$3")
+path_or_revision() {
+  local ret=0
+  local runner="$1"
 
-  local currentRest=""
-  local pathSuffixes=("")
-  if (( ${#pathRest[@]} )); then
-    for rest in ${pathRest[@]} ; do
-      currentRest+="/$rest"
-      pathSuffixes+=( "$currentRest" )
-    done
-  fi
+  local pathOfRunner=$( resolve_module_path "$runner" "..." 1 )
 
-  if [[ "${originPath:(-1)}" == "/" ]]; then
-    path="$originPath$reminder"
-  else
-    path="$originPath/$reminder"
-  fi
+  if  [[ "$pathOfRunner" ]]; then
+    module_info "$pathOfRunner"
+    local notModule=$?
 
-  local ret=1
-
-  for suffix in "${pathSuffixes[@]}"; do
-    local pathSuffix="$path$suffix"
-    for modulePath in "${g_module_paths[@]}"; do
-      if [[ "$modulePath" == "$pathSuffix" ]]; then
-        ret=0
-        break
-      fi
-    done
-
-    if (( ! "$ret" )); then
-      echo "$path"
-      break
+    if (( ! "$notModule" )); then
+      echo "$pathOfRunner"
+      ret=1
     fi
-  done
+  fi
 
   return "$ret"
 }
 
 
 #
-# returns
-# 0 - correct path
-# 1 - wrong path
+# Parameters
+#   $1 -  filePath of module.
+#         NOTE: It may or may not match to the directory, where placed .git entry (file or directory).
+#         That means path can be any valid sub-folder of the module
+#   $2 -  defaultFilePath, used in case of $1 is empty. Sometimes used "..." as a default,
+#         which semantically means 'do not use default value for resolving"
+#   $3 -  quiet: boolean, if true (1) don't produce notification output to stderr
+#
+# Returns (echo)
+#   module-path if it was resolved (exit code 0)
+#   nothing otherwise
+#
+#
+# Exit code
+#   0 - correct path
+#   1 - wrong path
+#
+# NOTE: the resolving not working before umbrella_bootstrap called,
+#       cos it being used g_module_paths[@] array to detection up/down path structure
+#
+
 function resolve_module_path() {
-echo "$FUNCNAME() $@" >&2
+#echo "$FUNCNAME() $@" >&2
   local originPath
   local reminder="$1"
   local default="$2"
@@ -1099,17 +1163,17 @@ echo "$FUNCNAME() $@" >&2
       reminder="./$reminder"
     fi
 
-    if [[ -z ${reminder%%/*} ]]; then
+    if [[ -z "${reminder%%/*}" ]]; then
       originPath="/"
-      reminder=${reminder:1}
-    elif [[ -z ${reminder%%../*} || $reminder == ".." ]]; then
-      reminder=${reminder:3}
+      reminder="${reminder:1}"
+    elif [[ -z "${reminder%%../*}" || "$reminder" == ".." ]]; then
+      reminder="${reminder:3}"
       originPath=$( _m_pmd )
       originPath=$( get_module_path_up "$originPath" )
-      (( $? )) && ret=$(die_cant_resolve "$1" "$quiet")
-    elif [[ -z ${reminder%%./*} || $reminder == "." ]]; then
-      reminder=${reminder:2}
-      originPath=$(_m_pmd)
+      (( $? )) && ret=$( die_cant_resolve_module "$1" "$quiet" )
+    elif [[ -z "${reminder%%./*}" || "$reminder" == "." ]]; then
+      reminder="${reminder:2}"
+      originPath=$( _m_pmd )
     fi
 
     if (( ! "$ret" )) && (( "${#reminder}" )); then
@@ -1118,19 +1182,19 @@ echo "$FUNCNAME() $@" >&2
       for part in "${parts[@]}"; do
         case "$part" in
           \.\.\.)
-            die_cant_resolve "$1" "$quiet"
+            die_cant_resolve_module "$1" "$quiet"
           ;;
           \.\.)
             originPath=$( get_module_path_up "$originPath" )
-            (( $? )) && die_cant_resolve "$1" "$quiet"
+            (( $? )) && die_cant_resolve_module "$1" "$quiet"
           ;;
           \.)
-            ## nothing
+            ## do nothing
           ;;
           *)
             local pathRest="${parts[@]:$partIndex}"
             originPath=$( get_module_path_down "$originPath" "$part" "${pathRest[@]}" )
-            (( $? )) && die_cant_resolve "$1" "$quiet"
+            (( $? )) && die_cant_resolve_module "$1" "$quiet"
           ;;
         esac
         partIndex=$(( $partIndex + 1 ))
@@ -1143,20 +1207,6 @@ echo "$FUNCNAME() $@" >&2
     echo "$originPath"
   fi
 
-  return "$ret"
-}
-
-
-die_cant_resolve() {
-  local path="$1"
-  local quiet="${2:-0}"
-  local ret=0
-  cantResolve="Can't resolve module path '$1'"
-  if (( ! "$quiet" )); then
-    die "$cantResolve"
-  else
-    ret=1
-  fi
   return "$ret"
 }
 
@@ -1410,21 +1460,20 @@ function is_revision_correct() {
 # If for example doTag=1 doDelete=0 doVerbose=1 -> "tag" "verbose" will be echoed
 # Not defined variables are ignored
 #
-what_command() {
+which_command() {
   local ret=()
 
   for cmd in $@; do
-    local refCmd=do${cmd^}
-    local valCmd=${!refCmd}
+    local cmdVariable=do${cmd^}
+    local value=${!cmdVariable}
 
-    if (( "${valCmd:-0}" )); then
+    if (( "${value:-0}" )); then
       ret+=("$cmd")
     fi
   done
 
   echo "${ret[@]}"
 }
-
 
 
 assign_status_item() {
@@ -3278,23 +3327,29 @@ declare raw_args=()
 
 global_parse_args() {
 #echo "$FUNCNAME()" "$@" >&2
-
   local potential_subcommand
-  local found=0 index=0
+  local found=0
+  local doGlobalParam=0
 
 #  local VERSION="0.1"
-  for arg in "$@"; do
-    case "$arg" in
+  while [[ -n "$1" ]]; do
+
+    doGlobalParam=0
+    case "$1" in
       gc)
         # preserve using token as an argument
         if [[ -z "$SUBCOMMAND" ]]; then
           SUBCOMMAND="generic"
-          GENERIC_ACTION="$arg"
+          GENERIC_ACTION="$1"
+        else
+          die "wrong command $1"
         fi
         ;;
+
       --version)
         SUBCOMMAND="config"
-#        break ??
+        raw_args+=("--version")
+        break
         ;;
 
       --pinned)
@@ -3305,42 +3360,54 @@ global_parse_args() {
         ;;
 
       --initial-path)
-        initialPath="$arg"
+        if [[ -z "$initialPath" ]]; then
+          if [[ -z "$2" ]]; then
+            die_missed_param_value "$1"
+          else
+            initialPath="$2"
+            shift
+          fi
+        else
+          die_parameter_duplicated "$1"
+        fi
+        ;;
+
+      --initial-path=*)
+        if [[ -z "$initialPath" ]]; then
+          initialPath="${1#*=}"
+          if [[ -z "$initialPath" ]]; then
+            die_missed_param_value "$1"
+          fi
+        else
+          die_parameter_duplicated "$1"
+        fi
         ;;
 
       -*)
-        raw_args+=("$arg")
+        raw_args+=("$1")
         ;;
+
       *)
         if [[ -z "$SUBCOMMAND" ]]; then
-          if [ -e "$GITLEGO_DIR/git-lego-$arg" ]; then
-            SUBCOMMAND="$arg"
+          if [ -e "$GITLEGO_DIR/git-lego-$1" ]; then
+            SUBCOMMAND="$1"
             found=1
-            shift
+#            shift
           else
             if [[ -z "$potential_subcommand" ]]; then
-              potential_subcommand="$arg"
+              potential_subcommand="$1"
             else
-              raw_args+=("$arg")
+              raw_args+=("$1")
             fi
           fi
         else
-          raw_args+=("$arg")
+          raw_args+=("$1")
         fi
       ;;
     esac
-    shift;
-    index=$(( $index + 1 ))
-  done
 
-  if [[ -z "$SUBCOMMAND" ]]; then
-    case "$arg" in
-      version)
-        SUBCOMMAND="config"
-        raw_args+=("--version")
-        ;;
-    esac
-  fi
+    shift
+  done
 
   if [[ -z "$SUBCOMMAND" && -n "$potential_subcommand" ]]; then
     SUBCOMMAND="$potential_subcommand"

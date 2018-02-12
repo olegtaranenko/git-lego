@@ -5,27 +5,6 @@ set +o posix
 umbrella_bootstrap
 
 
-################################ PARAMETER PARSING HELPERS ##############################
-path_or_revision() {
-  local ret=0
-  local runner="$1"
-
-  local pathOfRunner=$( resolve_module_path "$runner" )
-
-  if  [[ "$pathOfRunner" ]]; then
-    module_info "$pathOfRunner"
-    local notModule=$?
-
-    if (( ! "$notModule" )); then
-      echo "$pathOfRunner"
-      ret=1
-    fi
-  fi
-
-  return "$ret"
-}
-
-
 ################################ BRANCH-SPECIFIC HELP ################################
 function show_help() {
 cat << EOF
@@ -95,7 +74,6 @@ typeset affectedModules=()
 #typeset emptyMsgNotAllowed="Empty message not allowed" moved to git-lego
 typeset tagMissedMsg="Tag name is missed"
 
-set -x
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
   noAppendArg=0
@@ -246,7 +224,7 @@ if [[ -z "${givenParameters[0]}" ]]; then
 else
   commandScore=$(( $doList + $doDelete + $doTag + $doVerify ))
 
-  currentCommand=$( what_command "list delete verify tag")
+  currentCommand=$( which_command "list delete verify tag")
   if (( ! "$commandScore" )); then
     doTag=1
     currentCommand="tag"
@@ -409,18 +387,38 @@ prepare_tag_level() {
 # callback to detect what command should be called
 #
 dispatch_subaction() {
-  return "$currentCommand"
+  local ret="$currentCommand"
+  if [[ "$ret" == "delete" ]]; then
+    ret="tag"
+  fi
+  echo "$ret"
 }
 
+
+cmd_list() {
+  local ret=0
+
+  die_not_implemented_yet "$currentCommand"
+
+  umbrella_finalize
+  return "$ret"
+}
+
+cmd_verify() {
+  local ret=0
+  if (( ! "${#tagName}" )); then
+    dieMsg="$tagMissedMsg"
+    ret=1
+  fi
+
+  die_not_implemented_yet "$currentCommand"
+  umbrella_finalize
+  return "$ret"
+}
 
 cmd_tag() {
 
   local ret=0
-#set -x
-
-  echo "tagName=$tagName" "baseCommit=$baseCommit" "initialPath=$initialPath" "moduleFilePath=$moduleFilePath" "moduleName=$moduleName"
-
-  return 1
 
   if (( ! "${#tagName}" )); then
     dieMsg="$tagMissedMsg"
