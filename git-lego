@@ -3390,8 +3390,16 @@ global_parse_args() {
         fi
         ;;
 
-      -*)
+      --*)
         raw_args+=("$1")
+        ;;
+
+      -*)
+        local getOpt=${1:1}
+        for (( n=0; n < ${#getOpt}; n++ ))
+        do
+          raw_args+=("-${getOpt:n:1}")
+        done
         ;;
 
       *)

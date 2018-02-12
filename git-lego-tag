@@ -74,7 +74,6 @@ typeset affectedModules=()
 #typeset emptyMsgNotAllowed="Empty message not allowed" moved to git-lego
 typeset tagMissedMsg="Tag name is missed"
 
-set -x
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
   noAppendArg=0
@@ -190,18 +189,9 @@ while [[ -n $1 ]]; do
           afterDash+=("$1")
         fi
       elif [[ -z ${1%%-*} ]]; then
-        args+=($1)
-        # detect -m option inside of ie. -am
-        if (( ! "$messageDefined" )) ; then
-          messageDefined=$( echo "$1" | grep -c m 2>/dev/null )
-          if (( "$messageDefined" )); then
-            shift
-            if [[ -z "$1" ]]; then
-               die "$emptyMsgNotAllowed"
-            fi
-            args+=("\"$1\"")
-          fi
-        fi
+      set -x
+        args+=("$1")
+        set +x
       else
         if [[ -z "$initialPath" ]]; then
           initialPath=$( path_or_revision "$1" )
@@ -263,7 +253,6 @@ else
   done
 fi
 
-set +x
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 tag_list_level() {
@@ -436,6 +425,10 @@ cmd_list() {
 
   if (( "$moduleInitialized" )) && (( ! "$ret" )) ; then
     cd "$moduleFilePath"
+
+    if (( "${#args[@]}" )); then
+      cw_echo "extra parameters for git [${#args[@]}]: ${args[*]}"
+    fi
 
     doRecursive=${doRecursive:-1}
     prepare_tag_level "$moduleFilePath" "$moduleName" "$modulePath"
