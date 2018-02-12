@@ -1104,6 +1104,13 @@ function module_descriptor() {
 
 
 #
+# returns (echo)
+#     modulePath - module path qualified from root, ie. /root/submodule (exit code 1)
+#
+# exit code:
+#   1 if checked parameter is module path
+#   0 otherwise
+#
 path_or_revision() {
   local ret=0
   local runner="$1"

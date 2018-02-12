@@ -33,7 +33,7 @@ typeset verbose=0
 typeset afterDash=()
 typeset stopOptions=0
 typeset doCheckout=0
-typeset doRecursive=0 
+#typeset doRecursive=0
 typeset doForce=0
 
 # is defined in git-lego
@@ -74,6 +74,7 @@ typeset affectedModules=()
 #typeset emptyMsgNotAllowed="Empty message not allowed" moved to git-lego
 typeset tagMissedMsg="Tag name is missed"
 
+set -x
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
   noAppendArg=0
@@ -202,7 +203,12 @@ while [[ -n $1 ]]; do
           fi
         fi
       else
-        givenParameters+=("$1")
+        if [[ -z "$initialPath" ]]; then
+          initialPath=$( path_or_revision "$1" )
+          if (( ! $? )); then
+            givenParameters+=("$1")
+          fi
+        fi
       fi
       ;;
   esac
@@ -257,9 +263,39 @@ else
   done
 fi
 
-
+set +x
 
 ################################ SCRIPT SPECIFIC METHODS ################################
+tag_list_level() {
+  local levelFilePath="$1"
+  [[ -z ${levelFilePath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+
+  local moduleName="$2"
+  local modulePath="$3"
+
+  local ret=0   # return code
+  local childRet=0 # child return code
+
+  while read -a module; do
+    local subModulePath="${module[$MFS_MODULE_PATH]}"
+    local subModuleName="${module[$MFS_MODULE_NAME]}"
+
+    echo "" >&2
+    echo "    Module: $subModuleName [$subModulePath]" >&2
+
+    cd "${module[$MFS_FULL_PATH]}"
+    git tag --list "${args[@]}"
+    childRet=$?
+
+    if (( "$childRet" > "$ret" )) ; then
+      ret="$childRet"
+      break
+    fi
+  done < <(cat ${globals[$G_AFFECTED_MODULES]})
+
+  return "$ret"
+}
+
 tag_level() {
 #set -x
   local levelFilePath="$1"
@@ -368,7 +404,7 @@ prepare_tag_level() {
         read initialized managed < <( module_info "$subModulePath" "initialized" "managed" )
 
         if (( "$initialized" )); then
-          pushd "${subRepoPath}" &>/dev/null
+          pushd "$subRepoPath" &>/dev/null
           prepare_tag_level "$subRepoPath" "$moduleName" "$subModulePath"
           childRet=$?
           popd  &>/dev/null
@@ -398,7 +434,18 @@ dispatch_subaction() {
 cmd_list() {
   local ret=0
 
-  die_not_implemented_yet "$currentCommand"
+  if (( "$moduleInitialized" )) && (( ! "$ret" )) ; then
+    cd "$moduleFilePath"
+
+    doRecursive=${doRecursive:-1}
+    prepare_tag_level "$moduleFilePath" "$moduleName" "$modulePath"
+    ret=$?
+
+    if (( ! "$ret" )) && (( "${#affectedModules[@]}" )); then
+      tag_list_level "$moduleFilePath" "$moduleName" "$modulePath"
+      ret=$?
+    fi
+  fi
 
   umbrella_finalize
   return "$ret"
@@ -427,6 +474,7 @@ cmd_tag() {
 
   if (( "$moduleInitialized" )) && (( ! "$ret" )) ; then
     cd "$moduleFilePath"
+    doRecursive=${doRecursive:-0}
     prepare_tag_level "$moduleFilePath" "$moduleName" "$modulePath"
     ret=$?
 
