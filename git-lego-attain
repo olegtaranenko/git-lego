@@ -34,7 +34,7 @@ EOF
 
 typeset currentLegoMode
 
-typeset verbose=0 stopOptions=0
+typeset verbose=0
 typeset doUpdate=1
 
 #
@@ -80,10 +80,6 @@ while [[ -n $1 ]]; do
       ;;
     -v|--verbose)
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
-      ;;
-
-    --)
-      stopOptions=1
       ;;
 
     --recursive|-r)
@@ -183,13 +179,7 @@ while [[ -n $1 ]]; do
 
 
     *)
-      if (( $stopOptions )); then
-        if [[ -z ${1%%-*} ]]; then
-          see_help "after '--' additional options ($1) are not allowed "
-        else
-          explicitModules+=($1)
-        fi
-      elif [[ -z ${initialPath} ]]; then
+      if [[ -z ${initialPath} ]]; then
         initialPath=$1
       else
         die "error in parameters [$1]"

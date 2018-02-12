@@ -29,8 +29,6 @@ EOF
 }
 
 typeset verbose=0
-typeset afterDash=()
-typeset stopOptions=0
 typeset initialPath doRecursive=1 doForce=1 cleanSolo=0 cleanVersioned=0
 
 ################################ PARAMETERS PARSING ################################
@@ -43,10 +41,6 @@ while [[ -n $1 ]]; do
       ;;
     -v|--verbose)
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
-      ;;
-
-    --)
-      stopOptions=1
       ;;
 
     --recursive|-r)
@@ -75,13 +69,7 @@ while [[ -n $1 ]]; do
       ;;
 
     *)
-      if (( $stopOptions )); then
-        if [[ -z ${1%%-*} ]]; then
-          die "after '--' additional options ($1) are not allowed "
-        else
-          afterDash+=($1)
-        fi
-      elif [[ -z ${1%%-*} ]]; then
+      if [[ -z ${1%%-*} ]]; then
         args+=($1)
       elif [[ -z ${initialPath} ]]; then
         initialPath=$1

@@ -47,14 +47,11 @@ EOF
 
 #echo  "${cwRoot} ${gitDir}"
 typeset verbose=0
-typeset afterDash=()
-typeset stopOptions=0
 typeset initialPath mergeMessage commitTemplate doRecursive=0 reuse doAppendUntracked=1
 #set -x
 
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
-  (( $stopOptions )) && [[ -z ${1%%-*}  ]] && die "after '--' additional options ($1) are not allowed "
   noAppendArg=0
   case $1 in
     -h|-\?|--help)

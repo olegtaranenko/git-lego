@@ -52,15 +52,11 @@ typeset modulePath
 typeset moduleName
 typeset moduleFilePath
 
-typeset afterDash=()
-typeset stopOptions=0
-
-# TODO add setting 
+# TODO add setting
 typeset doHintOptions=0
 #set -x
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
-  (( $stopOptions )) && [[ -z ${1%%-*}  ]] && die "after '--' additional options ($1) are not allowed "
   case $1 in
     -h|-\?|--help)
       show_help
@@ -77,17 +73,8 @@ while [[ -n $1 ]]; do
       doHintOptions=0
       ;;
 
-    --)
-      stopOptions=1
-      ;;
     *)
-      if (( $stopOptions )); then
-        if [[ -z ${1%%-*} ]]; then
-          die "after '--' additional options ($1) are not allowed "
-        else
-          afterDash+=($1)
-        fi
-      elif [[ -z ${1%%-*} ]]; then
+      if [[ -z ${1%%-*} ]]; then
         args+=($1)
       elif [[ -z ${initialPath} ]]; then
         initialPath="$1"

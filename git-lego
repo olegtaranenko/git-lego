@@ -1051,15 +1051,15 @@ function drop_to_affected() {
 
     if [[ "$path" == "${module[$MFS_MODULE_PATH]}" || "$path" == "${module[$MFS_FULL_PATH]}" ]]; then
       found=1
-      if (( "${#afterDash[@]}" )); then
-        found=0
-        for branch in "${afterDash[@]}"; do
-          if [[ "${module[$MFS_MODULE_NAME]}" == "$branch" ]]; then
-            found=1
-            break
-          fi
-        done
-      fi
+#      if (( "${#afterDash[@]}" )); then
+#        found=0
+#        for branch in "${afterDash[@]}"; do
+#          if [[ "${module[$MFS_MODULE_NAME]}" == "$branch" ]]; then
+#            found=1
+#            break
+#          fi
+#        done
+#      fi
     fi
 
     if (( "$found" )); then

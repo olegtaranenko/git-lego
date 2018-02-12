@@ -30,8 +30,6 @@ EOF
 
 typeset args=()
 typeset verbose=0
-typeset afterDash=()
-typeset stopOptions=0
 typeset doCheckout=0
 #typeset doRecursive=0
 typeset doForce=0
@@ -78,10 +76,6 @@ typeset tagMissedMsg="Tag name is missed"
 while [[ -n $1 ]]; do
   noAppendArg=0
   case $1 in
-    --)
-      stopOptions=1
-      ;;
-
     --message|-m)
       messageDefined=1
       args+=("$1")
@@ -182,13 +176,7 @@ while [[ -n $1 ]]; do
       ;;
 
     *)
-      if (( "$stopOptions" )); then
-        if [[ -z ${1%%-*} ]]; then
-          die "after '--' additional options ($1) are not allowed "
-        else
-          afterDash+=("$1")
-        fi
-      elif [[ -z ${1%%-*} ]]; then
+      if [[ -z ${1%%-*} ]]; then
       set -x
         args+=("$1")
         set +x

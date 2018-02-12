@@ -55,8 +55,6 @@ typeset moduleInitialized
 typeset moduleGitDir
 
 typeset initialPath
-typeset afterDash=()
-typeset stopOptions=0
 typeset fetchBefore=0
 typeset pushAllTags=0
 typeset remoteParam branchParam
@@ -77,7 +75,6 @@ typeset legoRemote="${globals[$G_LEGO_REMOTE]}"
 ################################ PARAMETERS PARSING ################################
 #set -x
 while [[ -n $1 ]]; do
-  (( $stopOptions )) && [[ -z ${1%%-*}  ]] && die "after '--' additional options ($1) are not allowed "
   case $1 in
     -h|-\?|--help)
       show_help
@@ -150,17 +147,8 @@ while [[ -n $1 ]]; do
 ## TODO check if branch name, given in parameters for fix dangled commits does not exists
 #      ;;
 
-    --)
-      stopOptions=1
-      ;;
     *)
-      if (( $stopOptions )); then
-        if [[ -z ${1%%-*} ]]; then
-          die "after '--' additional options ($1) are not allowed "
-        else
-          afterDash+=($1)
-        fi
-      elif [[ -z ${1%%-*} ]]; then
+      if [[ -z ${1%%-*} ]]; then
         args+=("$1")
       elif [[ -z "$initialPath" ]]; then
         initialPath="$1"

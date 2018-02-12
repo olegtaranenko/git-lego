@@ -46,8 +46,6 @@ EOF
 typeset args=()
 
 typeset verbose=0
-typeset afterDash=()
-typeset stopOptions=0
 
 typeset initialPath
 typeset modulePath
@@ -158,18 +156,8 @@ while [[ -n "$1" ]]; do
       doAppendUntracked=0
       ;;
 
-    --)
-      stopOptions=1
-      ;;
-
     *)
-      if (( $stopOptions )); then
-        if [[ -z ${1%%-*} ]]; then
-          die "after '--' additional options ($1) are not allowed "
-        else
-          afterDash+=($1)
-        fi
-      elif [[ -z ${1%%-*} ]]; then
+      if [[ -z ${1%%-*} ]]; then
         args+=("$1")
         if (( ! "$messageDefined" )) ; then
           messageDefined=$( echo "$1" | grep -c m 2>/dev/null )

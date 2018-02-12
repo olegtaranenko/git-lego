@@ -63,7 +63,7 @@ OPTIONS:
 EOF
 }
 
-typeset verbose=0  stopOptions=0
+typeset verbose=0
 #typeset doAdd=0 # by default do not add
 typeset revision
 typeset commit=0 doForce=0
@@ -92,7 +92,6 @@ typeset updateManagedRef=0
 
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
-  (( $stopOptions )) && [[ -z ${1%%-*}  ]] && die "after '--' additional options ($1) are not allowed "
   noAppendArg=0
   case $1 in
     -h|-\?|--help)
@@ -102,10 +101,6 @@ while [[ -n $1 ]]; do
     -v|--verbose)
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
       noAppendArg=1
-      ;;
-
-    --)
-      stopOptions=1
       ;;
 
     --commit)

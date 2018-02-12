@@ -91,25 +91,8 @@ while [[ -n $1 ]]; do
       doRecursive=0
       ;;
 
-    --)
-      stopOptions=1
-      args+=("$1")
-      ;;
-
     *)
-      if (( $stopOptions )); then
-        if [[ -z ${1%%-*} ]]; then
-          die "after '--' additional options ($1) are not allowed "
-        else
-          if [[ -z "$repoUrl" ]]; then
-            args+=("$1")
-            repoUrl="$1"
-          elif [[ -z "$repoPath" ]]; then
-            args+=("$1")
-            repoPath="$1"
-          fi
-        fi
-      elif [[ -z "${1%%-*}" ]]; then
+      if [[ -z "${1%%-*}" ]]; then
         args+=("$1")
       elif [[ -z "$repoUrl" ]]; then
         args+=("$1")

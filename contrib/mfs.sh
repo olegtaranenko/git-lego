@@ -160,7 +160,7 @@ _m_help_options
 
 pmd() {
   while [[ -n $1 ]]; do
-    (( $stopOptions )) && [[ -z ${1%%-*}  ]] && return 1
+    [[ -z ${1%%-*}  ]] && return 1
     case $1 in
       -h|-\?|--help)
         _pmd_help $FUNCNAME
@@ -210,7 +210,7 @@ mls() {
   local path=$1
   local ret=0
   while [[ -n $1 ]]; do
-    (( $stopOptions )) && [[ -z ${1%%-*}  ]] && return 1
+    [[ -z ${1%%-*}  ]] && return 1
     case $1 in
       -h|-\?|--help)
         _mls_help  $FUNCNAME

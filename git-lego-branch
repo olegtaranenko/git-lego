@@ -79,7 +79,6 @@ typeset doSync=1
 typeset doAutoCommit=1
 typeset doPush=0
 typeset doCurrent=0
-typeset stopOptions=0
 typeset doUpdate=0
 typeset doUmbrella=1
 typeset doRecursive=0
@@ -94,7 +93,6 @@ excludes=()
 
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
-  (( $stopOptions )) && [[ -z ${1%%-*}  ]] && die "after '--' additional options ($1) are not allowed "
   case $1 in
     -h|-\?|--help)
       show_help
@@ -175,27 +173,13 @@ while [[ -n $1 ]]; do
         doDelete=$1
       fi
       ;;
-    --)
-      stopOptions=1
-      ;;
     *)
       if [[ -z ${1%%-*} ]]; then
         # TODO take into account getopts parsing call
         die "Unknown option $1"
       fi
 
-      if (( ! $stopOptions )); then
-        if [[ -z ${branchName} ]]; then
-          branchName="$1"
-          doUpdate=1
-        elif [[ -n ${1%%-*} ]]; then
-            die "Fork name options '$1' is not supported for now.
-        Please first do 'checkout $1' as base for creating new branch '$branchName'"
-
-        fi
-      else
-        repos[1+${#repos[@]}]="$1"
-      fi
+      repos+=("$1")
       ;;
   esac
   shift
