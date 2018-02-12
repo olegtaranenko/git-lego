@@ -261,7 +261,7 @@ tag_list_level() {
     echo "    Module: $subModuleName [$subModulePath]" >&2
 
     cd "${module[$MFS_FULL_PATH]}"
-    git tag --list "${args[@]}"
+    git tag --list "${args[@]}" "${g_extra_git_params[@]}"
     childRet=$?
 
     if (( "$childRet" > "$ret" )) ; then
@@ -288,7 +288,7 @@ tag_level() {
     local subModulePath="${module[$MFS_MODULE_PATH]}"
     local subModuleName="${module[$MFS_MODULE_NAME]}"
     cd "${module[$MFS_FULL_PATH]}"
-    git tag ${tagName}${baseCommit:+ $tagCommit} "${args[@]}"
+    git tag ${tagName} "${args[@]}" "${g_extra_git_params[@]}"
     childRet=$?
 
     local actionDone
@@ -414,8 +414,9 @@ cmd_list() {
   if (( "$moduleInitialized" )) && (( ! "$ret" )) ; then
     cd "$moduleFilePath"
 
-    if (( "${#args[@]}" )); then
-      cw_echo "extra parameters for git [${#args[@]}]: ${args[*]}"
+    if (( "${#args[@]}" )) || (( "${#g_extra_git_params[@]}" )); then
+      local total=$(( ${#args[@]} + ${#g_extra_git_params[@]} ))
+      cw_echo "extra parameters for git [$total]: ${args[*]} ${g_extra_git_params[*]}"
     fi
 
     doRecursive=${doRecursive:-1}

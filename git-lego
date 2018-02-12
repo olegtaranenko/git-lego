@@ -1035,8 +1035,7 @@ function level_verbose_about_to {
 #     $afterDash - array, which contains restricted module list, can be given after double dash or some other manner
 #     $affected  - this variable should be defined outside of this function (output variable)
 #
-# TODO take into account --[no]-recursive flag
-# TODO take into account --[no]-pinned flags
+# NOTODO take into account --[no]-recursive flag.... ? it should be resolved not here. In the prepare-level methods !!
 #
 function drop_to_affected() {
   local path=$1
@@ -3330,96 +3329,104 @@ declare SUBCOMMAND
 
 
 # delegate not recognized (not common) attributes further to command
-declare raw_args=()
+typeset raw_args=()
+typeset g_extra_git_params=()
 
 global_parse_args() {
 #echo "$FUNCNAME()" "$@" >&2
   local potential_subcommand
   local found=0
   local doGlobalParam=0
+  local stopOptions=0
 
 #  local VERSION="0.1"
+
   while [[ -n "$1" ]]; do
-
-    doGlobalParam=0
-    case "$1" in
-      gc)
-        # preserve using token as an argument
-        if [[ -z "$SUBCOMMAND" ]]; then
-          SUBCOMMAND="generic"
-          GENERIC_ACTION="$1"
-        else
-          die "wrong command $1"
-        fi
-        ;;
-
-      --version)
-        SUBCOMMAND="config"
-        raw_args+=("--version")
-        break
-        ;;
-
-      --pinned)
-        pinnedParam=1
-        ;;
-      --no-pinned)
-        pinnedParam=0
-        ;;
-
-      --initial-path)
-        if [[ -z "$initialPath" ]]; then
-          if [[ -z "$2" ]]; then
-            die_missed_param_value "$1"
+    if (( $stopOptions )); then
+      g_extra_git_params+=("$1")
+    else
+      case "$1" in
+        gc)
+          # preserve using token as an argument
+          if [[ -z "$SUBCOMMAND" ]]; then
+            SUBCOMMAND="generic"
+            GENERIC_ACTION="$1"
           else
-            initialPath="$2"
-            shift
+            die "wrong command $1"
           fi
-        else
-          die_parameter_duplicated "$1"
-        fi
-        ;;
+          ;;
 
-      --initial-path=*)
-        if [[ -z "$initialPath" ]]; then
-          initialPath="${1#*=}"
+        --)
+          stopOptions=1
+          ;;
+
+        --version)
+          SUBCOMMAND="config"
+          raw_args+=("--version")
+          break
+          ;;
+
+        --pinned)
+          pinnedParam=1
+          ;;
+        --no-pinned)
+          pinnedParam=0
+          ;;
+
+        --initial-path)
           if [[ -z "$initialPath" ]]; then
-            die_missed_param_value "$1"
-          fi
-        else
-          die_parameter_duplicated "$1"
-        fi
-        ;;
-
-      --*)
-        raw_args+=("$1")
-        ;;
-
-      -*)
-        local getOpt=${1:1}
-        for (( n=0; n < ${#getOpt}; n++ ))
-        do
-          raw_args+=("-${getOpt:n:1}")
-        done
-        ;;
-
-      *)
-        if [[ -z "$SUBCOMMAND" ]]; then
-          if [ -e "$GITLEGO_DIR/git-lego-$1" ]; then
-            SUBCOMMAND="$1"
-            found=1
-#            shift
-          else
-            if [[ -z "$potential_subcommand" ]]; then
-              potential_subcommand="$1"
+            if [[ -z "$2" ]]; then
+              die_missed_param_value "$1"
             else
-              raw_args+=("$1")
+              initialPath="$2"
+              shift
             fi
+          else
+            die_parameter_duplicated "$1"
           fi
-        else
+          ;;
+
+        --initial-path=*)
+          if [[ -z "$initialPath" ]]; then
+            initialPath="${1#*=}"
+            if [[ -z "$initialPath" ]]; then
+              die_missed_param_value "$1"
+            fi
+          else
+            die_parameter_duplicated "$1"
+          fi
+          ;;
+
+        --*)
           raw_args+=("$1")
-        fi
-      ;;
-    esac
+          ;;
+
+        -*)
+          local getOpt=${1:1}
+          for (( n=0; n < ${#getOpt}; n++ ))
+          do
+            raw_args+=("-${getOpt:n:1}")
+          done
+          ;;
+
+        *)
+          if [[ -z "$SUBCOMMAND" ]]; then
+            if [ -e "$GITLEGO_DIR/git-lego-$1" ]; then
+              SUBCOMMAND="$1"
+              found=1
+            else
+              if [[ -z "$potential_subcommand" ]]; then
+                potential_subcommand="$1"
+              else
+                raw_args+=("$1")
+              fi
+            fi
+          else
+            raw_args+=("$1")
+          fi
+        ;;
+      esac
+    fi
 
     shift
   done
