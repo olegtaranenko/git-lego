@@ -2803,7 +2803,7 @@ get_lego_mode() {
   echo "${results[@]}"
 }
 
-get_blob_revision() {
+normalize_blob_revision() {
   local ret=0
   local levelRevision="$1"
   local levelType="$2"
@@ -2987,7 +2987,7 @@ echo "$FUNCNAME()" $@ >&2; pwd >&2
   local blobRevision="$revision"
 
   if (( ! "$attainOnCheckout" )) && (( ! "$topLevelModule" )); then
-    local moduleCommit=($( git cat-file -p HEAD | grep -E "^tree [[:xdigit:]]{40}$" | cut -d' ' -f2 | xargs git cat-file -p | grep -E "^160000\s*commit\s*[[:xdigit:]]{40}\s*${moduleName}" ))
+    local moduleCommit=( $( git cat-file -p HEAD | grep -E "^tree [[:xdigit:]]{40}$" | cut -d' ' -f2 | xargs git cat-file -p | grep -E "^160000\s*commit\s*[[:xdigit:]]{40}\s*${moduleName}" ) )
     ret=$?
 
     blobRevision="${moduleCommit[2]}"
@@ -3028,7 +3028,7 @@ echo "$FUNCNAME()" $@ >&2; pwd >&2
     fi
 
     if [[ "$revision" != "-" && "$ret" == 0 && "$attainOnCheckout" == 1 && "$missedReference" == 0 ]]; then
-      blobRevision=$( get_blob_revision "$revision" "$refType")
+      blobRevision=$( normalize_blob_revision "$revision" "$refType")
       ret=$?
     fi
 
@@ -3156,11 +3156,10 @@ echo "$FUNCNAME()" $@ >&2; pwd >&2
 #    echo "to delete: ${deletedModules[@]}" >&2
 
 
-   module_porcelain_status "${modulePath}" checkout
+   module_porcelain_status "$modulePath" "checkout"
 
     if [[ "$revision" == "-" && "$attainOnCheckout" == 1 ]]; then
       local type
-
       local checkoutRefName="${MODULE_STATUS[$MS_CHECKOUT_REFNAME]}"
       local checkoutRefType="${MODULE_STATUS[$MS_CHECKOUT_REFTYPE]}"
 

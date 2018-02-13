@@ -46,7 +46,8 @@ EOF
 }
 
 typeset verbose=0
-typeset doRecursive=0 reuse
+typeset doRecursive=0 
+typeset doTags=1
 
 typeset initialPath
 typeset modulePath
@@ -75,6 +76,13 @@ while [[ -n $1 ]]; do
       doRecursive=0
       ;;
 
+    --tags)
+      doTags=1
+      ;;
+    --no-tags)
+      doTags=0
+      ;;
+
     *)
       if [[ -z ${1%%-*} ]]; then
         args+=($1)
@@ -88,6 +96,30 @@ while [[ -n $1 ]]; do
   shift
 done
 
+# explicit overriding current settings?
+# TODO take into account this setting
+#       --no-tags
+#           By default, tags that point at objects that are downloaded from the remote repository are fetched and
+#           stored locally. This option disables this automatic tag following. The default behavior for a remote
+#           may be specified with the remote.<name>.tagOpt setting. See git-config(1).
+#  NOTE
+#  git pull --tags override existing tags:
+#  For example
+#    git pull --tags
+#    stdin: is not a tty
+#    remote: Counting objects: 3, done.
+#    remote: Total 3 (delta 0), reused 0 (delta 0)
+#    Unpacking objects: 100% (3/3), done.
+#    From ssh://git.fairport.com.au:2223/home/git/git/ext
+#     t [tag update]      extjs-6.5.2 -> extjs-6.5.2
+#    You are not currently on a branch.
+
+
+if (( "$doTags" )); then
+  args+=("--tags");
+else
+  args+=("--no-tags");
+fi
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 function prepare_pull_level () {

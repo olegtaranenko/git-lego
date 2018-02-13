@@ -45,7 +45,8 @@ EOF
 }
 
 typeset verbose=0
-typeset doRecursive=0 reuse
+typeset doRecursive=0
+typeset doTags=1
 
 typeset initialPath
 typeset modulePath
@@ -74,6 +75,13 @@ while [[ -n $1 ]]; do
       doRecursive=0
       ;;
 
+    --tags)
+      doTags=1
+      ;;
+    --no-tags)
+      doTags=0
+      ;;
+
     *)
       if [[ -z ${1%%-*} ]]; then
         args+=($1)
@@ -86,6 +94,13 @@ while [[ -n $1 ]]; do
   esac
   shift
 done
+
+# see git-lego-pull for more information
+if (( "$doTags" )); then
+  args+=("--tags");
+else
+  args+=("--no-tags");
+fi
 
 
 ################################ SCRIPT SPECIFIC METHODS ################################

@@ -349,14 +349,14 @@ prepare_tag_level() {
   local affected=0
   local applied=1
 
-  local tagExists=$( git tag -l | grep -Ec "^$tagName$" 2>/dev/null )
+  local tagExists=$( git tag --list | grep -Ec "^${tagName}$" 2>/dev/null )
   ret=$?
 
   if (( ! "$doDelete" )) && (( "$tagExists" )) && (( ! "$doRecursive" )) && (( ! "$doForce" )); then
     dieMsg="Tag '$tagName' already exists in module '$moduleName' (at least), use --force to override it"
     ret=1
   else
-    if [[ ( "$tagExists" == 0 || "$doForce" == 1 ) && "$doDelete" == 0 ]] || [[ "$tagExists" == 1 && "$doDelete" == 1  ]]; then
+    if (( "$doList" )) || [[ ( "$tagExists" == 0 || "$doForce" == 1 ) && "$doDelete" == 0 ]] || [[ "$tagExists" == 1 && "$doDelete" == 1  ]]; then
       drop_to_affected "$levelFilePath"
       applied=$?
 
