@@ -14,10 +14,6 @@ declare ret=0
 
 args=()
 
-################################ STANDARD BOOTSTRAP CALL ################################
-umbrella_bootstrap
-
-
 ################################ SCRIPT-SPECIFIC HELP ################################
 function show_help() {
 cat << EOF
@@ -53,7 +49,8 @@ typeset moduleName
 typeset moduleFilePath
 
 # TODO add setting
-typeset doHintOptions=0
+typeset doHint=0
+typeset doQuick=0
 #set -x
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
@@ -66,11 +63,15 @@ while [[ -n $1 ]]; do
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
       ;;
 
+    --quick|-t)
+      doQuick=1
+      ;;
+
     --hint|-t)
-      doHintOptions=1
+      doHint=1
       ;;
     --no-hint|-T)
-      doHintOptions=0
+      doHint=0
       ;;
 
     *)
@@ -89,6 +90,23 @@ done
 #echo "args: ${args}"
 #set +x
 
+################################ STANDARD BOOTSTRAP CALL ################################
+echo "initialPath: $initialPath"
+umbrella_bootstrap
+
+
+################################ CALLBACK FUNCTIONS ################################
+#
+# callback to detect what command should be called
+#
+dispatch_subaction() {
+  local ret="default"
+  if (( "$doQuick" )); then
+    ret="quick"
+  fi
+
+  echo "$ret"
+}
 
 ################################ SCRIPT SPECIFIC METHODS ################################
 
@@ -107,8 +125,8 @@ done
 #     $commitable - sets to 1, if one of affected module has dirty state, required to be commit
 # .
 #
-typeset oneLine
 
+typeset oneLine
 
 managed_or_pinned() {
 #echo "$FUNCNAME()" $@ >&2
@@ -144,7 +162,7 @@ function show_current_module_status {
 #echo "$FUNCNAME(): subRepoPath=$1 subModule=$2 modulePath=$3 refname=$4 reftype=$5 " >&2
 #printf "%s,\n" "${MODULE_STATUS[@]}"
 
-#if [[ $2 == "viatra" ]]; then
+#if [[ $2 == "" ]]; then
 #  set -x
 #fi
   local filePath="$1"
@@ -271,7 +289,7 @@ function show_current_module_status {
       oneLine+=" behind";
     fi
 
-    if (( "$doHintOptions" )); then
+    if (( "$doHint" )); then
       local guessedRefnames=()
       local asWellRefs=()
       local oldIFS
@@ -339,7 +357,7 @@ function show_current_module_status {
     git status ${args}
   fi
 
-#if [[ $2 == "viatra" ]]; then
+#if [[ $2 == "" ]]; then
 #  set +x
 #fi
 }
@@ -347,27 +365,27 @@ function show_current_module_status {
 
 
 function status_level() {
-#echo "$FUNCNAME()" $@ >&2
+echo "$FUNCNAME()" $@ >&2
   local levelPath="$1"
   [[ -z ${levelPath} ]] && panic "$FUNCNAME()... parameter 'path' is required"
+  local moduleName="$2"
+  local modulePath="$3"
+
   local repoBranch
   local ret=0   # return code, 0 - the repo is synchronized
   local childRet # child return code
-#if [[ $modulePath == /ext ]]; then
-#set -x
-#fi
 
   # gather all additional fine information into $MODULE_STATUS global array
-  module_porcelain_status "$modulePath" status
+  module_porcelain_status "$modulePath" "status"
 
-  drop_to_affected "$levelPath"
+# TODO check functionality after 'quick path' refactoring
+  drop_to_affected "$modulePath"
 
   (( ! $? )) && show_current_module_status "$@"
 
   local managedRefname="${MODULE_STATUS[$MS_MANAGED_REFNAME]}"
   local moduleRefname="${MODULE_STATUS[$MS_MODULE_REFNAME]}"
   local moduleReftype="${MODULE_STATUS[$MS_DETACHED]}"
-#  echo "$FUNCNAME()... parent managed=$managedRefname parent moduleRefname=$moduleRefname, moduleReftype=$moduleReftype "
 
 
   if [ -f .gitmodules ]; then
@@ -381,26 +399,46 @@ function status_level() {
       ret=$?
 
       if (( ! "$ret" )); then
-        local modulePath="$3" #/$subModule"
-        [[ ${modulePath:(-1)} != "/" ]] && modulePath+="/"
-        modulePath+="$subModule"
+        local subModulePath="$3"
+        [[ ${subModulePath:(-1)} != "/" ]] && subModulePath+="/"
+        subModulePath+="$subModule"
 
-        status_level "$subRepoPath" "$subModule" "$modulePath" "$moduleRefname" "$moduleReftype"
+        status_level "$subRepoPath" "$subModule" "$subModulePath" "$moduleRefname" "$moduleReftype"
         childRet=$?
-        if [[ "$childRet" > $ret ]] ; then
-          ret=${childRet}
-        fi
-        popd  &>/dev/null
+
+        (( $childRet > $ret )) && ret="$childRet"
       fi
+
+      popd  &>/dev/null
     done < <(git config -f .gitmodules --get-regexp "submodule.*.path" | sed -E "s/submodule\.(.*)\.path/\1/")
   fi
 
-  return $ret
+  return "$ret"
 }
 
 default_init_path_callback() {
   echo "/";
 }
+
+cmd_quick() {
+echo "$FUNCNAME() $@" >&2
+#set -x
+#  mci_column_index "gitdir"
+#  mci_column_index "" "path"
+#  mci_column_index 1 "path"
+#
+#  mci_column_index "something" "path"
+#
+#  mci_column_index "$MCI_GITDIR"
+#  mci_column_index $(( "$MCI_COUNT" + 1 )) ""
+#  mci_column_index "" $(( "$MCI_COUNT"))
+#  mci_column_index -1 $(( "$MCI_CHECKOUT" + 2 ))
+
+module_info "/" "gitdir" "path" "name"
+module_info "/ext" "path" "gitdir" "path" "name" "refname" "id"
+module_info "/" "gidir"
+}
+
 
 ################################ MAIN SCRIPT LOGIC ################################
 cmd_default() {

@@ -37,7 +37,7 @@ typeset moduleFilePath
 
 typeset currentLegoMode
 typeset verbose=0
-typeset doForce=0
+#typeset doForce=0
 # solo (1) or global (0)
 # lego solo mode means that no any additional settings are stored to versioned files like .gitmodules or .gitrepo
 # That no git lego don''t pollute modules' history at all.
@@ -71,10 +71,6 @@ while [[ -n $1 ]]; do
     -v|--verbose)
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
       ;;
-
-		-f | --force)
-			doForce=1
-			;;
 
 		--lego-mode)
 			case $2 in
@@ -114,12 +110,6 @@ while [[ -n $1 ]]; do
       shift
       ;;
 
-#    --recursive|-r)
-#      doRecursive=1
-#      ;;
-#    --no-recursive|-R)
-#      doRecursive=0
-#      ;;
     *=)
       parameterKey=${1:%%=*}
       parameterValue=${1:#*=}
@@ -411,7 +401,7 @@ cmd_default() {
 #  if (( $affected )); then
 #
 #    while read -a module; do
-#      cd ${module[$MFS_FULL_PATH]}
+#      cd ${module[$MCI_FILEPATH]}
 #      level_verbose_about_to ${module[@]}
 #
 #      git reset "${args[@]}"

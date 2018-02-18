@@ -32,7 +32,8 @@ EOF
 }
 
 typeset verbose=0
-typeset initialPath updateMessage updateTemplate doRecursive=1  doForce=1
+typeset initialPath updateMessage updateTemplate
+#doRecursive=1  doForce=1
 
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
@@ -44,20 +45,6 @@ while [[ -n $1 ]]; do
       ;;
     -v|--verbose)
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
-      ;;
-
-    --recursive|-r)
-      doRecursive=1
-      ;;
-    --no-recursive|-R)
-      doRecursive=0
-      ;;
-
-    --force|-f)
-      doForce=1
-      ;;
-    --no-force)
-      doForce=0
       ;;
 
     *)

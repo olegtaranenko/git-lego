@@ -43,9 +43,9 @@ EOF
 
 typeset args=()
 typeset verbose=0
-typeset doRecursive=1
+#typeset doRecursive=1
 typeset doUpstream=1
-typeset doForce=0
+#typeset doForce=0
 
 typeset initialPath
 typeset modulePath
@@ -84,26 +84,11 @@ while [[ -n $1 ]]; do
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
       ;;
 
-    --recursive|-r)
-      doRecursive=1
-      ;;
-    --no-recursive|-R)
-      doRecursive=0
-      ;;
-
     --create-upstream|-u)
       doUpstream=1
       ;;
     --no-create-upstream|-U)
       doUpstream=0
-      ;;
-
-    --force|-f)
-      doForce=1
-#      args+=("$1")
-      ;;
-    --no-force)
-      doForce=0
       ;;
 
     --fetch)
@@ -287,7 +272,8 @@ function prepare_push_level() {
   fi
 
   if (( ! "$ret" )) && (( "$checkDropAffected" )); then
-    drop_to_affected "$levelPath"
+    # TODO check functionality after 'quick path' refactoring
+    drop_to_affected "$modulePath"
     notApplied=$?
   fi
 
@@ -346,9 +332,9 @@ cmd_default() {
         local moreOptions=()
         local upstreamBranch
 
-        moduleName="${module[$MFS_MODULE_NAME]}"
+        moduleName="${module[$MCI_NAME]}"
 
-        cd "${module[$MFS_FULL_PATH]}"
+        cd "${module[$MCI_FILEPATH]}"
         level_verbose_about_to "${module[@]}"
 
         index=0
@@ -400,7 +386,7 @@ cmd_default() {
         fi
 
         if (( ! "$ret" )); then
-          affectedModules+=("${module[$MFS_MODULE_NAME]}")
+          affectedModules+=("${module[$MCI_NAME]}")
           if (( "${#dangledModules[@]}" )) ; then
             index=0
             for dangledModule in "${dangledModules[@]}"; do

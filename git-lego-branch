@@ -81,7 +81,7 @@ typeset doPush=0
 typeset doCurrent=0
 typeset doUpdate=0
 typeset doUmbrella=1
-typeset doRecursive=0
+#typeset doRecursive=0
 typeset branchName
 
 (( ! $# )) && doView=1; doSync=0; doPush=0; doAutoCommit=0
@@ -137,13 +137,6 @@ while [[ -n $1 ]]; do
       ;;
     --no-umbrella)
       doUmbrella=0
-      ;;
-
-    --recursive)
-      doRecursive=1
-      ;;
-    --no-recursive)
-      doRecursive=0
       ;;
 
     --sync)

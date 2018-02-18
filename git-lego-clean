@@ -29,7 +29,9 @@ EOF
 }
 
 typeset verbose=0
-typeset initialPath doRecursive=1 doForce=1 cleanSolo=0 cleanVersioned=0
+typeset initialPath
+#doRecursive=1 doForce=1
+typeset cleanSolo=0 cleanVersioned=0
 
 ################################ PARAMETERS PARSING ################################
 while [[ -n $1 ]]; do
@@ -41,20 +43,6 @@ while [[ -n $1 ]]; do
       ;;
     -v|--verbose)
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
-      ;;
-
-    --recursive|-r)
-      doRecursive=1
-      ;;
-    --no-recursive|-R)
-      doRecursive=0
-      ;;
-
-    --force|-f)
-      doForce=1
-      ;;
-    --no-force)
-      doForce=0
       ;;
 
     --all|-a)

@@ -53,7 +53,7 @@ typeset moduleName
 typeset moduleFilePath
 typeset moduleInitialized
 
-typeset doRecursive=0 doForce=0
+#typeset doRecursive=0 doForce=0
 typeset doAmend=0
 typeset doForceAmend=0
 typeset warningAmend=()
@@ -82,22 +82,9 @@ while [[ -n "$1" ]]; do
       args+=("$1")
       ;;
 
-    --force|-f)
-      doForce=1
-      ;;
-    --no-force)
-      doForce=0
-      ;;
     -ff)
       doForce=1
       doForceAmend=1
-      ;;
-
-    --recursive|-r)
-      doRecursive=1
-      ;;
-    --no-recursive|-R)
-      doRecursive=0
       ;;
 
     -[amFtscC]+)
@@ -203,7 +190,8 @@ function prepare_commit_level() {
         warningAmend+=("$moduleName")
         ret=1
       else
-        drop_to_affected "$levelPath"
+        # TODO check functionality after 'quick path' refactoring
+        drop_to_affected "$modulePath"
         applied=$?
 
         if (( ! "$applied" )); then
@@ -308,7 +296,7 @@ EOT
 #cat ${globals[$G_AFFECTED_MODULES]} >&2
 
       while read -a module; do
-        cd "${module[$MFS_FULL_PATH]}"
+        cd "${module[$MCI_FILEPATH]}"
         level_verbose_about_to ${module[@]}
 
         (( "$doAppendUntracked" )) && git add . -A

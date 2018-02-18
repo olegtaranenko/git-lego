@@ -58,7 +58,6 @@ typeset moduleName
 typeset moduleFilePath
 typeset moduleLegoMode
 
-typeset doRecursive=1 doForce=0
 typeset explicitModules=() explicitRefs=() explicitTypes=()
 
 typeset reference referenceType
@@ -80,20 +79,6 @@ while [[ -n $1 ]]; do
       ;;
     -v|--verbose)
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
-      ;;
-
-    --recursive|-r)
-      doRecursive=1
-      ;;
-    --no-recursive|-R)
-      doRecursive=0
-      ;;
-
-    --force|-f)
-      doForce=1
-      ;;
-    --no-force)
-      doForce=0
       ;;
 
     --auto-attain|-a)

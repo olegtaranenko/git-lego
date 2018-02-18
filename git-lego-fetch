@@ -45,7 +45,7 @@ EOF
 }
 
 typeset verbose=0
-typeset doRecursive=0
+#typeset doRecursive=0
 typeset doTags=1
 
 typeset initialPath
@@ -66,13 +66,6 @@ while [[ -n $1 ]]; do
       ;;
     -v|--verbose)
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
-      ;;
-
-    --recursive|-r)
-      doRecursive=1
-      ;;
-    --no-recursive|-R)
-      doRecursive=0
       ;;
 
     --tags)
@@ -112,7 +105,8 @@ prepare_fetch_level () {
 
   pushd "$levelPath" &>/dev/null
 
-  drop_to_affected "$levelPath"
+  # TODO check functionality after 'quick path' refactoring
+  drop_to_affected "$modulePath"
 
   # do recurse call for every sub-repos
   while read -a module; do
@@ -147,7 +141,7 @@ cmd_default() {
 
   if (( $affected )); then
     while read -a module; do
-      cd "${module[$MFS_FULL_PATH]}"
+      cd "${module[$MCI_FILEPATH]}"
       level_verbose_about_to ${module[@]}
 
       git fetch "${args[@]}"

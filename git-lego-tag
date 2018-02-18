@@ -31,8 +31,8 @@ EOF
 typeset args=()
 typeset verbose=0
 typeset doCheckout=0
-#typeset doRecursive=0
-typeset doForce=0
+#typeset doRecursive
+#typeset doForce=0
 
 # is defined in git-lego
 #typeset initialPath
@@ -110,13 +110,6 @@ while [[ -n $1 ]]; do
       doCheckout=1
       ;;
 
-    --recursive|-r)
-      doRecursive=1
-      ;;
-    --no-recursive|-R)
-      doRecursive=0
-      ;;
-
     --base-commit=*)
       if (( ! "${#baseCommit}" )); then
         baseCommit="${1#--base-commit=}"
@@ -148,14 +141,6 @@ while [[ -n $1 ]]; do
       fi
       ;;
 
-    --force|-f)
-      doForce=1
-      args+=("$1")
-      ;;
-    --no-force)
-      doForce=0
-      ;;
-
     --local-user=*)
       messageRequired=1
       args+=("$1")
@@ -177,9 +162,7 @@ while [[ -n $1 ]]; do
 
     *)
       if [[ -z ${1%%-*} ]]; then
-      set -x
         args+=("$1")
-        set +x
       else
         if [[ -z "$initialPath" ]]; then
           initialPath=$( path_or_revision "$1" )
@@ -193,6 +176,10 @@ while [[ -n $1 ]]; do
 
   shift
 done
+
+if (( "$doForce" )); then
+  args+=("$1")
+fi
 
 if [[ -n "$initialPath" ]]; then
   maxParameters=$(( $maxParameters - 1 ))
@@ -254,13 +241,13 @@ tag_list_level() {
   local childRet=0 # child return code
 
   while read -a module; do
-    local subModulePath="${module[$MFS_MODULE_PATH]}"
-    local subModuleName="${module[$MFS_MODULE_NAME]}"
+    local subModulePath="${module[$MCI_PATH]}"
+    local subModuleName="${module[$MCI_NAME]}"
 
     echo "" >&2
     echo "    Module: $subModuleName [$subModulePath]" >&2
 
-    cd "${module[$MFS_FULL_PATH]}"
+    cd "${module[$MCI_FILEPATH]}"
     git tag --list "${args[@]}" "${g_extra_git_params[@]}"
     childRet=$?
 
@@ -285,9 +272,9 @@ tag_level() {
   local childRet=0 # child return code
 
   while read -a module; do
-    local subModulePath="${module[$MFS_MODULE_PATH]}"
-    local subModuleName="${module[$MFS_MODULE_NAME]}"
-    cd "${module[$MFS_FULL_PATH]}"
+    local subModulePath="${module[$MCI_PATH]}"
+    local subModuleName="${module[$MCI_NAME]}"
+    cd "${module[$MCI_FILEPATH]}"
     git tag ${tagName} "${args[@]}" "${g_extra_git_params[@]}"
     childRet=$?
 
@@ -335,10 +322,27 @@ tag_level() {
   return "$ret"
 }
 
+prepare_based_level() {
+#echo "$FUNCNAME()" $@ >&2; pwd >&2
+#"$moduleFilePath" "$moduleName" "$modulePath"
+  local ret=0
+  local levelFilePath="$1"
+  local modulePath="$2"
+  local moduleName="$3"
+  local revision="$4"
+  local wrongRepo=0
+
+  pushd "$levelFilePath" &>/dev/null
+  wrongRepo=$?
+
+  if (( ! $wrongRepo )); then
+
+  fi
+  return "$ret"
+}
 
 prepare_tag_level() {
-#echo "$FUNCNAME()" $@ >&2
-#pwd >&2
+#echo "$FUNCNAME()" $@ >&2; pwd >&2
   local levelFilePath="$1"
   [[ -z "$levelFilePath" ]] && panic "$FUNCNAME()... parameter 'path' is required"
 
@@ -404,9 +408,17 @@ dispatch_subaction() {
   if [[ "$ret" == "delete" ]]; then
     ret="tag"
   fi
+
+#  if [[ "$ret" == "tag" && -n "$baseCommit" ]]; then
+#    ret="based"
+#  fi
   echo "$ret"
 }
 
+#cmd_based() {
+#  local ret=0
+#  return "$ret"
+#}
 
 cmd_list() {
   local ret=0
@@ -419,7 +431,7 @@ cmd_list() {
       cw_echo "extra parameters for git [$total]: ${args[*]} ${g_extra_git_params[*]}"
     fi
 
-    doRecursive=${doRecursive:-1}
+    doRecursive="${doRecursive:-1}"
     prepare_tag_level "$moduleFilePath" "$moduleName" "$modulePath"
     ret=$?
 
@@ -456,8 +468,12 @@ cmd_tag() {
 
   if (( "$moduleInitialized" )) && (( ! "$ret" )) ; then
     cd "$moduleFilePath"
-    doRecursive=${doRecursive:-0}
-    prepare_tag_level "$moduleFilePath" "$moduleName" "$modulePath"
+    doRecursive="${doRecursive:-0}"
+    if (( ! ${#baseCommit} )); then
+      prepare_tag_level "$moduleFilePath" "$moduleName" "$modulePath"
+    else
+      prepare_based_level "$moduleFilePath" "$moduleName" "$modulePath" "$baseCommit"
+    fi
     ret=$?
 
     if (( "$messageRequired" )) && (( ! "$messageDefined" )) ; then

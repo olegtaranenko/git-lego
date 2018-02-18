@@ -46,7 +46,7 @@ EOF
 }
 
 typeset verbose=0
-typeset doRecursive=0 reuse
+#typeset doRecursive=0 reuse
 
 typeset initialPath
 typeset modulePath
@@ -66,13 +66,6 @@ while [[ -n $1 ]]; do
       ;;
     -v|--verbose)
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
-      ;;
-
-    --recursive|-r)
-      doRecursive=1
-      ;;
-    --no-recursive|-R)
-      doRecursive=0
       ;;
 
     *)
@@ -97,7 +90,8 @@ function prepare_stash_level () {
 
   pushd "$levelPath" &>/dev/null
 
-  drop_to_affected "$levelPath"
+  # TODO check functionality after 'quick path' refactoring
+  drop_to_affected "$modulePath"
 
 #git cat-file -p 5458 | grep -Eo "^author.* [[:digit:]]{10} [+-][[:digit:]]{4}" | sed -E "s/^author.* ([[:digit:]]{10}) [+-][[:digit:]]{4}/\1/"
 
@@ -136,7 +130,7 @@ cmd_default() {
   if (( $affected )); then
 
     while read -a module; do
-#      cd ${module[$MFS_FULL_PATH]}
+#      cd ${module[$MCI_FILEPATH]}
 
       git stash "${args[@]}"
     done < <(cat ${globals[$G_AFFECTED_MODULES]} | (tac 2> /dev/null || tail -r))

@@ -47,7 +47,8 @@ EOF
 
 #echo  "${cwRoot} ${gitDir}"
 typeset verbose=0
-typeset initialPath mergeMessage commitTemplate doRecursive=0 reuse doAppendUntracked=1
+typeset initialPath mergeMessage commitTemplate reuse doAppendUntracked=1
+#doRecursive=0
 #set -x
 
 ################################ PARAMETERS PARSING ################################
@@ -81,13 +82,6 @@ while [[ -n $1 ]]; do
       ;;
     --no-commit)
       commit=0
-      ;;
-
-    --force|-f)
-      doForce=1
-      ;;
-    --no-force|-F)
-      doForce=0
       ;;
 
     -b|-B|--orphan)
@@ -265,7 +259,7 @@ cmd_default() {
   #cat ${globals[$G_AFFECTED_MODULES]}
 
     while read -a module; do
-      cd ${module[$MFS_FULL_PATH]}
+      cd ${module[$MCI_FILEPATH]}
       level_verbose_about_to ${module[@]}
   #    echo "git merge ${args[@]} ${#args[@]}"
 

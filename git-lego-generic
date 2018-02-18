@@ -29,7 +29,7 @@ EOF
 }
 
 typeset verbose=0
-typeset doRecursive=1 doForce=1
+#typeset doRecursive=1 doForce=1
 typeset initialPath
 typeset modulePath
 typeset moduleName
@@ -39,20 +39,6 @@ typeset moduleFilePath
 while [[ -n $1 ]]; do
   noAppendArg=0
   case $1 in
-    --recursive|-r)
-      doRecursive=1
-      ;;
-    --no-recursive|-R)
-      doRecursive=0
-      ;;
-
-    --force|-f)
-      doForce=1
-      ;;
-    --no-force)
-      doForce=0
-      ;;
-
     *)
       if [[ -z ${1%%-*} ]]; then
         args+=($1)

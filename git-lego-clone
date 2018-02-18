@@ -18,7 +18,7 @@ EOF
 
 typeset autoAttach=0
 typeset attachHints=()
-typeset doForce=0
+#typeset doForce=0
 typeset verbose=0
 typeset doInit=0
 typeset branchName wrongBranch branch=0
@@ -34,10 +34,6 @@ while [[ -n $1 ]]; do
     -v|--verbose)
       verbose=$((verbose + 1)) # Each -v argument adds 1 to verbosity.
       ;;
-
-		-f | --force)
-			doForce=$1
-			;;
 
 		-b | --branch)
 			branch=1
@@ -82,13 +78,6 @@ while [[ -n $1 ]]; do
         case "$2" in '') usage "$1 parameter requires further value" ;; esac
         attachHints+=("$2")
         shift
-      ;;
-
-    --recursive|-r)
-      doRecursive=1
-      ;;
-    --no-recursive|-R)
-      doRecursive=0
       ;;
 
     *)
@@ -162,10 +151,10 @@ echo "$FUNCNAME() args from command line: ${args[@]}" >&2
     local index=0
     local found=0
 
-    for gitDir in "${g_git_dirs[@]}"; do
+    for gitDir in "${g_module_gitdir[@]}"; do
 
       if [[ "$gitDir" == "$parentGitDir" ]]; then
-        local parentPath="${g_module_paths[$index]}"
+        local parentPath="${g_module_path[$index]}"
 
         if [[ "$parentPath" == "/" ]]; then
           parentModule="root project"
